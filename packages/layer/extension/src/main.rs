@@ -11,7 +11,7 @@ mod store;
 
 use config::Config;
 use export::HttpExporter;
-use queue::ExportQueue;
+use queue::{ExportQueue, Limits};
 use serde_json::Value;
 use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -23,12 +23,20 @@ use store::{FinishOptions, SpanStore};
 
 const WAIT_GRACE_MS: i64 = 200;
 const HELLO_WAIT_MS: i64 = 500;
+/// Without telemetry, how long the first invocation still waits for spans after a missing hello.
+const LATE_HELLO_WAIT_MS: u64 = 2000;
 const SHUTDOWN_BUDGET_MS: i64 = 1500;
 const SHUTDOWN_TELEMETRY_WAIT_MS: i64 = 150;
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn log(msg: &str) {
     let _ = writeln!(std::io::stderr(), "[ivy-extension] {msg}");
+}
+
+fn debug_log(on: bool, msg: &str) {
+    if on {
+        log(msg)
+    }
 }
 
 fn epoch_ms() -> i64 {
@@ -285,19 +293,39 @@ fn main() {
     };
     let mut first_invoke = true;
     let mut last_request: Option<String> = None;
-
+    let debug_on = config.debug;
     let started = Instant::now();
     let exporter = HttpExporter::new(
         config.traces_url.clone().unwrap_or_default(),
         config.api_key.clone(),
         Duration::from_millis(config.export_timeout_ms),
-        Box::new(log),
+        Box::new(move |m: &str| debug_log(debug_on, m)),
     );
     // The tracer announces itself without blocking init, so its hello can land just after the first
     // INVOKE. With the exec wrapper configured a tracer is expected: give it a moment to say hello.
     let tracer_expected = std::env::var("AWS_LAMBDA_EXEC_WRAPPER").is_ok_and(|w| w.ends_with("/ivy-wrapper"));
     let mut expect_hello = tracer_expected;
-    let mut queue = ExportQueue::new(exporter, config.max_queue_spans, Box::new(move || started.elapsed().as_millis() as u64), Box::new(log));
+    let limits = Limits {
+        max_queue_spans: config.max_queue_spans,
+        chunk_spans: config.chunk_spans,
+        chunk_bytes: config.chunk_bytes,
+        budget_base_ms: config.flush_budget_ms,
+        budget_per_chunk_ms: config.flush_budget_per_chunk_ms,
+        budget_max_ms: config.flush_budget_max_ms,
+    };
+    let mut queue = ExportQueue::new(exporter, limits, Box::new(move || started.elapsed().as_millis() as u64), Box::new(move |m: &str| debug_log(debug_on, m)));
+    // One line per invocation in the function's logs when spans were collapsed or dropped or the export
+    // failed, even without IVY_DEBUG.
+    let flush = |queue: &mut ExportQueue<HttpExporter>, budget_ms: u64, force: bool| {
+        let flush_started = Instant::now();
+        if queue.size() > 0 && budget_ms > 50 {
+            queue.flush(budget_ms, force);
+        }
+        let report = queue.take_report();
+        if report.notable() {
+            let _ = writeln!(std::io::stderr(), "{}", report.line(flush_started.elapsed().as_millis() as u64));
+        }
+    };
 
     loop {
         let event = match next_event(&api, &id) {
@@ -314,26 +342,30 @@ fn main() {
             for b in store.finish(None, &finish_options) {
                 queue.add(b);
             }
-            let budget = SHUTDOWN_BUDGET_MS.min(event.deadline_ms - epoch_ms() - 100);
-            if queue.size() > 0 && budget > 50 {
-                queue.flush(budget as u64, true);
-            }
+            let budget = SHUTDOWN_BUDGET_MS.min(event.deadline_ms - epoch_ms() - 100).max(0) as u64;
+            flush(&mut queue, budget, true);
             debug(&format!("shutdown ({})", event.shutdown_reason.as_deref().unwrap_or("unknown")));
             std::process::exit(0);
         }
         let invoked_at = epoch_ms();
+        let mut late_hello_wait = None;
         if expect_hello && !store.is_attached() {
             let wait_ms = HELLO_WAIT_MS.min(event.deadline_ms - epoch_ms()).max(0) as u64;
             if !store.wait_attached(Duration::from_millis(wait_ms)) {
                 debug("no hello from the tracer");
+                late_hello_wait = Some(LATE_HELLO_WAIT_MS);
             }
         }
         expect_hello = false;
         // With the wrapper a tracer is expected even if its hello is late or was lost: its spans count as a
-        // hello. With telemetry the wait ends when the runtime is done, so a missing tracer costs little.
-        let wait_for_spans = store.is_attached() || (tracer_expected && telemetry_on);
+        // hello. With telemetry the wait ends when the runtime is done, so a missing tracer costs little;
+        // without it, the first invocation still waits a bounded while for spans that come late.
+        let wait_for_spans = store.is_attached() || (tracer_expected && (telemetry_on || late_hello_wait.is_some()));
         if let Some(request_id) = event.request_id.as_deref().filter(|_| wait_for_spans) {
-            let wait_ms = (event.deadline_ms - epoch_ms() + WAIT_GRACE_MS).max(0) as u64;
+            let mut wait_ms = (event.deadline_ms - epoch_ms() + WAIT_GRACE_MS).max(0) as u64;
+            if !telemetry_on && !store.is_attached() {
+                wait_ms = wait_ms.min(late_hello_wait.unwrap_or(0));
+            }
             if !store.wait_for(request_id, Duration::from_millis(wait_ms)) {
                 debug(&format!("no final spans for {request_id}"));
             }
@@ -344,9 +376,8 @@ fn main() {
         for b in store.finish(Some(&ctx), &finish_options) {
             queue.add(b);
         }
-        if queue.size() > 0 {
-            queue.flush(config.flush_budget_ms, false);
-        }
+        let budget = queue.budget_ms();
+        flush(&mut queue, budget, false);
     }
 }
 

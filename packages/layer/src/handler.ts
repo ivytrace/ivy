@@ -48,14 +48,18 @@ function createTracer(): Tracer {
       log,
     });
     queue.add(batch);
-    if (batch.final) queue.flush(config.flushBudgetMs).catch(() => {});
+    if (batch.final) {
+      const budget = Math.min(config.flushBudgetMaxMs, config.flushBudgetMs + config.flushBudgetPerChunkMs * Math.max(0, queue.pending - 1));
+      queue.flush(budget).catch(() => {});
+    }
   };
+  // Batches go out one after another, in order: the invocation span first, then its chunks.
+  let handoff: Promise<unknown> = link.viaExtension;
   const sink = (batch: SpanBatch) => {
-    link.viaExtension.then((ok) => {
-      if (!ok) return exportDirectly(batch);
-      sendToExtension(config.extensionPort, batch).then((sent) => {
-        if (!sent) originalWarn(`[ivy] could not hand spans for ${batch.requestId} to the Ivy extension`);
-      });
+    handoff = handoff.then(async () => {
+      if (!(await link.viaExtension)) return exportDirectly(batch);
+      const sent = await sendToExtension(config.extensionPort, batch);
+      if (!sent) originalWarn(`[ivy] could not hand ${batch.spans.length} spans for ${batch.requestId} to the Ivy extension`);
     });
   };
 

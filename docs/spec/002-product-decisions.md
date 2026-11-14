@@ -94,6 +94,14 @@ live in `docs/implementation/`.
 - Cold-start overhead of the layer must be minimal: the Lambda extension is a small Rust binary (the one exception
   to TypeScript everywhere).
 
+## Large invocations
+- An invocation always shows up in Ivy, even when its spans are too many to keep; repetitive calls are summarised.
+- The invocation span is exported first, on its own, so a failed or dropped export of its children never takes it
+  along. Children go in chunks; the time spent exporting after the response stays bounded (it is billed to the
+  customer). What is left out is said on the trace ("N spans omitted") and in one line in the function's logs.
+- Each invocation has a payload budget (1 MB): the invocation's own event and response first, then failing spans,
+  then the slowest; spans past it keep their timing and attributes but not their bodies.
+
 ## LLM spans
 - Ivy captures OpenTelemetry spans from libraries such as the Vercel AI SDK and renders LLM calls (messages,
   tool calls, tokens, time to first token). This replaces 001's "LLM-call instrumentation: not in v1".

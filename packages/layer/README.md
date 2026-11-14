@@ -85,8 +85,17 @@ extension idles.
 | `IVY_CAPTURE_OTEL` | `true` | capture spans that libraries create through `@opentelemetry/api` (Vercel AI SDK, …) |
 | `IVY_TIMEOUT_MARGIN_MS` | `100` | how long before the deadline to snapshot spans for a possible timeout |
 | `IVY_EXPORT_TIMEOUT_MS` | `1000` | per-request export timeout |
-| `IVY_FLUSH_BUDGET_MS` | `2000` | max time the extension spends exporting after each invocation |
-| `IVY_MAX_QUEUE_SPANS` | `2000` | spans buffered while the endpoint is unreachable |
+| `IVY_FLUSH_BUDGET_MS` | `2000` | base time the extension may spend exporting after each invocation |
+| `IVY_FLUSH_BUDGET_PER_CHUNK_MS` | `500` | added to the base for each chunk of child spans waiting |
+| `IVY_FLUSH_BUDGET_MAX_MS` | `5000` | cap on the post-response export time, however many chunks wait |
+| `IVY_EXPORT_CHUNK_SPANS` | `500` | most spans in one export request |
+| `IVY_EXPORT_CHUNK_BYTES` | `1048576` | most uncompressed JSON bytes in one export request (min 16 KB); a larger span has its payloads trimmed |
+| `IVY_MAX_QUEUE_SPANS` | `2000` | spans buffered while the endpoint is unreachable (child spans are dropped first) |
+| `IVY_MAX_SPANS` | `2000` | child spans kept per invocation after collapsing; the rest are counted in `ivy.dropped_spans` |
+| `IVY_MAX_INVOCATION_PAYLOAD_BYTES` | `1048576` | payload bytes (bodies, SDK input/output, LLM messages) per invocation; spans past it keep everything but their payloads |
+| `IVY_COLLAPSE_THRESHOLD` | `50` | collapse calls with the same signature once there are more than this many in one invocation (`0` turns collapsing off) |
+| `IVY_COLLAPSE_KEEP` | `10` | calls of a collapsed run kept in full from its start |
+| `IVY_COLLAPSE_KEEP_SLOWEST` | `3` | slowest calls of a collapsed run kept in full (failing calls are always kept) |
 | `IVY_EXTENSION_PORT` | `9790` | localhost port between the function and the extension |
 | `IVY_PLATFORM_TELEMETRY` | `true` | subscribe to the Lambda Telemetry API to report init failures, crashes, out of memory and timeouts (see `docs/implementation/platform-failures.md`) |
 | `IVY_TELEMETRY_PORT` | `9791` | port the extension receives Telemetry API events on |

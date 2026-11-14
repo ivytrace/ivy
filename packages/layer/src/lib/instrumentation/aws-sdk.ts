@@ -33,6 +33,8 @@ function tracingMiddleware(tracer: Tracer, client: any) {
           span.attributes['rpc.system'] = 'aws-api';
           span.attributes['rpc.service'] = service;
           span.attributes['rpc.method'] = operation;
+          // Targets (table, bucket, queue) from the input right away: collapsing groups calls by them.
+          Object.assign(span.attributes, awsServiceAttributes(service, args?.input, undefined));
           span.payloads.push({ key: 'ivy.payload.request', value: args?.input });
           context[SPAN] = span;
         }

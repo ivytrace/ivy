@@ -10,6 +10,9 @@ const MAX_ROOT_REFS: usize = 8;
 /// After the platform says the runtime finished, how long to still wait for the tracer's final batch.
 const GRACE_AFTER_SUCCESS: Duration = Duration::from_millis(100);
 const GRACE_AFTER_ERROR: Duration = Duration::from_millis(50);
+/// The grace restarts while batches for the request keep arriving (a large invocation is handed over in
+/// chunks after the invocation span), up to this long after the platform said the runtime was done.
+const MAX_GRACE: Duration = Duration::from_millis(1000);
 
 /// Spans that share one OTLP resource.
 #[derive(Debug, Clone, PartialEq)]
@@ -24,6 +27,7 @@ struct Entry {
     spans: Vec<Value>,
     index: HashMap<String, usize>,
     is_final: bool,
+    last_add: Option<Instant>,
 }
 
 impl Entry {
@@ -139,6 +143,7 @@ impl SpanStore {
         }
         let entry = inner.entry(request_id);
         entry.resource = resource;
+        entry.last_add = Some(Instant::now());
         for span in spans {
             entry.push(span);
         }
@@ -172,8 +177,21 @@ impl SpanStore {
             Some(Done::Failed(f)) if f.status == "error" => GRACE_AFTER_ERROR,
             _ => return false,
         };
-        let deadline = deadline.min(Instant::now() + grace);
-        self.wait_while(inner, deadline, |i| i.entry(request_id).is_final).1
+        let hard_deadline = deadline.min(Instant::now() + MAX_GRACE);
+        let mut inner = inner;
+        loop {
+            let last = inner.entries.get(request_id).and_then(|e| e.last_add).unwrap_or_else(Instant::now);
+            let until = hard_deadline.min(last.max(Instant::now()) + grace);
+            let (guard, done) = self.wait_while(inner, until, |i| i.entry(request_id).is_final);
+            if done {
+                return true;
+            }
+            inner = guard;
+            let moved = inner.entries.get(request_id).and_then(|e| e.last_add).is_some_and(|l| l > last);
+            if !moved || Instant::now() >= hard_deadline {
+                return false;
+            }
+        }
     }
 
     /// At shutdown: waits for telemetry that may still be in Lambda's buffer (the init outcome, the
@@ -619,6 +637,24 @@ mod tests {
         assert!(!s.wait_for("req-9", Duration::from_secs(5)));
         assert!(started.elapsed() < Duration::from_millis(400));
         assert!(s.finish(Some(&ctx("req-9", false)), &opts()).is_empty());
+    }
+
+    #[test]
+    fn the_grace_restarts_while_chunks_keep_arriving() {
+        let s = Arc::new(SpanStore::default());
+        s.attach();
+        s.add_telemetry(vec![ev("platform.runtimeDone", T0, json!({ "requestId": "req-c", "status": "success" }))]);
+        s.add("req-c", false, json!([]), vec![root("root")]);
+        let s2 = s.clone();
+        let t = thread::spawn(move || {
+            for i in 0..4 {
+                thread::sleep(Duration::from_millis(60));
+                s2.add("req-c", i == 3, json!([]), vec![span(&format!("c{i}"), "x")]);
+            }
+        });
+        assert!(s.wait_for("req-c", Duration::from_secs(5)), "four chunks 60 ms apart, each within the 100 ms grace");
+        t.join().unwrap();
+        assert_eq!(s.drain()[0].spans.len(), 5);
     }
 
     #[test]

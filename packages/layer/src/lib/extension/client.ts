@@ -42,7 +42,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * Hands a batch to the extension's intake. Connection errors are retried briefly (the intake may
  * open a moment after init started); a non-200 answer is not.
  */
-export async function sendToExtension(port: number, batch: SpanBatch, timeoutMs = 1000, retryDelaysMs = [50, 150, 300]): Promise<boolean> {
+export async function sendToExtension(port: number, batch: SpanBatch, timeoutMs = 1000, retryDelaysMs = [50, 150, 300, 500]): Promise<boolean> {
   const body = JSON.stringify(batch);
   for (let attempt = 0; ; attempt++) {
     try {

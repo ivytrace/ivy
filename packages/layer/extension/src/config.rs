@@ -9,6 +9,10 @@ pub struct Config {
     pub extension_port: u16,
     pub export_timeout_ms: u64,
     pub flush_budget_ms: u64,
+    pub flush_budget_per_chunk_ms: u64,
+    pub flush_budget_max_ms: u64,
+    pub chunk_spans: usize,
+    pub chunk_bytes: usize,
     pub max_queue_spans: usize,
     pub telemetry: bool,
     pub telemetry_port: u16,
@@ -70,6 +74,10 @@ impl Config {
             extension_port: u16::try_from(port).unwrap_or(9790),
             export_timeout_ms: int(env.get("IVY_EXPORT_TIMEOUT_MS"), 1000),
             flush_budget_ms: int(env.get("IVY_FLUSH_BUDGET_MS"), 2000),
+            flush_budget_per_chunk_ms: int(env.get("IVY_FLUSH_BUDGET_PER_CHUNK_MS"), 500),
+            flush_budget_max_ms: int(env.get("IVY_FLUSH_BUDGET_MAX_MS"), 5000),
+            chunk_spans: int(env.get("IVY_EXPORT_CHUNK_SPANS"), 500).max(1) as usize,
+            chunk_bytes: int(env.get("IVY_EXPORT_CHUNK_BYTES"), 1 << 20).max(16 * 1024) as usize,
             max_queue_spans: int(env.get("IVY_MAX_QUEUE_SPANS"), 2000) as usize,
             telemetry: bool(env.get("IVY_PLATFORM_TELEMETRY"), true),
             telemetry_port: u16::try_from(int(env.get("IVY_TELEMETRY_PORT"), 9791)).unwrap_or(9791),
@@ -94,6 +102,8 @@ mod tests {
         assert_eq!(c.traces_url.as_deref(), Some("https://ingest.example.com/v1/traces"));
         assert_eq!(c.extension_port, 9790);
         assert_eq!(c.max_queue_spans, 2000);
+        assert_eq!((c.chunk_spans, c.chunk_bytes), (500, 1 << 20));
+        assert_eq!((c.flush_budget_ms, c.flush_budget_per_chunk_ms, c.flush_budget_max_ms), (2000, 500, 5000));
         assert!(c.telemetry && c.report_updates);
         assert_eq!(c.telemetry_port, 9791);
         assert!(c.redact_keys.contains(&"apikey".to_string()) && c.redact_keys.contains(&"secretaccesskey".to_string()));
