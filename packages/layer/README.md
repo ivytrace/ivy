@@ -5,22 +5,32 @@ to an Ivy collector (or any OTLP/HTTP endpoint). Design notes live in
 [`docs/implementation/layer.md`](../../docs/implementation/layer.md); the span format in
 [`docs/implementation/span-conventions.md`](../../docs/implementation/span-conventions.md).
 
-Runtimes: tested on `nodejs22.x`; `nodejs20.x` should work. Pure JS, so x86_64 and arm64 share one zip.
+Runtimes: tested on `nodejs22.x`; `nodejs20.x` should work (needs Node ≥ 20.16 for
+`process.getBuiltinModule`). One zip for x86_64 and arm64: the tracer is JS, and the extension
+ships as a static binary per architecture behind a small launcher.
 
 ## Build
 
 ```sh
 pnpm --filter @ivy/layer build      # -> packages/layer/dist/layer.zip
 pnpm --filter @ivy/layer test       # unit tests (vitest)
+pnpm --filter @ivy/layer test:extension  # extension unit tests (cargo)
 pnpm --filter @ivy/layer e2e        # local end-to-end test in Docker (see below)
 ```
+
+The extension is Rust (`extension/`). The build uses `cargo zigbuild` if it is installed
+(`cargo install cargo-zigbuild`, zig, and the `x86_64-unknown-linux-musl` /
+`aarch64-unknown-linux-musl` targets), otherwise Docker (`extension/Dockerfile`). With
+`IVY_EXTENSION_BIN_DIR=<dir>` it takes prebuilt `ivy-extension-x86_64` / `ivy-extension-arm64`
+from that directory instead.
 
 Layer contents (mounted at `/opt`):
 
 ```
-ivy-wrapper                 exec wrapper (AWS_LAMBDA_EXEC_WRAPPER)
-nodejs/ivy/handler.mjs      in-process tracer + handler wrapper
-extensions/ivy-extension    Lambda extension that exports spans after the response
+ivy-wrapper                     exec wrapper (AWS_LAMBDA_EXEC_WRAPPER)
+nodejs/ivy/handler.mjs          in-process tracer + handler wrapper
+extensions/ivy-extension        launcher: execs the binary for this architecture
+ivy/bin/ivy-extension-<arch>    Lambda extension that exports spans after the response
 ```
 
 ## Publish

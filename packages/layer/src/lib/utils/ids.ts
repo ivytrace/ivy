@@ -1,12 +1,10 @@
-import { randomFillSync } from 'node:crypto';
-
 const POOL_SIZE = 4096;
 const pool = Buffer.allocUnsafe(POOL_SIZE);
 let offset = POOL_SIZE;
 
 function randomHex(bytes: number): string {
   if (offset + bytes > POOL_SIZE) {
-    randomFillSync(pool);
+    process.getBuiltinModule('node:crypto').randomFillSync(pool);
     offset = 0;
   }
   const hex = pool.toString('hex', offset, offset + bytes);
