@@ -6,3 +6,4 @@
 - Inside a package: `src/routes/<group>/<method>.ts` for API routes (e.g. `GET /api/invocations` → `src/routes/invocations/get.ts`), `src/lib/<folder>/*.ts` for helpers (always in a folder: `clickhouse/`, `services/`, `utils/`, or a feature name), `scripts/` for manually run scripts.
 - Vitest, with tests next to the source files they cover.
 - Deviations from the usual stack are deliberate (see `docs/spec/001-ivy-trace-v1.md`): pnpm instead of Yarn, ClickHouse instead of DynamoDB, docker compose instead of CDK/Lambda for the backend.
+- The UI (and later the website) is dark mode only. No light theme, no theme toggle.
