@@ -156,7 +156,17 @@ crashes are then exported at the next event (`SHUTDOWN` after the reset).
 
 ### Customer (CloudWatch)
 
-See "Throttles" below.
+`GetMetricData` is billed to the customer's AWS account at $0.01 per 1,000 metrics requested (us-east-1 list price;
+never covered by the free tier):
+
+| case | metrics requested | cost |
+|---|---|---|
+| account-level poll, per region with traced functions | 12/hour × 24 × 30 = 8,640 per month | ≈ $0.09 per region per month |
+| 3 regions | 25,920 per month | ≈ $0.26 per month |
+| follow-up after a poll that saw throttles | 1 per traced function in the region | 100 functions: $0.001 per throttled poll |
+| worst case: 100 traced functions, throttled in every poll | +864,000 per month | +$8.64 per month |
+
+The poll can be switched off per account (Settings → AWS accounts → "Throttle metrics").
 
 ## Throttles
 
