@@ -22,8 +22,8 @@ Environment variables (set in your shell or a `deploy/.env` file):
 | `IVY_OIDC_AUDIENCE` | the client ID | expected `aud` of access tokens (the API's resource identifier) |
 | `IVY_OIDC_SCOPES` | `openid email profile offline_access` | scopes the UI asks for |
 | `IVY_OIDC_ALLOW_AGENTS` | `true` | also accept tokens of agents registered under the client (`agt_<client>_…`) |
-| `IVY_SINGLE_TENANT` | `1` | every signed-in user works in the `default` workspace; `0` (with OIDC) turns on multiple workspaces, members and invitations (hosted; `docs/implementation/workspaces-projects.md`) |
-| `IVY_SMTP_URL`, `IVY_EMAIL_FROM` | | send invitation emails over SMTP (e.g. `smtps://USER:PASS@email-smtp.eu-west-1.amazonaws.com:465`, `Ivy <noreply@ivytrace.dev>`); unset, the UI shows the invite link to copy |
+| `IVY_SINGLE_TENANT` | `1` | every signed-in user works in the `default` workspace; `0` (with OIDC) turns on multiple workspaces, members and invitations (`docs/implementation/workspaces-projects.md`) |
+| `IVY_SMTP_URL`, `IVY_EMAIL_FROM` | | send invitation emails over SMTP (e.g. `smtps://USER:PASS@smtp.example.com:465`, `Ivy <noreply@example.com>`); unset, the UI shows the invite link to copy |
 | `IVY_SLACK_CLIENT_ID`, `IVY_SLACK_CLIENT_SECRET` | | a Slack app (from `deploy/slack-app-manifest.example.yml`) for Slack alerts per error group; also needs `IVY_PUBLIC_URL` and `IVY_SECRET_KEY` (see "Alerts" below) |
 | `IVY_DIGEST_CRON` | `0 8 * * 1` | when the weekly email digest goes out (five-field cron, UTC); the digest needs `IVY_SMTP_URL`, `IVY_EMAIL_FROM` and `IVY_PUBLIC_URL` |
 | `IVY_DIGEST_TO` | | comma-separated extra digest recipients for the `default` workspace (installs without sign-in have no members) |
@@ -99,7 +99,7 @@ With `IVY_INTERNAL_API_TOKEN` set:
 T=…   # IVY_INTERNAL_API_TOKEN
 curl -H "authorization: Bearer $T" localhost:3000/internal/workspaces                       # usage this month
 curl -H "authorization: Bearer $T" -X PUT localhost:3000/internal/workspaces/<tenant>/limits \
-  -H 'content-type: application/json' -d '{"plan":"Free","monthly_trace_quota":100000,"over_quota":"block"}'
+  -H 'content-type: application/json' -d '{"plan":"Free","monthly_trace_quota":50000,"over_quota":"block"}'
 curl -H "authorization: Bearer $T" -X DELETE localhost:3000/internal/workspaces/<tenant>/limits   # unlimited again
 ```
 

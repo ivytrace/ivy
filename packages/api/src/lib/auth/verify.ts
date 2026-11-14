@@ -41,7 +41,7 @@ async function discover(issuer: string): Promise<Discovery> {
 const str = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
 
 /**
- * The client a token was issued to. RFC 9068 tokens (Includable Auth) carry `client_id`; most other
+ * The client a token was issued to. RFC 9068 tokens carry `client_id`; most other
  * providers put it in `azp` (Auth0, Keycloak, Entra v2), Okta in `cid`, Entra v1 in `appid`.
  */
 const clientOf = (claims: JWTPayload) => str(claims.client_id) ?? str(claims.azp) ?? str(claims.cid) ?? str(claims.appid);

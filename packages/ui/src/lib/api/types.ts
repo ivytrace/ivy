@@ -17,7 +17,7 @@ export interface Config {
   aws?: { quick_create: boolean };
   /** Which alert channels this server has configured (env vars); each is hidden or disabled otherwise. */
   alerts?: { slack: boolean; email: boolean };
-  /** Hosted billing service; no billing buttons without it. */
+  /** Billing service (`IVY_BILLING_URL`); no billing buttons without it. */
   billing?: { url: string };
 }
 

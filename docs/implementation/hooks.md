@@ -1,13 +1,13 @@
 # Hooks
 
 Executable hooks, in the style of git hooks, let a deployment extend what Ivy does at a few control-plane
-moments without changing Ivy: hosted uses them to publish CloudFormation templates to S3 and to apply plan
-limits to new workspaces; self-hosted installs need none. This document is normative. Code:
+moments without changing Ivy: for example, to publish CloudFormation templates for quick-create links or to apply
+limits to new workspaces. Most self-hosted installs need none. This document is normative. Code:
 `packages/api/src/lib/hooks/` (`run.ts`, and `types.ts` with the payload types).
 
 ## Principles
 
-- **Hooks may set policy** (for example, hosted uses `on-workspace-created` to apply plan limits), **but Ivy itself
+- **Hooks may set policy** (for example, a deployment can use `on-workspace-created` to apply limits), **but Ivy itself
   never assumes a hook ran.** Notification hooks are at-most-once, so a deployment that relies on one for policy
   must also reconcile on a schedule. **Authentication and authorization never depend on hooks.**
 - Public Ivy has no plans or limit defaults: no limits row means unlimited.
@@ -131,7 +131,7 @@ counts as absent. Hooks are looked up on every call, so adding or removing one n
 
 ```json
 { "version": 1, "hook": "on-workspace-created", "id": "hk_3RkP…", "timestamp": "2026-11-14T15:00:00.000Z",
-  "instance": "https://ivytrace.dev", "data": { … } }
+  "instance": "https://ivy.example.com", "data": { … } }
 ```
 
 `id` is unique per run and appears in Ivy's log lines for it. `instance` is `IVY_PUBLIC_URL`, or the host name.

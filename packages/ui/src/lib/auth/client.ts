@@ -6,7 +6,7 @@ import { safeReturnTo } from "./return-to";
 export interface SignInOptions {
   returnTo?: string;
   loginHint?: string;
-  /** `signup` opens the provider's sign-up screen (Includable Auth); other providers ignore it. */
+  /** `signup` asks for the provider's sign-up screen where it has one; other providers ignore it. */
   screen?: string;
 }
 
@@ -27,7 +27,7 @@ export function createAuthClient(settings: AuthSettings) {
     post_logout_redirect_uri: `${origin}/`,
     response_type: "code",
     scope: settings.scopes,
-    // RFC 8707 resource indicator (Includable Auth, most providers); signIn also sends Auth0's `audience`
+    // RFC 8707 resource indicator (most providers); signIn also sends Auth0's `audience`
     resource: settings.audience,
     userStore: new WebStorageStateStore({ store: localStorage }),
     automaticSilentRenew: true,

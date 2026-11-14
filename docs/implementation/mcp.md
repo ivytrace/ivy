@@ -144,7 +144,7 @@ The MCP endpoint is an OAuth 2.1 protected resource:
 - `GET /.well-known/oauth-protected-resource` and the path-suffixed `/.well-known/oauth-protected-resource/mcp`
   (RFC 9728) return `{ resource, authorization_servers: [IVY_OIDC_ISSUER], bearer_methods_supported: ["header"],
   resource_name, resource_documentation }`. Without OIDC they answer 404.
-- `resource` is the canonical MCP URL: `IVY_MCP_RESOURCE` (e.g. `https://ivytrace.dev/mcp`, no trailing slash),
+- `resource` is the canonical MCP URL: `IVY_MCP_RESOURCE` (e.g. `https://ivy.example.com/mcp`, no trailing slash),
   else `IVY_PUBLIC_URL` + `/mcp`. With OIDC configured and neither set, startup fails.
 - No or invalid token: 401 with `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource/mcp"`
   (plus `error="invalid_token"` when a token was sent). Clients discover the authorization server from there.
@@ -165,14 +165,12 @@ API adapts `verifyAccessToken` to it (`lib/mcp/auth.ts`).
 
 #### What the authorization server must support for MCP clients
 
-Includable Auth supports all of this (includable/auth#5):
-
 - OAuth 2.0 Authorization Server Metadata (RFC 8414) or OIDC discovery at the issuer.
 - Authorization code flow with PKCE (S256) for public clients.
 - Dynamic Client Registration (RFC 7591) and Client ID Metadata Documents, since MCP clients register themselves.
-- Resource indicators (RFC 8707): tokens for the `resource` parameter `https://ivytrace.dev/mcp` carry that `aud`,
+- Resource indicators (RFC 8707): tokens for the `resource` parameter (e.g. `https://ivy.example.com/mcp`) carry that `aud`,
   distinct from the API audience, plus `parent_client_id` and `client_name`.
-- Redirect URIs on `http://localhost:<port>` / `http://127.0.0.1` for local clients, HTTPS callbacks for hosted ones.
+- Redirect URIs on `http://localhost:<port>` / `http://127.0.0.1` for local clients, HTTPS callbacks for web-based ones.
 - Refresh tokens, so agents keep working past the access token lifetime.
 
 ## MCP Apps

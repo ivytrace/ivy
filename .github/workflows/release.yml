@@ -1,6 +1,6 @@
 name: Release
 
-# Only pushes to main in this repository publish an image and trigger the hosted deploy.
+# Only pushes to main in this repository publish an image and trigger the optional downstream deploy.
 # Pull requests (including from forks) only run ci.yml, which has no access to secrets.
 on:
   push:
@@ -99,12 +99,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions: {}
     steps:
-      - name: Trigger ivytrace/ivy-hosted deploy
+      - name: Trigger downstream deploy
         env:
           TOKEN: ${{ secrets.HOSTED_DISPATCH_TOKEN }}
         run: |
           if [ -z "$TOKEN" ]; then
-            echo "::warning::HOSTED_DISPATCH_TOKEN is not set; skipping the hosted deploy trigger"
+            echo "::warning::HOSTED_DISPATCH_TOKEN is not set; skipping the downstream deploy trigger"
             exit 0
           fi
           curl -fsS -X POST https://api.github.com/repos/ivytrace/ivy-hosted/dispatches \

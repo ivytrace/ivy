@@ -125,8 +125,8 @@ forged `ivy.project_id` (and `ivy.tenant_id`) is overwritten, and a request with
 With auth off, or OIDC with `IVY_SINGLE_TENANT` unset/`1` (self-hosted default), there is exactly one workspace,
 `default`, and everyone using the install owns it: access is decided by who can reach Ivy or sign in at the IdP.
 Creating/deleting workspaces, members and invitations answer 403 and the UI hides them (`GET /api/config` →
-`workspaces.multi: false`). Renaming the workspace (not its slug), projects, keys and AWS work as usual. Hosted runs
-with `IVY_SINGLE_TENANT=0`.
+`workspaces.multi: false`). Renaming the workspace (not its slug), projects, keys and AWS work as usual. A multi-tenant
+install runs with `IVY_SINGLE_TENANT=0`.
 
 ### No passwords
 
@@ -149,8 +149,7 @@ deleted. Spans stay until retention removes them.
 
 **Invite.** An owner posts an email and role. Ivy creates a 32-byte random token, stores only its sha256, and returns
 the link `https://<host>/invite/<token>` once (host: `IVY_PUBLIC_URL`, else the dashboard's origin) for the UI to show
-and copy. With `IVY_SMTP_URL` and `IVY_EMAIL_FROM` set it also emails the link (nodemailer; hosted uses SES SMTP with a
-sender on the verified ivytrace.dev domain). A new invitation for the same email revokes the pending one.
+and copy. With `IVY_SMTP_URL` and `IVY_EMAIL_FROM` set it also emails the link (nodemailer, any SMTP server). A new invitation for the same email revokes the pending one.
 
 **Accept.** `/invite/<token>` in the UI requires sign-in (it goes through `/login` and comes back). The page shows the
 workspace and calls `POST /api/invitations/:token/accept`. Ivy accepts only when:
@@ -174,18 +173,18 @@ for the default an archive dialog with a select for the new default that spells 
 **Keys.** Per project: create (the key is shown once), list (prefix only), revoke. The auto-trace key of a project is
 listed as `auto-trace` and can be revoked to rotate it.
 
-## Hosted routing
+## Routing behind a shared domain
 
-The app's own paths that CloudFront must send to the app (in addition to those in `auth.md`): `/w/*`, `/invite/*` and
-`/welcome*`. `auth.md`, "What hosted CloudFront needs", has the full list.
+The app's own paths that a proxy in front of Ivy must send to the app (in addition to those in `auth.md`): `/w/*`,
+`/invite/*` and `/welcome*`. `auth.md`, "Sharing a domain with a website", has the full list.
 
 ## Configuration
 
 | variable | default | |
 |---|---|---|
 | `IVY_SINGLE_TENANT` | `1` | `0` (with OIDC) turns on multiple workspaces, members and invitations |
-| `IVY_SMTP_URL` | | SMTP URL for invitation emails, e.g. `smtps://USER:PASS@email-smtp.eu-west-1.amazonaws.com:465` |
-| `IVY_EMAIL_FROM` | | sender, e.g. `Ivy <noreply@ivytrace.dev>`; both are needed to send |
+| `IVY_SMTP_URL` | | SMTP URL for invitation emails, e.g. `smtps://USER:PASS@smtp.example.com:465` |
+| `IVY_EMAIL_FROM` | | sender, e.g. `Ivy <noreply@example.com>`; both are needed to send |
 | `IVY_PUBLIC_URL` | | base of invite links (else the request's origin) |
 | `IVY_SECRET_KEY` | | needed for auto-trace into any project but the default workspace's default project |
 

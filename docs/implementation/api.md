@@ -56,7 +56,7 @@ the dashboard's (`/w/:workspace/:project/…`); and agents/MCP tools can build t
 ### `GET /api/config`
 ```json
 { "version": "0.1.0",
-  "auth": { "enabled": true, "issuer": "https://auth.includable.com", "clientId": "ivy", "audience": "https://ivytrace.dev/api", "scopes": "openid email profile offline_access" },
+  "auth": { "enabled": true, "issuer": "https://auth.example.com", "clientId": "ivy", "audience": "https://ivy.example.com/api", "scopes": "openid email profile offline_access" },
   "workspaces": { "multi": true },
   "email": { "enabled": true },
   "alerts": { "slack": true, "email": true },
@@ -68,7 +68,7 @@ are set; `alerts.email` (the weekly digest) when `IVY_SMTP_URL`, `IVY_EMAIL_FROM
 With auth off: `"auth": { "enabled": false }` and `"workspaces": { "multi": false }`. `email.enabled` is true when
 `IVY_SMTP_URL` and `IVY_EMAIL_FROM` are set (invitations are then also emailed). `aws.quick_create` is true when
 the `publish-cfn-template` hook is installed (see "Hosting hooks"); otherwise connecting AWS is download-only.
-With `IVY_BILLING_URL` set it also has `"billing": { "url": "https://ivytrace.dev/billing" }`: the usage page then
+With `IVY_BILLING_URL` set it also has `"billing": { "url": "https://ivy.example.com/billing" }`: the usage page then
 shows owners "Upgrade" / "Manage billing" (`limits.md`).
 
 ## Account-level routes
@@ -136,7 +136,7 @@ deleted; retention drops them. `{ "deleted": true }`.
   `{ "items": [ { "id": "inv_…", "email": "erin@example.com", "role": "member", "status": "pending", "invited_by": "owner@example.com" | null, "created_at": "…", "expires_at": "…", "accepted_at": null } ] }`
 - `POST /api/w/:workspace/invitations`, body `{ "email": "erin@example.com", "role"?: "member" | "owner" }` → 201
   ```json
-  { "invitation": { "id": "inv_…", "…": "…" }, "url": "https://ivytrace.dev/invite/<token>",
+  { "invitation": { "id": "inv_…", "…": "…" }, "url": "https://ivy.example.com/invite/<token>",
     "email_sent": true, "email_error": null }
   ```
   The `url` (with the token) is returned only here; Ivy stores only the token's hash. It expires after 7 days and
@@ -151,8 +151,8 @@ is no per-project usage route.
 ```json
 { "workspace": "ten_4Fq…", "month": "2026-11",
   "period": { "start": "2026-11-01T00:00:00.000Z", "end": "2026-12-01T00:00:00.000Z" },
-  "traces": 62418,
-  "limits": { "plan": "Free", "monthly_trace_quota": 100000, "over_quota": "block", "source": "workspace" },
+  "traces": 31209,
+  "limits": { "plan": "Free", "monthly_trace_quota": 50000, "over_quota": "block", "source": "workspace" },
   "blocked": false }
 ```
 `monthly_trace_quota: null` is unlimited; `source: "unset"` means the workspace has no limits (unlimited, the default).
@@ -182,7 +182,7 @@ is no per-project usage route.
 - `GET /api/w/:workspace/p/:project/keys` (`?revoked=1` includes revoked) →
   `{ "items": [ { "id": "key_…", "name": "ci", "kind": "user" | "auto-trace" | "bootstrap", "prefix": "ivy_Ab12Cd", "created_at": "…", "revoked_at": null } ] }`
 - `POST /api/w/:workspace/p/:project/keys`, body `{ "name"?: "ci" }` → 201
-  `{ "id": "key_…", "name": "ci", "kind": "user", "prefix": "ivy_Ab12Cd", "created_at": "…", "revoked_at": null, "key": "ivy_Ab12Cd…", "endpoint": "https://ingest.ivytrace.dev" | null }`.
+  `{ "id": "key_…", "name": "ci", "kind": "user", "prefix": "ivy_Ab12Cd", "created_at": "…", "revoked_at": null, "key": "ivy_Ab12Cd…", "endpoint": "https://ingest.example.com" | null }`.
   `key` appears only in this response. 409 for an archived project.
 - `DELETE /api/w/:workspace/p/:project/keys/:id` → the revoked key. Ingest with it stops within a minute. Revoking
   the `auto-trace` key makes the next sync mint a new one and rewrite the project's functions. 409 for the
@@ -550,7 +550,7 @@ contract (envelope, kinds, timeouts, environment, payload types) is `hooks.md`. 
 | hook | kind | data → result | effect on the API |
 |---|---|---|---|
 | `publish-cfn-template` | provider | `{ workspace, connection, template }` → `{ url, expires_at? }` | `aws.quick_create` in `/api/config`; `quick_create_url` / `quick_create_error` on accounts |
-| `on-workspace-created` | notification | `{ workspace, owner }` | none (e.g. hosted applies plan limits) |
+| `on-workspace-created` | notification | `{ workspace, owner }` | none (e.g. a deployment applies limits) |
 | `on-member-joined` | notification | `{ workspace, member, invitation_id, invited_by }` | none |
 | `on-aws-account-connected` | notification | `{ workspace, connection }` | none |
 | `on-error-group-created` | notification | `{ workspace, project, group }` | none (fired by the alert evaluator, `alerts.md`) |
@@ -603,18 +603,18 @@ ends) and `{"code":8,"message":"Monthly trace quota reached (…). … Upgrade a
 For the operator's billing service; not part of the public contract and not in the OpenAPI document. Served by the
 API process at `/internal/*`, which only exists when `IVY_INTERNAL_API_TOKEN` is set (≥ 32 characters; otherwise every
 `/internal/*` path is 404). Every call needs `Authorization: Bearer $IVY_INTERNAL_API_TOKEN`: 401 otherwise. OIDC and
-workspace membership don't apply. Keep the prefix off public proxies (ivytrace.dev routes only `/api/*` and the app's
-paths to the API). Errors are `{ "error": "…" }` (400 invalid body or month, 404 unknown workspace).
+workspace membership don't apply. Keep the prefix off public proxies (route only `/api/*` and the app's paths to the
+API). Errors are `{ "error": "…" }` (400 invalid body or month, 404 unknown workspace).
 
 `:id` is the workspace (tenant) ID. `month` is `YYYY-MM` (UTC), default the current month. Usage objects are as in
 `GET /api/w/:workspace/usage`, plus the workspace's `name` and `slug`; the count is never cached here.
 
 ### `GET /internal/workspaces?month=&limits=unset`
 Every workspace with its traces in the month and its limits. `limits=unset` keeps only workspaces without a limits
-row (for a reconcile job that gives new workspaces a free tier).
+row (for a reconcile job that gives new workspaces default limits).
 ```json
 { "month": "2026-11", "items": [ { "name": "Acme", "slug": "acme", "workspace": "ten_…", "month": "2026-11", "period": { … },
-  "traces": 2481904, "limits": { "plan": "Pro", "monthly_trace_quota": 100000, "over_quota": "allow", "source": "workspace" },
+  "traces": 2481904, "limits": { "plan": "Pro", "monthly_trace_quota": 50000, "over_quota": "allow", "source": "workspace" },
   "blocked": false } ] }
 ```
 
@@ -622,7 +622,7 @@ row (for a reconcile job that gives new workspaces a free tier).
 One workspace's usage object.
 
 ### `PUT /internal/workspaces/:id/limits`
-Body `{ "plan": "Free", "monthly_trace_quota": 100000 | null, "over_quota": "block" | "allow" }` (all optional:
+Body `{ "plan": "Free", "monthly_trace_quota": 50000 | null, "over_quota": "block" | "allow" }` (all optional:
 `""`, `null` = unlimited, `allow`). Replaces the workspace's limits. The ingest routers pick it up within
 `IVY_QUOTA_REFRESH_SECONDS`.
 `{ "workspace": "ten_…", "limits": { …, "source": "workspace" }, "updated_at": "…" }`

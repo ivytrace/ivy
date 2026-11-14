@@ -3,7 +3,7 @@ import { apiFetch, ApiError } from "./client";
 export type BillingAction = "checkout" | "portal";
 
 /**
- * Asks the billing service (`/api/config` → `billing.url`) for a Stripe Checkout or Customer Portal
+ * Asks the billing service (`/api/config` → `billing.url`) for a checkout or billing portal
  * session with the user's token, and returns where to send the browser.
  */
 export async function billingSessionUrl(baseUrl: string, action: BillingAction, workspace: string): Promise<string> {

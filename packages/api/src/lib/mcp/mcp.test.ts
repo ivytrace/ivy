@@ -25,8 +25,8 @@ vi.mock('../auth/verify.js', async (original) => ({
   ...(await original<typeof import('../auth/verify.js')>()),
   verifyAccessToken: vi.fn(async (token: string, { audience }: { audience?: string } = {}) => {
     if (token === 'provider-down') throw new AuthError('Identity provider unreachable', 503);
-    if (token === 'mcp-token' && audience === 'https://ivytrace.dev/mcp') {
-      return { sub: 'idn_1', issuer: 'https://auth.ivytrace.dev', clientId: 'agt_ivy_1', agent: null };
+    if (token === 'mcp-token' && audience === 'https://ivy.example.com/mcp') {
+      return { sub: 'idn_1', issuer: 'https://auth.example.com', clientId: 'agt_ivy_1', agent: null };
     }
     throw new AuthError('Invalid token', 401);
   }),
@@ -222,18 +222,18 @@ describe('MCP endpoint in the API', () => {
   });
 
   it('is an OAuth protected resource checked with the OIDC verifier and the MCP audience', async () => {
-    vi.stubEnv('IVY_OIDC_ISSUER', 'https://auth.ivytrace.dev');
+    vi.stubEnv('IVY_OIDC_ISSUER', 'https://auth.example.com');
     vi.stubEnv('IVY_OIDC_CLIENT_ID', 'ivy-dashboard');
-    vi.stubEnv('IVY_MCP_RESOURCE', 'https://ivytrace.dev/mcp');
+    vi.stubEnv('IVY_MCP_RESOURCE', 'https://ivy.example.com/mcp');
     const app = new Hono();
     mountAgentSurface(app, fixedWorkspaceAccess(workspace));
 
     const metadata = await (await app.request('/.well-known/oauth-protected-resource/mcp')).json();
-    expect(metadata).toMatchObject({ resource: 'https://ivytrace.dev/mcp', authorization_servers: ['https://auth.ivytrace.dev'] });
+    expect(metadata).toMatchObject({ resource: 'https://ivy.example.com/mcp', authorization_servers: ['https://auth.example.com'] });
 
     const missing = await app.request('/mcp', { method: 'POST' });
     expect(missing.status).toBe(401);
-    expect(missing.headers.get('www-authenticate')).toBe('Bearer resource_metadata="https://ivytrace.dev/.well-known/oauth-protected-resource/mcp"');
+    expect(missing.headers.get('www-authenticate')).toBe('Bearer resource_metadata="https://ivy.example.com/.well-known/oauth-protected-resource/mcp"');
 
     const apiToken = await app.request('/mcp', { method: 'POST', headers: { authorization: 'Bearer api-token' } });
     expect(apiToken.status).toBe(401);
@@ -241,11 +241,11 @@ describe('MCP endpoint in the API', () => {
 
     const client = await connect(app, { authorization: 'Bearer mcp-token' });
     expect((await client.listTools()).tools).toHaveLength(8);
-    expect(verifyAccessToken).toHaveBeenCalledWith('mcp-token', { audience: 'https://ivytrace.dev/mcp', mcpClients: true });
+    expect(verifyAccessToken).toHaveBeenCalledWith('mcp-token', { audience: 'https://ivy.example.com/mcp', mcpClients: true });
   });
 
   it('answers 503 when the identity provider is unreachable', async () => {
-    vi.stubEnv('IVY_OIDC_ISSUER', 'https://auth.ivytrace.dev');
+    vi.stubEnv('IVY_OIDC_ISSUER', 'https://auth.example.com');
     vi.stubEnv('IVY_OIDC_CLIENT_ID', 'ivy-dashboard');
     vi.stubEnv('IVY_PUBLIC_URL', 'https://ivy.example.com');
     const app = appWith();
