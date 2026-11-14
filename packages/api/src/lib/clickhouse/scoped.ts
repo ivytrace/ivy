@@ -15,6 +15,12 @@ export const TENANT_SCOPED_TABLES = [
   'invitations',
   'aws_project_rules',
   'workspace_limits',
+  'alert_settings',
+  'slack_integrations',
+  'alert_state',
+  'digest_settings',
+  'notification_prefs',
+  'digest_sends',
 ];
 
 /** Span tables, keyed (tenant, project, …): reads also need a project filter, or an explicit "all projects". */

@@ -413,3 +413,104 @@ CREATE TABLE IF NOT EXISTS ivy_control.workspace_limits
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY tenant_id;
+
+-- Alerts (docs/implementation/alerts.md).
+
+-- Per-project alert settings. No row means the defaults: Slack on (once a channel is connected),
+-- first seen, then at most every 60 minutes or every 100 occurrences, throttles off.
+CREATE TABLE IF NOT EXISTS ivy_control.alert_settings
+(
+    `tenant_id` String,
+    `project_id` String,
+    `slack_enabled` Bool DEFAULT true,
+    `interval_minutes` UInt32 DEFAULT 60,
+    `every_occurrences` UInt32 DEFAULT 100,
+    `include_throttles` Bool DEFAULT false,
+    `updated_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, project_id);
+
+-- Slack channels of a project (OAuth v2, scope incoming-webhook). The webhook URL is encrypted with
+-- IVY_SECRET_KEY. `status` 'broken' after Slack rejected the webhook (revoked, channel archived).
+CREATE TABLE IF NOT EXISTS ivy_control.slack_integrations
+(
+    `tenant_id` String,
+    `project_id` String,
+    `id` String,
+    `team_id` String,
+    `team_name` String,
+    `channel` String,
+    `channel_id` String,
+    `encrypted_webhook_url` String,
+    `configuration_url` String DEFAULT '',
+    `status` LowCardinality(String) DEFAULT 'ok',
+    `error` String DEFAULT '',
+    `created_by` String DEFAULT '',
+    `created_at` DateTime64(3, 'UTC'),
+    `updated_at` DateTime64(3, 'UTC'),
+    `deleted` UInt8 DEFAULT 0
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, project_id, id);
+
+-- What was last sent to Slack per error group: first-seen detection and the throttle.
+CREATE TABLE IF NOT EXISTS ivy_control.alert_state
+(
+    `tenant_id` String,
+    `project_id` String,
+    `fingerprint` String,
+    `first_notified_at` DateTime64(3, 'UTC'),
+    `last_notified_at` DateTime64(3, 'UTC'),
+    `occurrences_at_last_notify` UInt64,
+    `updated_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, project_id, fingerprint);
+
+-- Weekly email digest: per-workspace switch (no row = on).
+CREATE TABLE IF NOT EXISTS ivy_control.digest_settings
+(
+    `tenant_id` String,
+    `enabled` Bool DEFAULT true,
+    `updated_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY tenant_id;
+
+-- A user's digest choice per workspace (no row = subscribed). `sub` is the OIDC subject, or
+-- `email:<address>` for IVY_DIGEST_TO recipients. Also the recipient list in single-workspace mode.
+CREATE TABLE IF NOT EXISTS ivy_control.notification_prefs
+(
+    `tenant_id` String,
+    `sub` String,
+    `email` String DEFAULT '',
+    `digest` Bool DEFAULT true,
+    `updated_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, sub);
+
+-- Digest sends, one row per workspace and week (Monday, UTC): makes the weekly send idempotent.
+CREATE TABLE IF NOT EXISTS ivy_control.digest_sends
+(
+    `tenant_id` String,
+    `week` Date,
+    `recipients` UInt32,
+    `sent_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(sent_at)
+ORDER BY (tenant_id, week);
+
+-- Single-instance leases for background jobs (alert evaluator, digest) across API processes.
+CREATE TABLE IF NOT EXISTS ivy_control.job_leases
+(
+    `name` String,
+    `holder` String,
+    `since` DateTime64(3, 'UTC'),
+    `expires_at` DateTime64(3, 'UTC'),
+    `updated_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (name, holder)
+TTL toDateTime(expires_at) + INTERVAL 1 DAY;

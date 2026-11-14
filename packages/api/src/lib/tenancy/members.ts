@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { readAuthConfig } from '../auth/config.js';
+import { rememberDefaultUser } from '../alerts/prefs.js';
 import { notify } from '../hooks/run.js';
 import { authUser, type AuthUser } from '../auth/user.js';
 import type { Membership, WorkspaceAccess } from './context.js';
@@ -118,7 +119,10 @@ const matches = (t: TenantRecord, ref: string) => t.id === ref || t.slug === ref
  */
 export const userWorkspaceAccess = (): WorkspaceAccess => ({
   async list(c: Context) {
-    if (!multiWorkspaceMode()) return [await defaultMembership()];
+    if (!multiWorkspaceMode()) {
+      void rememberDefaultUser(authUser(c));
+      return [await defaultMembership()];
+    }
     const user = authUser(c);
     if (!user) throw new HTTPException(401, { message: 'Authentication required' });
     let members = await membershipsOf(user.sub);

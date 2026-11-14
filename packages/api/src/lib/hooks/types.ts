@@ -56,6 +56,30 @@ export interface AwsAccountConnectedData {
   connection: { id: string; name: string; account_id: string; stack_region: string; regions: string[]; all_regions: boolean };
 }
 
+/**
+ * `on-error-group-created`: the alert evaluator saw an error group for the first time (within about a
+ * minute of its first occurrence). Never carries payloads or log lines.
+ */
+export interface ErrorGroupCreatedData {
+  workspace: WorkspaceRef;
+  project: { id: string; slug: string; name: string };
+  group: {
+    /** The error group's fingerprint (`throttled:<region>:<function>` for throttles). */
+    fingerprint: string;
+    kind: 'error' | 'throttle';
+    function: string;
+    error_type: string;
+    /** At most 500 characters. */
+    error_message: string;
+    failure_kind: 'init_failed' | 'out_of_memory' | 'timed_out' | 'crashed' | null;
+    first_seen: string;
+    occurrences: number;
+    sample_trace_id: string | null;
+    /** The group's latest trace (or errors page) in the dashboard; null without IVY_PUBLIC_URL. */
+    url: string | null;
+  };
+}
+
 export interface ProviderHooks {
   'publish-cfn-template': { data: PublishCfnTemplateData; result: PublishCfnTemplateResult };
 }
@@ -64,6 +88,7 @@ export interface NotificationHooks {
   'on-workspace-created': WorkspaceCreatedData;
   'on-member-joined': MemberJoinedData;
   'on-aws-account-connected': AwsAccountConnectedData;
+  'on-error-group-created': ErrorGroupCreatedData;
 }
 
 export type ProviderHookName = keyof ProviderHooks;

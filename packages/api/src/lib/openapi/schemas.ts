@@ -55,8 +55,12 @@ export const schemas = {
     workspaces: object({ multi: { type: 'boolean', description: 'False: one workspace (`default`), no members or invitations.' } }),
     email: object({ enabled: { type: 'boolean', description: 'Invitations are also emailed.' } }),
     aws: object({ quick_create: { type: 'boolean', description: 'The publish-cfn-template hook is installed (one-click CloudFormation links).' } }),
+    alerts: object({
+      slack: { type: 'boolean', description: 'Slack alerts are configured (IVY_SLACK_CLIENT_ID, IVY_SLACK_CLIENT_SECRET, IVY_PUBLIC_URL, IVY_SECRET_KEY).' },
+      email: { type: 'boolean', description: 'The weekly email digest is configured (IVY_SMTP_URL, IVY_EMAIL_FROM, IVY_PUBLIC_URL).' },
+    }),
     billing: object({ url: { type: 'string', description: 'Billing service for Upgrade / Manage billing (IVY_BILLING_URL); absent without one.' } }),
-  }, ['version', 'auth', 'workspaces', 'email', 'aws']),
+  }, ['version', 'auth', 'workspaces', 'email', 'aws', 'alerts']),
 
   Limits: object({
     plan: { type: 'string', description: 'Plan label; empty when none.' },
@@ -282,4 +286,45 @@ export const schemas = {
       }),
     },
   }),
+
+  AlertSettings: object({
+    slack_enabled: bool,
+    interval_minutes: { type: 'integer', minimum: 1, maximum: 10080, description: 'At most one message per group this often (default 60)…' },
+    every_occurrences: { type: 'integer', minimum: 1, maximum: 1000000, description: '…or after this many new occurrences, whichever comes first (default 100).' },
+    include_throttles: { type: 'boolean', description: 'Also alert on the synthetic Throttled groups (default false).' },
+  }),
+  AlertSettingsUpdate: object(
+    { slack_enabled: bool, interval_minutes: int, every_occurrences: int, include_throttles: bool },
+    [],
+  ),
+  SlackChannel: object({
+    id: str,
+    team_name: str,
+    channel: str,
+    status: { type: 'string', enum: ['ok', 'broken'], description: '`broken` after Slack rejected the webhook (revoked, channel archived).' },
+    error: nstr,
+    configuration_url: nstr,
+    created_at: time,
+  }),
+  Alerts: object({
+    available: object({ slack: bool, missing: { ...strs, description: 'Environment variables Slack still needs.' } }),
+    can_edit: { type: 'boolean', description: 'Owners change alert settings.' },
+    settings: ref('AlertSettings'),
+    integrations: { type: 'array', items: ref('SlackChannel') },
+  }),
+  SlackTestResult: object({ ok: bool, error: nstr, integration: ref('SlackChannel') }),
+  Digest: object({
+    available: bool,
+    missing: strs,
+    schedule: { type: 'string', description: 'Five-field cron, UTC (IVY_DIGEST_CRON; default Monday 08:00).' },
+    enabled: bool,
+    can_edit: bool,
+    subscribed: { type: ['boolean', 'null'], description: 'Whether you get it; null without sign-in.' },
+    recipients: int,
+  }),
+  DigestUpdate: object({ enabled: bool }),
+  DigestPreview: object({ subject: str, html: str, text: str, period: object({ from: time, to: time }), empty: bool }),
+  NotificationItem: object({ workspace: object({ id: str, slug: str, name: str }), digest: bool }),
+  Notifications: object({ email: nstr, digest_available: bool, items: { type: 'array', items: ref('NotificationItem') } }),
+  NotificationUpdate: object({ workspace: { type: 'string', description: 'Slug or ID.' }, digest: bool }),
 };
