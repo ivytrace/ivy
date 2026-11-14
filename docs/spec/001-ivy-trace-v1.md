@@ -2,7 +2,7 @@
 
 **What:** Open-source observability for AWS Lambda (Node.js first). One container you can self-host on a single box, plus a multi-tenant hosted version at ivytrace.dev running the same stack. Successor to `includable/trace-stack`: reuse its Lambda layer and auto-instrumentation ideas, and replace its DynamoDB + SQS storage.
 
-**v1 goal:** Thomas's own products (Examplary, Includable Auth, Stapsprong, SAC, Queues) are fully traced in Ivy Trace and debugged through its UI, MCP server and CLI.
+**v1 goal:** a handful of real production Lambda workloads are fully traced in Ivy and debugged through its UI and MCP server.
 
 ## Fixed decisions
 - TypeScript everywhere, pnpm monorepo.
@@ -64,6 +64,6 @@ Use `tools/loadgen` at 300k invocations/day × 45 spans, with 30 days of data, o
 ## Not in v1
 AI root-cause summaries, replay, LLM-call instrumentation, alerting beyond a webhook on new error groups, runtimes other than Node.js, high availability.
 
-## Open questions for Thomas
+## Open questions
 - License: MIT, or source-available like Sentry's FSL?
 - Does the Collector's ClickHouse exporter schema fit, or do we write our own exporter?

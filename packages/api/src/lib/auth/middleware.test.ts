@@ -199,7 +199,7 @@ describe('auth enabled', () => {
   });
 
   it('refuses tokens issued to unrelated clients', async () => {
-    const res = await get('/api/me', await sign({ client_id: 'brandwatcher' }));
+    const res = await get('/api/me', await sign({ client_id: 'other-app' }));
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: 'Access token was issued to another client' });
     expect((await get('/api/me', await sign({ client_id: undefined, azp: 'ivy-admin' }))).status).toBe(401);
