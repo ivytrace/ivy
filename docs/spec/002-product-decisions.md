@@ -100,3 +100,15 @@ live in `docs/implementation/`.
 - The layer captures them without an OpenTelemetry SDK and steps aside when the app registers its own tracer
   provider. LLM attributes are normalized when read (`@ivy/spans`), not at ingest, so stored spans stay as the
   producer sent them. Implementation: `docs/implementation/llm-spans.md`.
+
+## Alerts
+- Alerts: Slack per error group (first seen, then at most every 60 min or 100 occurrences, customizable per project)
+  and a weekly email digest; each only when configured. This replaces 001's "alerting beyond a webhook on new error
+  groups: not in v1".
+- Slack connects through Ivy's Slack app with only the `incoming-webhook` scope ("Add to Slack" per project; the
+  installer picks the channel). Throttles alert only when a project turns them on.
+- Alerts and the digest never carry payloads: type, trimmed message, function, counts, a stack frame and links.
+- The digest goes to a workspace's members every Monday 08:00 UTC by default, skips weeks without data, can be
+  switched off per workspace by owners, and every member can unsubscribe (one click in the email, no sign-in).
+- Self-hosters get the `on-error-group-created` hook for their own integrations. Implementation:
+  `docs/implementation/alerts.md`.

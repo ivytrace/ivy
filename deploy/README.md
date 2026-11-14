@@ -24,6 +24,10 @@ Environment variables (set in your shell or a `deploy/.env` file):
 | `IVY_OIDC_ALLOW_AGENTS` | `true` | also accept tokens of agents registered under the client (`agt_<client>_…`) |
 | `IVY_SINGLE_TENANT` | `1` | every signed-in user works in the `default` workspace; `0` (with OIDC) turns on multiple workspaces, members and invitations (hosted; `docs/implementation/workspaces-projects.md`) |
 | `IVY_SMTP_URL`, `IVY_EMAIL_FROM` | | send invitation emails over SMTP (e.g. `smtps://USER:PASS@email-smtp.eu-west-1.amazonaws.com:465`, `Ivy <noreply@ivytrace.dev>`); unset, the UI shows the invite link to copy |
+| `IVY_SLACK_CLIENT_ID`, `IVY_SLACK_CLIENT_SECRET` | | a Slack app (from `deploy/slack-app-manifest.example.yml`) for Slack alerts per error group; also needs `IVY_PUBLIC_URL` and `IVY_SECRET_KEY` (see "Alerts" below) |
+| `IVY_DIGEST_CRON` | `0 8 * * 1` | when the weekly email digest goes out (five-field cron, UTC); the digest needs `IVY_SMTP_URL`, `IVY_EMAIL_FROM` and `IVY_PUBLIC_URL` |
+| `IVY_DIGEST_TO` | | comma-separated extra digest recipients for the `default` workspace (installs without sign-in have no members) |
+| `IVY_ALERTS_INTERVAL_SECONDS` | `60` | how often the alert evaluator runs; `0` turns alerts and the digest off in that API process |
 | `IVY_INGEST_API_KEY` | `dev-ingest-key` | key of the `default` workspace's default project, created on startup |
 | `IVY_COLLECTOR_TOKEN` | `dev-collector-token` | shared secret between the router and the internal collector; set your own |
 | `IVY_SECRET_KEY` | | encrypts the per-project auto-trace keys; needed for auto-trace into any project other than the default workspace's default project |
@@ -100,6 +104,28 @@ curl -H "authorization: Bearer $T" -X DELETE localhost:3000/internal/workspaces/
 ```
 
 Over the quota, ingest answers 429 with `Retry-After`. The dashboard shows usage under Settings → Usage.
+
+## Alerts
+
+Slack messages per error group (first seen, then at most every 60 minutes or 100 occurrences, per project) and a
+weekly email digest. Each is only on when its variables are set; the dashboard explains what is missing
+(`docs/implementation/alerts.md`).
+
+**Slack**, once per install:
+
+1. At https://api.slack.com/apps choose *Create New App → From an app manifest*, pick a workspace you develop in, and
+   paste `deploy/slack-app-manifest.example.yml` with `https://ivy.example.com` replaced by your `IVY_PUBLIC_URL`
+   (the redirect URL must be exactly `<IVY_PUBLIC_URL>/api/slack/oauth/callback`).
+2. Under *Basic Information → App Credentials*, copy the Client ID and Client Secret into `IVY_SLACK_CLIENT_ID` and
+   `IVY_SLACK_CLIENT_SECRET`. Set `IVY_PUBLIC_URL` and `IVY_SECRET_KEY` (e.g. `openssl rand -base64 32`) if you
+   haven't already, and restart the API.
+3. To let other Slack workspaces install it, turn on *Manage Distribution → Public Distribution* (not needed for
+   your own workspace).
+4. In Ivy: *Settings → Alerts*, pick a project, *Add to Slack*, choose a channel, then *Send test message*.
+
+**Email digest**: set `IVY_SMTP_URL`, `IVY_EMAIL_FROM` and `IVY_PUBLIC_URL`. It goes to the workspace's members
+(or, without sign-in, to `IVY_DIGEST_TO`) on Mondays at 08:00 UTC; owners switch it off under *Settings → Email
+digest*, everyone can unsubscribe from the email or under *Notifications*.
 
 ## Updating an existing volume
 
