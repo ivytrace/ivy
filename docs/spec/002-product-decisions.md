@@ -37,6 +37,9 @@ live in `docs/implementation/`.
   signed-in user whose email matches and is verified by the identity provider.
 - Self-hosted without sign-in, or with `IVY_SINGLE_TENANT` on, has one workspace and no member management.
 - Moving a function to another project affects only new data; data already ingested stays where it is.
+- **"All projects"** is a scope of its own: Functions (with its charts), Invocations and Errors work across every
+  project of the workspace, each row labelled with its project and linking into it. It is the first entry of the
+  project switcher and can be the remembered last choice. A single trace always lives in one project.
 
 ## Authentication
 - Dashboard, API and MCP: **either no auth or OIDC**, never passwords or basic auth, not even temporarily.

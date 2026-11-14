@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, Navigate, useLocation, useParams, useSearchParams } from "react-router";
 import { ExternalLink, ScrollText } from "lucide-react";
 
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
@@ -17,9 +17,9 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { ApiError } from "@/lib/api/client";
-import { useTrace } from "@/lib/api/hooks";
+import { useTrace, useTraceProject } from "@/lib/api/hooks";
 import { PickProject } from "@/components/common/pick-project";
-import { ALL_PROJECTS, invocationsLink } from "@/lib/links/links";
+import { ALL_PROJECTS, invocationsLink, traceLink } from "@/lib/links/links";
 import { useScope } from "@/lib/links/use-scope";
 import type { GraphNode } from "@/lib/spans/graph";
 import { LlmUsageTable } from "@/components/trace/llm-details";
@@ -260,18 +260,35 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
   );
 }
 
+/** A year back: longer than any retention, so the lookup finds every trace still stored. */
+const LOOKUP_DAYS = 366;
+
+/**
+ * A trace opened under "All projects" (an old link, ⌘K): traces live in one project, so this finds the
+ * trace's project and redirects there, keeping `?invocation=`. Asks to pick a project when it can't.
+ */
+function TraceInAllProjects({ workspace, traceId }: { workspace: string; traceId: string }) {
+  const { search, hash } = useLocation();
+  const [range] = useState(() => {
+    const now = Date.now();
+    return { from: new Date(now - LOOKUP_DAYS * 86_400_000).toISOString(), to: new Date(now + 60_000).toISOString() };
+  });
+  const { project, error } = useTraceProject(workspace, traceId, range);
+  if (project) return <Navigate to={`${traceLink({ workspace, project }, traceId)}${search}${hash}`} replace />;
+  if (project === undefined && !error) return <LoadingState className="flex-1" label="Finding the trace's project…" />;
+  return (
+    <div className="p-6 md:p-8">
+      <PickProject workspace={workspace} page="invocations" />
+    </div>
+  );
+}
+
 export default function TraceDetails() {
   const { traceId = "" } = useParams();
   const scope = useScope();
   const { data, error, mutate } = useTrace(traceId);
 
-  if (scope.project === ALL_PROJECTS) {
-    return (
-      <div className="p-6 md:p-8">
-        <PickProject workspace={scope.workspace} page="invocations" />
-      </div>
-    );
-  }
+  if (scope.project === ALL_PROJECTS) return <TraceInAllProjects workspace={scope.workspace} traceId={traceId} />;
   if (error) {
     return error instanceof ApiError && error.status === 404 ? (
       <EmptyState

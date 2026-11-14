@@ -11,14 +11,11 @@ import { Tooltipped } from "@/components/ui/tooltipped";
 import { useTimeRange } from "@/components/layout/time-range";
 import { useErrors, useFunctions } from "@/lib/api/hooks";
 import type { ErrorGroup } from "@/lib/api/types";
-import { ALL_PROJECTS, invocationsLink, pageLink, traceLink, type Scope } from "@/lib/links/links";
+import { ALL_PROJECTS, invocationsLink, pageLink, rowScope, traceLink, type Scope } from "@/lib/links/links";
 import { useScope } from "@/lib/links/use-scope";
 import { formatAgo, formatNumber, formatTimestamp } from "@/lib/utils/format";
 
 const ALL = "__all";
-
-/** Rows of the all-projects view link into the row's own project. */
-const rowScope = (scope: Scope, g: ErrorGroup): Scope => ({ workspace: scope.workspace, project: g.project ?? scope.project });
 
 function columnsFor(scope: Scope): ColumnDef<ErrorGroup, unknown>[] {
   const all = scope.project === ALL_PROJECTS;
@@ -64,7 +61,7 @@ function columnsFor(scope: Scope): ColumnDef<ErrorGroup, unknown>[] {
           header: "Project",
           cell: ({ row }: { row: { original: ErrorGroup } }) =>
             row.original.project ? (
-              <Link to={pageLink(rowScope(scope, row.original), "errors")} className="font-mono text-xs hover:underline">
+              <Link to={pageLink(rowScope(scope, row.original), "errors")} className="whitespace-nowrap font-mono text-xs text-muted-foreground hover:text-foreground">
                 {row.original.project}
               </Link>
             ) : null,

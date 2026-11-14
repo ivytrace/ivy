@@ -195,7 +195,15 @@ Workspace-wide (every project of the workspace), under `/api/w/:workspace`:
 | route | |
 |---|---|
 | `GET …/functions` | function overview; each item also has `"project_id": "prj_…", "project": "checkout-prod"` |
+| `GET …/invocations` | invocations of every project, same filters and cursor pagination; each item also has `project_id` and `project` |
 | `GET …/errors` | error groups; each item also has `project_id` and `project` |
+| `GET …/stats/timeseries` | totals over time, summed over every project; `project` (slug or ID) narrows to one |
+
+These routes are mounted with `allProjects()`: they read the tenant explicitly without a project filter, and the query
+guard still requires the tenant filter on every table reference (`workspaces-projects.md`, "The query guard knows
+projects"). There is no workspace-wide trace route: open a trace under the project an invocation row names. A function
+name used in two projects is two rows in `functions`; `stats/timeseries?function=` sums both unless `project` is given.
+Failure fields (`failure_phase`, `failure_kind`, `synthetic`) and throttles behave as in the project routes.
 
 A trace or invocation from another project of the same workspace is not visible under a project's routes (404 /
 not listed).
@@ -230,7 +238,8 @@ Query: `function`, `status` (`ok`|`error`), `q` (free text: matches request ID, 
   "memory_limit_mb": 256, "failure_phase": null, "failure_kind": null, "synthetic": false, "init_duration_ms": null
 } ], "next_cursor": "…" | null }
 ```
-Sorted by `ts` descending.
+Sorted by `ts` descending. Pagination is keyset on `(ts, span_id)`, so workspace-wide pages run across projects
+without gaps or repeats.
 
 Failures outside the handler (reported by the Ivy extension from the Lambda Telemetry API, `platform-failures.md`)
 have `failure_phase` `init` or `invoke` and a `failure_kind`: `init_failed`, `out_of_memory`, `timed_out` or `crashed`
@@ -282,6 +291,8 @@ requests never reach the function, so there is no trace), `failure_kind: null`. 
 
 ### `GET …/stats/timeseries`
 Query: `function` (optional), `bucket` (`1m`|`5m`|`15m`|`1h`|`1d`, default picked from range to keep about 100 points or fewer).
+Workspace-wide also `project` (slug or ID; 404 when the workspace has no such project), to tell apart a function name
+that exists in several projects.
 ```json
 { "items": [ { "ts": "…", "invocations": 10, "errors": 1, "p95_ms": 300.1, "throttles": 0 } ] }
 ```
@@ -493,7 +504,9 @@ Remote MCP server (Streamable HTTP, stateless, JSON responses) with the tools `l
 `find_failing_invocations`, `search_invocations`, `list_error_groups`, `get_trace_summary`, `compare_invocations`,
 and the MCP Apps tools `render_waterfall` and `render_graph` (views served as `ui://ivy/*.html` resources). Tools
 cover every workspace the caller is a member of, one tenant-scoped read per workspace, unless given `workspace`;
-an optional `project` (slug or ID) narrows them to that project.
+an optional `project` (slug or ID) narrows them to that project. Without it they read through the same workspace-wide
+data functions as the routes above (`lib/data/*` with an all-projects scope), so results match the dashboard's
+"All projects", and each line is labelled `[workspace/project]`.
 With OIDC configured it needs a bearer token whose audience is `IVY_MCP_RESOURCE` (MCP clients registered under
 `IVY_OIDC_CLIENT_ID` are accepted there), and answers 401 with `WWW-Authenticate: Bearer resource_metadata="…"`
 otherwise. Details: `mcp.md`.

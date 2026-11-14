@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accountLink, invocationsLink, legacyTarget, parseScope, pickProject, pickWorkspace, traceLink } from "./links";
+import { accountLink, invocationsLink, legacyTarget, parseScope, pickProject, pickWorkspace, rowScope, switchProjectLink, traceLink } from "./links";
 
 const scope = { workspace: "acme", project: "checkout-prod" };
 
@@ -65,5 +65,33 @@ describe("picking the scope to open", () => {
     expect(pickProject(projects, "acme", { workspace: "acme", project: "old" })).toBe("default");
     expect(pickProject([projects[1]], "acme", null)).toBe("checkout-prod");
     expect(pickProject([], "acme", null)).toBe("all");
+  });
+});
+
+describe("all projects", () => {
+  const all = { workspace: "acme", project: "all" };
+
+  it("links rows of all-projects lists into their own project", () => {
+    expect(traceLink(rowScope(all, { project: "checkout-staging" }), "abc", "s1")).toBe("/w/acme/checkout-staging/traces/abc?invocation=s1");
+    expect(invocationsLink(rowScope(all, { project: "billing-api-prod" }), { function: "f" })).toBe("/w/acme/billing-api-prod/invocations?function=f");
+    // Project-scoped rows carry no project and stay where they are.
+    expect(rowScope(scope, {})).toEqual(scope);
+  });
+
+  it("keeps the list page when switching project, including to and from all", () => {
+    expect(switchProjectLink("/w/acme/checkout-prod/invocations", all)).toBe("/w/acme/all/invocations");
+    expect(switchProjectLink("/w/acme/all/errors", scope)).toBe("/w/acme/checkout-prod/errors");
+    expect(switchProjectLink("/w/acme/all/functions/", scope)).toBe("/w/acme/checkout-prod/functions");
+  });
+
+  it("opens Functions when the page makes no sense in the target (a trace, settings)", () => {
+    expect(switchProjectLink("/w/acme/checkout-prod/traces/abc", all)).toBe("/w/acme/all/functions");
+    expect(switchProjectLink("/w/acme/settings/projects", all)).toBe("/w/acme/all/functions");
+    expect(switchProjectLink("/w/acme/settings/general", scope)).toBe("/w/acme/checkout-prod/functions");
+  });
+
+  it("sends old links to all projects when that was the last choice", () => {
+    expect(legacyTarget("/invocations", all)).toBe("/w/acme/all/invocations");
+    expect(legacyTarget("/traces/abc", all)).toBe("/w/acme/all/traces/abc");
   });
 });

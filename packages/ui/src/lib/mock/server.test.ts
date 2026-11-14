@@ -51,10 +51,42 @@ describe("mock API: workspaces and data", () => {
     expect(errors.items.every((i) => i.status === "error" && i.function === "checkout-createOrder")).toBe(true);
 
     // Other projects don't see it; all projects do, labelled.
-    expect(call<{ items: FunctionSummary[] }>("GET", "/api/w/acme/p/checkout-staging/functions?since=7d").body.items).toEqual([]);
+    expect(call<{ items: FunctionSummary[] }>("GET", "/api/w/acme/p/billing-api-prod/functions?since=7d").body.items.map((f) => f.name)).not.toContain(
+      "orders-processQueue",
+    );
     const all = call<{ items: FunctionSummary[] }>("GET", "/api/w/acme/functions?since=7d").body.items;
-    expect(new Set(all.map((f) => f.project))).toEqual(new Set(["checkout-prod", "billing-api-prod", "billing-api-staging", "support-api-prod"]));
+    expect(new Set(all.map((f) => f.project))).toEqual(
+      new Set(["checkout-prod", "checkout-staging", "billing-api-prod", "billing-api-staging", "support-api-prod"]),
+    );
+    // One function name in two projects: two rows.
+    expect(all.filter((f) => f.name === "checkout-createOrder").map((f) => f.project).sort()).toEqual(["checkout-prod", "checkout-staging"]);
     expect(call<{ items: ErrorGroup[] }>("GET", "/api/w/acme/errors?since=7d").body.items[0].project).toBeTruthy();
+  });
+
+  it("serves workspace-wide invocations and timeseries over every project", () => {
+    const call = client();
+    const page1 = call<InvocationsResponse>("GET", "/api/w/acme/invocations?since=7d&limit=50").body;
+    expect(page1.items).toHaveLength(50);
+    expect(page1.items.every((i) => i.project && i.project_id)).toBe(true);
+    expect(new Set(page1.items.map((i) => i.project)).size).toBeGreaterThan(1);
+    const page2 = call<InvocationsResponse>("GET", `/api/w/acme/invocations?since=7d&limit=50&cursor=${page1.next_cursor}`).body;
+    expect(page2.items[0].ts <= page1.items[49].ts).toBe(true);
+    expect(call<InvocationsResponse>("GET", `${P}/invocations?since=7d&limit=5`).body.items[0]).not.toHaveProperty("project");
+
+    const failed = call<InvocationsResponse>("GET", "/api/w/acme/invocations?since=7d&status=error").body.items;
+    expect(failed.length).toBeGreaterThan(0);
+    expect(failed.every((i) => i.status === "error")).toBe(true);
+
+    const sum = (path: string) => call<{ items: { invocations: number }[] }>("GET", path).body.items.reduce((n, p) => n + p.invocations, 0);
+    const ws = sum("/api/w/acme/stats/timeseries?since=7d&function=checkout-createOrder");
+    const prod = sum("/api/w/acme/stats/timeseries?since=7d&function=checkout-createOrder&project=checkout-prod");
+    const staging = sum("/api/w/acme/stats/timeseries?since=7d&function=checkout-createOrder&project=checkout-staging");
+    expect(prod).toBeGreaterThan(0);
+    expect(staging).toBeGreaterThan(0);
+    expect(ws).toBe(prod + staging);
+    expect(sum("/api/w/acme/stats/timeseries?since=7d")).toBeGreaterThan(ws);
+    expect(call("GET", "/api/w/acme/stats/timeseries?project=nope").status).toBe(404);
+    expect(call("GET", "/api/w/acme/traces/abc").status).toBe(404);
   });
 
   it("serves a rich trace for an error group sample, only in its project", () => {

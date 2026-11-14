@@ -98,7 +98,8 @@ next to `workspace`. It narrows each read to that project of the selected worksp
 `workspaces/scope.ts` passes it to `IvyData`); workspaces without such a project contribute nothing. Without it,
 reads cover every project of each workspace. In the API, `lib/mcp/data.ts` runs the reads through the same query
 functions as the HTTP routes (`lib/data/*`, with a `DataScope` per workspace and project), so the project guard
-applies too. Result lines are still labelled `[workspace]`.
+applies too. Invocation and error lines of an all-projects read are labelled `[workspace/project]` (the read
+passes the workspace's project slugs, like the workspace-wide routes); with `project` they stay `[workspace]`.
 
 ### Workspaces and the fan-out
 

@@ -19,6 +19,9 @@ export const projectBase = (s: Scope) => `/w/${enc(s.workspace)}/${enc(s.project
 
 export const pageLink = (s: Scope, page: ProjectPage) => `${projectBase(s)}/${page}`;
 
+/** Rows of an all-projects list (they carry their project's slug) link into their own project. */
+export const rowScope = (s: Scope, row: { project?: string | null }): Scope => ({ workspace: s.workspace, project: row.project ?? s.project });
+
 export const traceLink = (s: Scope, traceId: string, invocationSpanId?: string) =>
   `${projectBase(s)}/traces/${traceId}${invocationSpanId ? `?invocation=${invocationSpanId}` : ""}`;
 
@@ -41,6 +44,15 @@ export const accountLink = (workspace: string, id: string) => `${awsAccountsLink
 
 /** The workspace's usage and billing page (also where ingest's 429 message points). */
 export const usageLink = (workspace: string) => settingsLink(workspace, "usage");
+
+/**
+ * Where the project switcher goes: the same list page (Functions, Invocations, Errors) in the other
+ * project or under `all`. Everything else (a trace, settings) opens the target's Functions.
+ */
+export function switchProjectLink(pathname: string, to: Scope): string {
+  const page = /^\/w\/[^/]+\/[^/]+\/(functions|invocations|errors)\/?$/.exec(pathname)?.[1] as ProjectPage | undefined;
+  return pageLink(to, page ?? "functions");
+}
 
 /** The workspace and project of a dashboard path; `project` is null on settings pages. */
 export function parseScope(pathname: string): { workspace: string; project: string | null } | null {
