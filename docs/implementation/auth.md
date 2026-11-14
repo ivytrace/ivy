@@ -13,7 +13,7 @@ and MCP run without auth (for setups behind an authenticating proxy). Ivy has ex
 | `IVY_OIDC_AUDIENCE` | the client ID | Expected `aud` of access tokens: the API's resource identifier at the provider. |
 | `IVY_OIDC_SCOPES` | `openid email profile offline_access` | Scopes the UI requests. `offline_access` gets a refresh token. |
 | `IVY_OIDC_ALLOW_AGENTS` | `true` | Accept tokens of coding agents registered under the client (see below). |
-| `IVY_SINGLE_TENANT` | `1` | Tenant mapping, see "Users and tenants". |
+| `IVY_SINGLE_TENANT` | `1` | Workspace mapping, see "Users and tenants". |
 
 `GET /api/config` returns the public part, so the UI configures itself at runtime and one image serves every
 deployment:
@@ -179,27 +179,38 @@ ivy_session=1; Path=/; SameSite=Lax; Max-Age=2592000; Secure   (Secure only on h
   Without it, serve the website. This needs a CloudFront Function on viewer-request, and the cookie must be in the
   cache key (or the response marked uncacheable) for `/`.
 - Always to the app (API origin): `/api/*`, `/mcp*`, `/.well-known/oauth-protected-resource*` (MCP), `/assets/*`
-  (UI bundles), and the SPA routes `/login`, `/auth/callback`, `/logout`, `/functions*`, `/invocations*`, `/traces/*`,
-  `/errors*`, `/settings*`.
+  (UI bundles), and the SPA routes:
+  - `/login`, `/auth/callback`, `/logout`;
+  - **`/w/*`** (every workspace and project page: `/w/:workspace/:project/functions`, `…/traces/:id`,
+    `/w/:workspace/settings/…`), **`/invite/*`** (invitation links, `workspaces-projects.md`) and **`/welcome*`**
+    (the first-run wizard);
+  - the pre-workspace paths `/functions*`, `/invocations*`, `/traces/*`, `/errors*`, `/settings*`, which the app
+    redirects to the last-used workspace and project so old links keep working.
 - Everything else goes to the website.
 
 ## Users and tenants
 
-`packages/api/src/lib/tenancy/members.ts`. The tenant resolver (`userTenantResolver`, the default in `createApp`):
+`packages/api/src/lib/tenancy/members.ts` (`userWorkspaceAccess`, the default in `createApp`). Tenants are
+**workspaces** in the product; `workspaces-projects.md` has the model.
 
-- Auth off: every request is `default`.
-- Auth on, `IVY_SINGLE_TENANT` unset or `1` (the default, meant for self-hosting): every signed-in user is `default`.
-  One install is one team, and access is decided by who can sign in at the provider.
-- Auth on, `IVY_SINGLE_TENANT=0` (hosted): the user's tenant comes from `ivy_control.tenant_members`
-  (`tenant_id, sub, email, role, created_at`). With several memberships, the oldest wins until there is a tenant picker.
-  On the first request from an unknown `sub`, Ivy creates a tenant (name: the email, else the name, else the `sub`) and
-  makes the user its `owner`.
+- Auth off: one workspace, `default`, and every request owns it.
+- Auth on, `IVY_SINGLE_TENANT` unset or `1` (the default, meant for self-hosting): every signed-in user owns `default`.
+  One install is one team, and access is decided by who can sign in at the provider. Member management and
+  invitations are off.
+- Auth on, `IVY_SINGLE_TENANT=0` (hosted): a user's workspaces are their rows in `ivy_control.tenant_members`
+  (`tenant_id, sub, email, role, created_at`), and every `/api/w/:workspace/…` request checks membership (404 for
+  non-members). A user with no memberships gets a personal workspace on `GET /api/workspaces` (name: the email, else the
+  name, else the `sub`; slug from the email's local part or the name) and owns it. Others join by invitation.
 
-The new tenant's ID is `ten_` plus 21 base62 characters of `sha256("ivy-tenant:" + sub)`, not random. Concurrent first
-requests, whether in one process (also de-duplicated in memory) or in several API processes, compute the same tenant
-and write the same membership row, and the ReplacingMergeTree tables collapse duplicates. An agent token carries its
-person's `sub`, so it maps to the same tenant. The mapping is cached in memory for 60 s, and tenant → shard for 30 s
+The personal workspace's ID is `ten_` plus 21 base62 characters of `sha256("ivy-tenant:" + sub)`, not random. Concurrent
+first requests, whether in one process (also de-duplicated in memory) or in several API processes, compute the same
+tenant and write the same membership row, and the ReplacingMergeTree tables collapse duplicates. An agent token carries
+its person's `sub`, so it sees the same workspaces. Memberships are cached in memory for 5 s, tenant → shard for 30 s
 (`context.ts`).
+
+Accepting an invitation needs the user's verified email: the access token's `email` + `email_verified` claims when it
+has both, otherwise the provider's `userinfo_endpoint` (from discovery) called with the user's access token
+(`lib/auth/userinfo.ts`). `AuthUser.emailVerified` carries the claim when present.
 
 ## Verification
 

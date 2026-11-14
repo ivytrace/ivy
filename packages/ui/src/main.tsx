@@ -10,36 +10,82 @@ import Invocations from "@/routes/invocations/page";
 import Errors from "@/routes/errors/page";
 import NotFound from "@/routes/not-found";
 import SettingsLayout from "@/routes/settings/layout";
+import GeneralSettings from "@/routes/settings/general";
+import MembersSettings from "@/routes/settings/members";
+import ProjectsSettings from "@/routes/settings/projects";
 import AwsAccounts from "@/routes/settings/aws/page";
 import AwsAccountPage from "@/routes/settings/aws/account";
+import InvitePage from "@/routes/invite/page";
+import WelcomePage from "@/routes/welcome/page";
+import { LegacyRedirect, ProjectLayout, WorkspaceIndex } from "@/routes/scope/redirects";
 import { TimeRangeProvider } from "@/components/layout/time-range";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/lib/auth/provider";
-import { CallbackPage, LoginPage, LogoutPage } from "@/routes/auth/pages";
+import { CallbackPage, LoginPage, LogoutPage, RequireAuth } from "@/routes/auth/pages";
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
   { path: "/auth/callback", element: <CallbackPage /> },
   { path: "/logout", element: <LogoutPage /> },
   {
+    path: "/invite/:token",
+    element: (
+      <RequireAuth>
+        <InvitePage />
+      </RequireAuth>
+    ),
+  },
+  {
+    path: "/welcome/:step",
+    element: (
+      <RequireAuth>
+        <WelcomePage />
+      </RequireAuth>
+    ),
+  },
+  {
     path: "/",
     element: <Root />,
     children: [
-      { index: true, element: <Navigate to="/functions" replace /> },
-      { path: "functions", element: <Functions /> },
-      { path: "invocations", element: <Invocations /> },
+      // Paths from before workspaces and projects keep working.
+      { index: true, element: <LegacyRedirect /> },
+      { path: "functions", element: <LegacyRedirect /> },
+      { path: "invocations", element: <LegacyRedirect /> },
+      { path: "errors", element: <LegacyRedirect /> },
+      { path: "traces/:traceId", element: <LegacyRedirect /> },
+      { path: "settings", element: <LegacyRedirect /> },
+      { path: "settings/aws", element: <LegacyRedirect /> },
+      { path: "settings/aws/:id", element: <LegacyRedirect /> },
       {
-        path: "traces/:traceId",
-        lazy: async () => ({ Component: (await import("@/routes/traces/page")).default }),
-      },
-      { path: "errors", element: <Errors /> },
-      {
-        path: "settings",
-        element: <SettingsLayout />,
+        path: "w/:workspace",
         children: [
-          { index: true, element: <Navigate to="/settings/aws" replace /> },
-          { path: "aws", element: <AwsAccounts /> },
-          { path: "aws/:id", element: <AwsAccountPage /> },
+          { index: true, element: <WorkspaceIndex /> },
+          {
+            path: "settings",
+            element: <SettingsLayout />,
+            children: [
+              { index: true, element: <Navigate to="general" replace /> },
+              { path: "general", element: <GeneralSettings /> },
+              { path: "members", element: <MembersSettings /> },
+              { path: "projects", element: <ProjectsSettings /> },
+              { path: "aws", element: <AwsAccounts /> },
+              { path: "aws/:id", element: <AwsAccountPage /> },
+            ],
+          },
+          {
+            path: ":project",
+            element: <ProjectLayout />,
+            children: [
+              { index: true, element: <Navigate to="functions" replace /> },
+              { path: "functions", element: <Functions /> },
+              { path: "invocations", element: <Invocations /> },
+              { path: "errors", element: <Errors /> },
+              {
+                path: "traces/:traceId",
+                lazy: async () => ({ Component: (await import("@/routes/traces/page")).default }),
+              },
+            ],
+          },
         ],
       },
       { path: "*", element: <NotFound /> },

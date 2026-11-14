@@ -37,7 +37,7 @@ FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production PORT=3000 IVY_UI_DIR=/app/ui IVY_LAYER_ZIP=/app/layer.zip
 COPY --from=build /repo/packages/api/dist/index.mjs ./server.mjs
-COPY --from=build /repo/packages/api/dist/ingest.mjs /repo/packages/api/dist/tenants.mjs ./
+COPY --from=build /repo/packages/api/dist/ingest.mjs /repo/packages/api/dist/tenants.mjs /repo/packages/api/dist/hooks-test.mjs ./
 COPY --from=build /repo/packages/layer/dist/layer.zip ./layer.zip
 COPY --from=build /out/ui ./ui
 USER node

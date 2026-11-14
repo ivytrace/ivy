@@ -1,0 +1,8 @@
+#!/bin/sh
+# Example notification hook: logs every new workspace. Ivy passes one JSON object (the envelope) on
+# stdin and ignores the output; stderr ends up in Ivy's log. See docs/implementation/hooks.md.
+set -eu
+event=$(cat)
+echo "workspace created: $event" >&2
+# e.g. append to a file next to the hook (the hook runs with the hooks directory as cwd):
+# printf '%s\n' "$event" >> workspaces.log

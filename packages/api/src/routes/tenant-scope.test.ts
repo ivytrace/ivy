@@ -1,8 +1,10 @@
 import type { ClickHouseClient } from '@clickhouse/client';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createApp } from '../app.js';
 import { setClientsForTests } from '../lib/clickhouse/client.js';
-import { TENANT_SETTING } from '../lib/clickhouse/scoped.js';
+import { PROJECT_SETTING, TENANT_SETTING } from '../lib/clickhouse/scoped.js';
+import { createProject } from '../lib/tenancy/projects.js';
+import type { ProjectRecord, TenantRecord } from '../lib/tenancy/store.js';
+import { appFor, resetTenancyForTests, testWorkspace } from '../lib/tenancy/testing.js';
 
 interface Captured {
   query: string;
@@ -18,43 +20,74 @@ const fake = {
   },
 } as unknown as ClickHouseClient;
 
-const app = createApp({ uiDir: '/nonexistent', tenants: { resolve: async () => ({ id: 'ten_a', shardId: 'shard-1' }) } });
+let workspace: TenantRecord;
+let project: ProjectRecord;
 
-beforeEach(() => {
+beforeEach(async () => {
+  await resetTenancyForTests();
+  workspace = await testWorkspace('Acme', 'acme');
+  project = await createProject(workspace.id, { name: 'Checkout (prod)', slug: 'checkout-prod' });
+  await createProject(workspace.id, { name: 'Checkout (staging)', slug: 'checkout-staging' });
   captured = [];
-  setClientsForTests({ shard: fake, control: fake });
+  setClientsForTests({ shard: fake });
 });
 
 afterAll(() => setClientsForTests(undefined));
 
-const DATA_ROUTES = [
-  '/api/functions?since=7d',
-  '/api/functions?from=2026-11-14T10:20:00Z&to=2026-11-14T14:40:00Z',
-  '/api/invocations',
-  '/api/invocations?function=f&status=error&q=abc&limit=5&cursor=' + Buffer.from(JSON.stringify([1, 'x'])).toString('base64url'),
-  '/api/errors?function=f',
-  '/api/stats/timeseries?since=24h',
-  '/api/stats/timeseries?since=1h&bucket=1m&function=f',
-  '/api/traces/673f1a2b0000000000000000000000aa',
-  '/api/traces/ffffffff0000000000000000000000aa',
+const PROJECT_ROUTES = [
+  '/functions?since=7d',
+  '/functions?from=2026-11-14T10:20:00Z&to=2026-11-14T14:40:00Z',
+  '/invocations',
+  '/invocations?function=f&status=error&q=abc&limit=5&cursor=' + Buffer.from(JSON.stringify([1, 'x'])).toString('base64url'),
+  '/errors?function=f',
+  '/stats/timeseries?since=24h',
+  '/stats/timeseries?since=1h&bucket=1m&function=f',
+  '/traces/673f1a2b0000000000000000000000aa',
+  '/traces/ffffffff0000000000000000000000aa',
 ];
 
-describe('tenant scoping of API queries', () => {
-  it.each(DATA_ROUTES)('%s binds the request tenant in every query', async (route) => {
-    const res = await app.request(route);
-    expect([200, 404]).toContain(res.status);
+describe('project scoping of data queries', () => {
+  it.each(PROJECT_ROUTES)('%s binds the request tenant and project in every query', async (route) => {
+    const app = await appFor(workspace);
+    // By slug and by ID.
+    for (const ref of ['checkout-prod', project.id]) {
+      captured = [];
+      const res = await app.request(`/api/w/acme/p/${ref}${route}`);
+      expect([200, 404]).toContain(res.status);
+      expect(captured.length).toBeGreaterThan(0);
+      for (const q of captured) {
+        expect(q.query_params).toMatchObject({ tenant: workspace.id, project: project.id });
+        expect(q.clickhouse_settings).toMatchObject({ [TENANT_SETTING]: workspace.id, [PROJECT_SETTING]: project.id });
+        expect(q.query).toMatch(/\{tenant:String\}/);
+        expect(q.query).toMatch(/\{project:String\}/);
+      }
+    }
+  });
+
+  it.each(['/functions?since=7d', '/errors'])('workspace-wide %s reads all projects of the tenant, explicitly', async (route) => {
+    const res = await (await appFor(workspace)).request(`/api/w/acme${route}`);
+    expect(res.status).toBe(200);
     expect(captured.length).toBeGreaterThan(0);
     for (const q of captured) {
-      expect(q.query_params.tenant).toBe('ten_a');
-      expect(q.clickhouse_settings[TENANT_SETTING]).toBe('ten_a');
-      expect(q.query).toMatch(/\{tenant:String\}/);
+      expect(q.query_params.tenant).toBe(workspace.id);
+      expect(q.query_params.project).toBeUndefined();
+      expect(q.clickhouse_settings[PROJECT_SETTING]).toBeUndefined();
+      expect(q.query).toMatch(/GROUP BY project_id/);
     }
   });
 
   it('scopes the auto-trace config reads to the request tenant', async () => {
-    await app.request('/api/aws/accounts');
-    await app.request('/api/aws/functions');
+    setClientsForTests({ shard: fake, control: fake });
+    const app = await appFor(workspace);
+    for (const route of ['/aws/accounts', '/aws/functions', '/aws/rules']) await app.request(`/api/w/acme${route}`);
     expect(captured.length).toBeGreaterThan(0);
-    for (const q of captured) expect(q.query_params.tenant).toBe('ten_a');
+    for (const q of captured) expect(q.query_params.tenant).toBe(workspace.id);
+  });
+
+  it('has no workspace-wide invocations or traces', async () => {
+    const app = await appFor(workspace);
+    expect((await app.request('/api/w/acme/invocations')).status).toBe(404);
+    expect((await app.request('/api/w/acme/traces/673f1a2b0000000000000000000000aa')).status).toBe(404);
+    expect(captured).toEqual([]);
   });
 });

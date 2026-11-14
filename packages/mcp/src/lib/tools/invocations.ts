@@ -4,8 +4,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { InvocationQuery, IvyData, Workspace } from "../data/types.js";
 import { failureNote, fanOut } from "../workspaces/fan-out.js";
-import { selectWorkspaces } from "../workspaces/scope.js";
-import { failure, functionName, guarded, label, limit, READ_ONLY, since, text, workspace } from "./common.js";
+import { selectWorkspaces, scoped } from "../workspaces/scope.js";
+import { failure, functionName, guarded, label, limit, READ_ONLY, since, text, project, workspace } from "./common.js";
 
 const LIST_FORMAT =
   "Each line: [workspace], time (UTC), status, function, duration, `cold` for cold starts, the HTTP route and status " +
@@ -38,13 +38,13 @@ export function registerInvocationTools(server: McpServer, data: IvyData) {
         "List the most recent failed Lambda invocations across your workspaces (or one), newest first, one line each. " +
         "Start here when asked what is failing or why a function errors. Then call get_trace_summary with a trace ID for " +
         `the full trace, or compare_invocations to diff it against a successful run. ${LIST_FORMAT}`,
-      inputSchema: { workspace, function: functionName, since: since("1h"), limit: limit(20) },
+      inputSchema: { workspace, project, function: functionName, since: since("1h"), limit: limit(20) },
       annotations: { title: "Find failing invocations", ...READ_ONLY },
     },
     (args) =>
       guarded(() =>
         listAcross(
-          data,
+          scoped(data, args),
           args.workspace,
           { function: args.function, status: "error", since: args.since, limit: args.limit },
           `failed invocations${args.function ? ` of ${args.function}` : ""}`,
@@ -62,6 +62,7 @@ export function registerInvocationTools(server: McpServer, data: IvyData) {
         `function and status to narrow down, e.g. recent successful runs of a function to compare with a failure. ${LIST_FORMAT}`,
       inputSchema: {
         workspace,
+        project,
         q: z.string().min(1).optional().describe("Request ID, trace ID, or text in the error message or HTTP path."),
         function: functionName,
         status: z.enum(["ok", "error"]).optional().describe("Only successful (ok) or failed (error) invocations."),
@@ -73,7 +74,7 @@ export function registerInvocationTools(server: McpServer, data: IvyData) {
     (args) =>
       guarded(() =>
         listAcross(
-          data,
+          scoped(data, args),
           args.workspace,
           { q: args.q, function: args.function, status: args.status, since: args.since, limit: args.limit },
           "matching invocations",

@@ -6,7 +6,7 @@ export default function NotFound() {
   return (
     <EmptyState title="Page not found" description="This page doesn't exist.">
       <Button variant="outline" size="sm" asChild>
-        <Link to="/functions">Go to functions</Link>
+        <Link to="/">Go to functions</Link>
       </Button>
     </EmptyState>
   );

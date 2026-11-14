@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { hashKey } from './ids.js';
+import { defaultProjectId, hashKey } from './ids.js';
+import { createProject, forgetProjects, updateProject } from './projects.js';
 import { decrypt, encrypt } from './secret-box.js';
 import { memoryTenancyStore, setTenancyStore, type TenancyStore } from './store.js';
 import { autoTraceKey, createApiKey, createTenant, ensureDefaultTenant, resetAutoTraceKeysForTests, revokeApiKey } from './tenants.js';
@@ -10,6 +11,7 @@ beforeEach(() => {
   store = memoryTenancyStore();
   setTenancyStore(store);
   resetAutoTraceKeysForTests();
+  forgetProjects();
 });
 
 afterEach(() => vi.unstubAllEnvs());
@@ -33,7 +35,7 @@ describe('tenants and keys', () => {
   it('creates keys shown once and stored only as a hash', async () => {
     const tenant = await createTenant('Acme');
     expect(tenant.id).toMatch(/^ten_[0-9A-Za-z]{21}$/);
-    const { key, record } = await createApiKey(tenant.id, 'ci');
+    const { key, record } = await createApiKey(tenant.id, defaultProjectId(tenant.id), 'ci');
     expect(key).toMatch(/^ivy_[0-9A-Za-z]{40}$/);
     expect(record.id).toMatch(/^key_/);
     expect(record.prefix).toBe(key.slice(0, 10));
@@ -46,11 +48,52 @@ describe('tenants and keys', () => {
 
   it('rejects unknown shards and tenants', async () => {
     await expect(createTenant('x', 'shard-9')).rejects.toThrow(/Unknown shard/);
-    await expect(createApiKey('ten_missing', 'x')).rejects.toThrow(/Unknown tenant/);
+    await expect(createApiKey('ten_missing', 'prj_x', 'x')).rejects.toThrow(/Unknown tenant/);
+  });
+});
+
+describe('workspaces and projects', () => {
+  it('gives every workspace a slug and a default project with a derived ID', async () => {
+    await ensureDefaultTenant(undefined);
+    expect(await store.getTenant('default')).toMatchObject({ slug: 'default' });
+    expect(await store.listProjects('default')).toMatchObject([{ id: defaultProjectId('default'), slug: 'default', archived: false }]);
+    const acme = await createTenant('Acme Inc.');
+    const again = await createTenant('Acme Inc.');
+    expect(acme.slug).toBe('acme-inc');
+    expect(again.slug).toBe('acme-inc-2');
+    expect((await createTenant('Acme Inc.')).slug).toBe('acme-inc-3');
+    expect((await store.listProjects(acme.id))[0].id).toBe(defaultProjectId(acme.id));
+  });
+
+  it('maps keys from before projects to the default project', async () => {
+    const tenant = await createTenant('Acme');
+    await store.saveKey({ tenant_id: tenant.id, project_id: '', id: 'key_old', name: 'old', kind: 'user', key_hash: hashKey('old-key'), prefix: 'old', encrypted_key: '', created_at: 1, revoked_at: null });
+    expect((await store.findKeyByHash(hashKey('old-key')))?.project?.id).toBe(defaultProjectId(tenant.id));
+  });
+
+  it('mints keys for a given project and refuses archived ones', async () => {
+    const tenant = await createTenant('Acme');
+    const staging = await createProject(tenant.id, { name: 'Staging' });
+    const { key } = await createApiKey(tenant.id, staging.id, 'ci');
+    expect((await store.findKeyByHash(hashKey(key)))?.project?.slug).toBe('staging');
+    await updateProject(staging, { archived: true });
+    await expect(createApiKey(tenant.id, staging.id, 'ci')).rejects.toThrow(/archived/);
+    await expect(createApiKey(tenant.id, 'prj_nope', 'ci')).rejects.toThrow(/Unknown project/);
   });
 });
 
 describe('auto-trace key', () => {
+  it('is one key per project', async () => {
+    vi.stubEnv('IVY_SECRET_KEY', 'server-secret');
+    const tenant = await createTenant('Acme');
+    const staging = await createProject(tenant.id, { name: 'Staging' });
+    const prod = await autoTraceKey(tenant.id);
+    const stage = await autoTraceKey(tenant.id, staging.id);
+    expect(prod).not.toBe(stage);
+    expect((await store.findKeyByHash(hashKey(stage!)))?.project?.id).toBe(staging.id);
+    expect((await store.findKeyByHash(hashKey(prod!)))?.project?.id).toBe(defaultProjectId(tenant.id));
+  });
+
   it('uses IVY_INGEST_API_KEY for the default tenant', async () => {
     vi.stubEnv('IVY_INGEST_API_KEY', 'dev-ingest-key');
     expect(await autoTraceKey('default')).toBe('dev-ingest-key');

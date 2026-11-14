@@ -5,9 +5,11 @@ server from the API key, and the routing seams for sharding by tenant exist now,
 
 ## Model
 
-- **Tenant**: `ivy_control.tenants`, ID `ten_<21 base62>` (the self-hosted tenant is just `default`), a name and a
-  `shard_id` (default `shard-1`).
-- **API key**: `ivy_control.api_keys`, ID `key_<21 base62>`, belongs to one tenant. The key itself is
+- **Tenant** = **workspace** in the product (`workspaces-projects.md`): `ivy_control.tenants`, ID
+  `ten_<21 base62>` (the self-hosted tenant is just `default`), a slug, a name and a `shard_id` (default `shard-1`).
+- **Project**: `ivy_control.projects`, ID `prj_…`, belongs to one tenant; every span belongs to one project.
+- **API key**: `ivy_control.api_keys`, ID `key_<21 base62>`, belongs to one tenant and one project (`project_id`;
+  empty for keys from before projects, meaning the default project). The key itself is
   `ivy_<40 base62>` (~238 bits), shown once at creation. Ivy stores `sha256(key)` and a display prefix
   (`ivy_` + 6 characters), never the key. `kind` is `user`, `bootstrap` (from `IVY_INGEST_API_KEY`) or `auto-trace`
   (see below). Revoking sets `revoked_at`.
@@ -16,10 +18,11 @@ server from the API key, and the routing seams for sharding by tenant exist now,
 - **Control plane**: the `ivy_control` database (tenants, keys, auto-trace config). One for all cells. Today it lives on
   the same ClickHouse as `shard-1`; `IVY_CONTROL_CLICKHOUSE_URL` can point it elsewhere.
 
-All tables carry the tenant first in `ORDER BY`: `otel_traces (TenantId, …)`, `invocations (tenant_id, …)`,
-`invocations_hourly (tenant_id, …)`, `aws_* (tenant_id, …)`, `api_keys (tenant_id, id)`; `tenants` is keyed by its `id`.
-The two materialized views copy the tenant column through (`TenantId AS tenant_id`, then `GROUP BY tenant_id, …`), so
-rollups never mix tenants. No query joins across tenants (the only join, key → tenant, is on `tenant_id`).
+All tables carry the tenant first in `ORDER BY`: `otel_traces (TenantId, ProjectId, …)`,
+`invocations (tenant_id, project_id, …)`, `invocations_hourly (tenant_id, project_id, …)`, `aws_* (tenant_id, …)`,
+`api_keys (tenant_id, id)`, `projects (tenant_id, id)`; `tenants` is keyed by its `id`.
+The two materialized views copy tenant and project through (`TenantId AS tenant_id, ProjectId AS project_id`, then
+`GROUP BY tenant_id, project_id, …`), so rollups never mix tenants or projects. No query joins across tenants (the only join, key → tenant, is on `tenant_id`).
 
 ## Ingest path
 
@@ -27,13 +30,13 @@ rollups never mix tenants. No query joins across tenants (the only join, key →
 client (Lambda layer, OTel SDK, loadgen)
   │  POST /v1/traces, Authorization: Bearer <key>   (or x-api-key)
   ▼
-ingest router :4318  ── key hash → ivy_control.api_keys → tenant + shard (cached)
+ingest router :4318  ── key hash → ivy_control.api_keys → tenant + project + shard (cached)
   │  same body (protobuf/JSON, gzip as sent)
-  │  Authorization: Bearer $IVY_COLLECTOR_TOKEN, x-ivy-tenant: <tenant id>
+  │  Authorization: Bearer $IVY_COLLECTOR_TOKEN, x-ivy-tenant: <tenant id>, x-ivy-project: <project id>
   ▼
-shard collector :4318 (internal)  ── resource/tenant: delete ivy.tenant_id, insert from metadata.x-ivy-tenant
-  ▼                                  filter/tenant: drop spans without a tenant
-ClickHouse ivy.otel_traces  ── TenantId DEFAULT ResourceAttributes['ivy.tenant_id']
+shard collector :4318 (internal)  ── resource/tenant: delete ivy.tenant_id + ivy.project_id, insert from the headers
+  ▼                                  filter/tenant: drop spans without a tenant or a project
+ClickHouse ivy.otel_traces  ── TenantId/ProjectId DEFAULT ResourceAttributes['ivy.tenant_id'/'ivy.project_id']
 ```
 
 ### Decision: the tenant comes from the key, never from the payload
@@ -46,6 +49,11 @@ header from the key lookup. Spans that somehow arrive without the header are dro
 than stored under an empty tenant. Verified against the pinned `otel/opentelemetry-collector-contrib:0.165.0`: a span
 claiming `ivy.tenant_id = evil` lands as the header's tenant, header names are matched case-insensitively, a request
 without the header stores nothing, and a wrong token gets 401.
+
+The project works the same way (`x-ivy-project` → `ivy.project_id`, `workspaces-projects.md`). Verified on 0.165.0
+in the compose end-to-end run: spans that claimed another workspace's `ivy.project_id` and `ivy.tenant_id = ten_forged`
+landed under the key's project and tenant; a request straight to the collector with `x-ivy-tenant` but no
+`x-ivy-project` (and a client-set `ivy.project_id`) stored nothing; `X-Ivy-Project` in another case was accepted.
 
 ### Decision: the router is its own entrypoint in the API image
 
@@ -66,7 +74,7 @@ It is a plain `node:http` server (no Hono): it streams-limits the body, keeps th
 |---|---|
 | `POST /v1/traces` with a valid key | the collector's answer (status, body, `Retry-After`), body forwarded byte for byte |
 | no key | 401 |
-| unknown or revoked key | 401; counts as a failure for the client IP |
+| unknown or revoked key, or a key of an archived project | 401; counts as a failure for the client IP |
 | more than `IVY_INGEST_MAX_KEY_FAILURES` (20) failures from an IP within a minute | 429 + `Retry-After` until the minute ends, except for keys already cached as valid (so one bad client behind a shared NAT doesn't lock out others) |
 | content type other than `application/x-protobuf` / `application/json` | 415 |
 | body over `IVY_INGEST_MAX_BODY_BYTES` (10 MiB), or over 64 MiB decompressed | 413 |
@@ -102,23 +110,23 @@ exporter support it. Proxying gRPC would mean an HTTP/2 server in the router and
 no current user. The collector's gRPC receiver is removed. If a customer needs gRPC, the router can grow an HTTP/2
 listener later with the same key and header logic.
 
-## API: tenant context
+## API: workspace context
 
-`packages/api/src/lib/tenancy/context.ts`. A middleware (`tenantContext`) resolves the request's tenant once and puts
-`{ id, shardId }` on the Hono context; routes read it with `tenantOf(c)` and query with `dataQuery(c, sql, params)`,
-which uses that tenant's shard client and binds `{tenant:String}`.
+`packages/api/src/lib/tenancy/context.ts`. Every data and management route is under `/api/w/:workspace` (and
+`/api/w/:workspace/p/:project`). Middleware resolves the workspace once per request through a `WorkspaceAccess`
+(`find(c, ref)` by slug or ID, checking membership; null → 404, the same as a missing workspace), puts
+`{ id, shardId }` (`tenantOf(c)`), the membership (`membershipOf(c)`: workspace record + role) and, under
+`/p/:project`, the project (`projectOf(c)`) on the Hono context. Data routes take a `DataScope`
+(`{ tenant, projectId }`, `projectId: null` only on routes mounted with `allProjects()`) and query through
+`scopedDataQuery(scope, sql, params)`, which uses the tenant's shard and binds `{tenant:String}` and
+`{project:String}`. The query functions in `lib/data/` take a `DataScope` rather than a request, so other callers
+(the MCP server) can query per workspace and per project without Hono.
 
-The resolver is an interface:
-
-```ts
-interface TenantResolver { resolve(c: Context): Promise<Tenant | null> }  // null → 401
-```
-
-The app uses `userTenantResolver()` (`members.ts`): `default` with auth off or in single-tenant mode (the default),
-otherwise the signed-in user's tenant from `ivy_control.tenant_members`, created on their first request. See
-`auth.md`, "Users and tenants". `singleTenantResolver(id)` remains for tests. `/api/health`, `/api/config` and
-`/api/aws/events` (authenticated by its own secret) are registered before the middleware and have no tenant.
-Tenant → shard lookups are cached for 30 s.
+The app uses `userWorkspaceAccess()` (`members.ts`): `default`, owned by everyone, with auth off or in single-tenant
+mode (the default); otherwise the signed-in user's memberships in `ivy_control.tenant_members` (`auth.md`, "Users
+and tenants", and `workspaces-projects.md`). `fixedWorkspaceAccess(workspace, role)` is for tests. `/api/health`,
+`/api/config` and `/api/aws/events` (authenticated by its own secret) have no workspace. Tenant → shard lookups are
+cached for 30 s, memberships for 5 s, a workspace's projects for 10 s (writes in the same process clear them).
 
 The background auto-trace sync runs outside requests; it works per account and always passes the account's
 `tenant_id`.
@@ -126,8 +134,12 @@ The background auto-trace sync runs outside requests; it works per account and a
 ## Guards
 
 1. **Query helper + tests.** All SQL goes through `lib/clickhouse/scoped.ts`:
-   - `tenantQuery(client, tenant, sql, params)` binds `tenant`, sets `SQL_ivy_tenant`, and throws unless the SQL has at
-     least one `{tenant:String}` per `FROM`/`JOIN` of a tenant-scoped table.
+   - `scopedQuery(client, { tenant, project | allProjects }, sql, params)` binds `tenant` (and `project`), sets
+     `SQL_ivy_tenant` (and `SQL_ivy_project`), and throws unless the SQL has at least one `{tenant:String}` per
+     `FROM`/`JOIN` of a tenant-scoped table, and at least one `{project:String}` per reference to a span table
+     (`otel_traces`, `invocations`, `invocations_hourly`), unless the scope says `allProjects: true`. Only the
+     workspace-wide function overview and error groups use that. `tenantQuery(client, tenant, …)` is the control-plane
+     form (no project; reading a span table through it throws).
    - `insertRows` refuses rows of tenant-scoped tables without `tenant_id`.
    - `crossTenantQuery` is the explicit escape hatch (key lookup, tenant directory, background sync, EventBridge secret
      lookup).
@@ -135,10 +147,11 @@ The background auto-trace sync runs outside requests; it works per account and a
    `scoped.test.ts` fails if any source file calls a ClickHouse client directly outside `lib/clickhouse/`, or uses
    `crossTenantQuery` outside the reviewed files. `routes/tenant-scope.test.ts` calls every data route (with filters,
    cursors, both rollup paths, both trace lookups) against a capturing fake client and checks every query carries the
-   request's tenant.
+   request's tenant and project (projects by slug and by ID), and that the workspace-wide routes are the only
+   all-projects queries.
 2. **Row policies** (defence in depth) on `otel_traces`, `invocations`, `invocations_hourly`:
    `USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR <tenant column> = getSettingOrDefault('SQL_ivy_tenant', '')`,
-   restrictive, for all users. The API sets `SQL_ivy_tenant` on every query, so a route that forgets its tenant filter
+   restrictive, for all users; and `ivy_project` the same way with `SQL_ivy_project` and the project column. The API sets `SQL_ivy_tenant` on every query, so a route that forgets its tenant filter
    still only sees its tenant. Without the setting the policy passes everything: a fail-closed policy also filters the
    blocks that materialized views read on insert (tried: `invocations` stayed empty), and the collector, MVs and admin
    sessions have no tenant. So the policy protects against a missing `WHERE`, not against code that bypasses the query
@@ -147,12 +160,13 @@ The background auto-trace sync runs outside requests; it works per account and a
 
 ## Auto-trace key
 
-Functions get `IVY_API_KEY`, so Ivy must be able to produce a tenant's key in plaintext again at every sync, and a
-hash can't give it back. The key used:
+Functions get `IVY_API_KEY`, so Ivy must be able to produce a project's key in plaintext again at every sync, and a
+hash can't give it back. There is one auto-trace key per project (a function's project decides its key,
+`auto-trace.md`). The key used:
 
-- `default` tenant with `IVY_INGEST_API_KEY` set: that key (self-hosted keeps working with no new configuration; the
+- the `default` tenant's default project with `IVY_INGEST_API_KEY` set: that key (self-hosted keeps working with no new configuration; the
   plaintext already lives in the environment).
-- Otherwise a system-managed key of kind `auto-trace`, minted the first time the tenant needs one, stored hashed (for
+- Otherwise a system-managed key of kind `auto-trace` of that project, minted the first time it is needed, stored hashed (for
   the router) and encrypted with AES-256-GCM under a key derived from `IVY_SECRET_KEY` (HKDF-SHA256), in
   `api_keys.encrypted_key`. Every process picks the oldest active one, so two processes that mint at the same moment
   still converge on one key.
@@ -166,20 +180,24 @@ revoked).
 
 ## Self-hosted bootstrap
 
-On startup, the API and the router each ensure tenant `default` (shard `shard-1`) exists, and, if
-`IVY_INGEST_API_KEY` is set, that it is an active `bootstrap` key of `default`. The key ID is derived from the hash, so
+On startup, the API and the router each ensure tenant `default` (slug `default`, shard `shard-1`) and its default
+project exist, and, if `IVY_INGEST_API_KEY` is set, that it is an active `bootstrap` key of that project. The API
+also gives every existing tenant a slug and a default project (`ensureWorkspaceDefaults`). The key ID is derived from the hash, so
 concurrent or repeated runs write the same row. Changing the variable revokes the previous bootstrap key; unsetting it
 revokes nothing. The dev flow (`dev-ingest-key`) and single-tenant installs work as before, now through the router.
 
 ## Admin
 
-Until there is an admin UI: `packages/api/scripts/tenants.ts` (`tenants.mjs` in the image).
+Workspaces, projects and keys are managed in the dashboard and the API (`workspaces-projects.md`). For operators
+there is also `packages/api/scripts/tenants.ts` (`tenants.mjs` in the image), which talks to the control database
+directly (moving shards is CLI-only).
 
 ```sh
 pnpm --filter @ivy/api tenants create "Acme"            # prints the tenant ID and its first key, once
 pnpm --filter @ivy/api tenants list
 pnpm --filter @ivy/api tenants keys <tenant>
-pnpm --filter @ivy/api tenants create-key <tenant> [name]
+pnpm --filter @ivy/api tenants projects <tenant>
+pnpm --filter @ivy/api tenants create-key <tenant> [name] [--project <slug or id>]
 pnpm --filter @ivy/api tenants revoke-key <tenant> <key id>
 pnpm --filter @ivy/api tenants set-shard <tenant> <shard>
 docker compose -f deploy/docker-compose.yml exec api node tenants.mjs list   # in Docker
@@ -229,7 +247,7 @@ copied with `INSERT … SELECT … WHERE`. Run on the target cell's ClickHouse, 
 6. **Delete from the source**: `ALTER TABLE ivy.otel_traces DELETE WHERE TenantId = 'ten_X'` (and `invocations`,
    `invocations_hourly`) on `shard-1`, or let retention age it out.
 
-Control-plane rows (`tenants`, `api_keys`, `aws_*`) don't move: they are in `ivy_control`.
+Control-plane rows (`tenants`, `projects`, `api_keys`, `aws_*`, …) don't move: they are in `ivy_control`.
 
 ## Configuration
 
@@ -265,6 +283,6 @@ Control-plane rows (`tenants`, `api_keys`, `aws_*`) don't move: they are in `ivy
 
 - No quotas or per-query limits yet (M6); usage counters are per process and reset on restart.
 - Row policies are fail-open without the setting (see Guards); a dedicated API ClickHouse user would close that.
-- No admin API or UI for tenants and keys; the CLI talks to the control database directly.
+- No operator (cross-workspace) admin UI; the CLI talks to the control database directly.
 - The move runbook is manual and has not been rehearsed across two real cells.
 - Every router decompresses and parses each body once to count spans.

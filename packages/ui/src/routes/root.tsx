@@ -4,12 +4,14 @@ import { AuthBanner } from "@/components/layout/auth-banner";
 import { Menu } from "@/components/layout/menu";
 import { cn } from "@/lib/utils/cn";
 import { RequireAuth } from "@/routes/auth/pages";
+import { ScopeTracker } from "@/routes/scope/redirects";
 
 export default function Root() {
-  const isTracePage = !!useMatch("/traces/:traceId");
+  const isTracePage = !!useMatch("/w/:workspace/:project/traces/:traceId");
 
   return (
     <RequireAuth>
+      <ScopeTracker />
       <div className={cn("flex min-h-screen flex-col", isTracePage && "md:h-screen")}>
         <AuthBanner />
         <Menu />

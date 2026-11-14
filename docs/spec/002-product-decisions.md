@@ -28,6 +28,15 @@ live in `docs/implementation/`.
   belong to a project.
 - **Environments are separate projects** (`checkout-prod`, `checkout-staging`).
 - An AWS account connects to a workspace and can feed several projects.
+- **Slugs are generated from names and hidden; URLs stay stable when renaming.** Creating a workspace or project
+  asks for a name only; collisions get `-2`, `-3`. Changing a URL is a separate "Change URL" action under Advanced.
+- URLs carry workspace and project (`/w/<workspace>/<project>/…`); old links redirect to the last-used project.
+- A workspace you're not a member of looks exactly like one that doesn't exist.
+- Owners manage the workspace, members and invitations; members can do everything else.
+- Invitations are links (also emailed when SMTP is configured), single use, valid 7 days, and only accepted by a
+  signed-in user whose email matches and is verified by the identity provider.
+- Self-hosted without sign-in, or with `IVY_SINGLE_TENANT` on, has one workspace and no member management.
+- Moving a function to another project affects only new data; data already ingested stays where it is.
 
 ## Authentication
 - Dashboard, API and MCP: **either no auth or OIDC**, never passwords or basic auth, not even temporarily.

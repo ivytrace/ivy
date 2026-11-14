@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { useTimeRange } from "@/components/layout/time-range";
 import { useFunctions } from "@/lib/api/hooks";
+import { ALL_PROJECTS, invocationsLink, pageLink, traceLink } from "@/lib/links/links";
+import { useRouteScope } from "@/lib/links/use-scope";
 
 const TRACE_ID = /^[0-9a-f]{32}$/i;
 
@@ -23,7 +25,10 @@ export function SearchMenu() {
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
   const { range } = useTimeRange();
+  const route = useRouteScope();
+  const scope = route ? { workspace: route.workspace, project: route.project ?? ALL_PROJECTS } : null;
   const { data } = useFunctions(range);
+  const inProject = !!scope && scope.project !== ALL_PROJECTS;
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -62,48 +67,49 @@ export function SearchMenu() {
           <CommandEmpty>No results found.</CommandEmpty>
           {trimmed && (
             <CommandGroup heading="Search">
-              {TRACE_ID.test(trimmed) && (
-                <CommandItem value={`trace ${trimmed}`} onSelect={() => go(`/traces/${trimmed.toLowerCase()}`)}>
+              {inProject && TRACE_ID.test(trimmed) && (
+                <CommandItem value={`trace ${trimmed}`} onSelect={() => go(traceLink(scope, trimmed.toLowerCase()))}>
                   <WaypointsIcon className="mr-2 size-4" />
                   Open trace <code className="ml-1 text-xs">{trimmed}</code>
                 </CommandItem>
               )}
-              <CommandItem
-                value={`invocations ${trimmed}`}
-                onSelect={() => go(`/invocations?q=${encodeURIComponent(trimmed)}`)}
-              >
-                <ListIcon className="mr-2 size-4" />
-                Search invocations for “{trimmed}”
-              </CommandItem>
+              {inProject && (
+                <CommandItem value={`invocations ${trimmed}`} onSelect={() => go(invocationsLink(scope, { q: trimmed }))}>
+                  <ListIcon className="mr-2 size-4" />
+                  Search invocations for “{trimmed}”
+                </CommandItem>
+              )}
             </CommandGroup>
           )}
           <CommandGroup heading="Go to">
-            <CommandItem onSelect={() => go("/functions")}>
+            <CommandItem onSelect={() => go(scope ? pageLink(scope, "functions") : "/functions")}>
               <AppWindowIcon className="mr-2 size-4" />
               Functions
             </CommandItem>
-            <CommandItem onSelect={() => go("/invocations")}>
+            <CommandItem onSelect={() => go(scope ? pageLink(scope, "invocations") : "/invocations")}>
               <ListIcon className="mr-2 size-4" />
               Invocations
             </CommandItem>
-            <CommandItem onSelect={() => go("/errors")}>
+            <CommandItem onSelect={() => go(scope ? pageLink(scope, "errors") : "/errors")}>
               <CircleXIcon className="mr-2 size-4" />
               Errors
             </CommandItem>
           </CommandGroup>
-          {functions.length > 0 && (
+          {scope && functions.length > 0 && (
             <>
               <CommandSeparator />
               <CommandGroup heading="Functions">
                 {functions.map((fn) => (
                   <CommandItem
-                    key={fn.region + fn.name}
-                    value={`${fn.name} ${fn.region}`}
-                    onSelect={() => go(`/invocations?function=${encodeURIComponent(fn.name)}`)}
+                    key={`${fn.project ?? ""}/${fn.region}/${fn.name}`}
+                    value={`${fn.name} ${fn.region} ${fn.project ?? ""}`}
+                    onSelect={() =>
+                      scope && go(invocationsLink({ workspace: scope.workspace, project: fn.project ?? scope.project }, { function: fn.name }))
+                    }
                   >
                     <CpuIcon className="mr-2 size-4" />
                     <span className="flex-1 truncate">{fn.name}</span>
-                    <span className="text-xs text-muted-foreground">{fn.region}</span>
+                    <span className="text-xs text-muted-foreground">{fn.project ? `${fn.project} · ${fn.region}` : fn.region}</span>
                   </CommandItem>
                 ))}
               </CommandGroup>
