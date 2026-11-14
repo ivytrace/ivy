@@ -271,9 +271,9 @@ export function SlackRow({ workspace, project, alerts }: { workspace: string; pr
         </span>
       )}
       {alerts && channels.length > 0 && (broken ? <Badge variant="error">Broken</Badge> : <Badge variant="success">Connected</Badge>)}
-      <span className="flex items-center text-xs text-primary">
-        Alerts settings
-        <ChevronRight className="size-3.5" />
+      <span className="flex items-center gap-0.5 text-xs">
+        <span className="link">Alerts settings</span>
+        <ChevronRight className="size-3.5 text-muted-foreground" />
       </span>
     </Link>
   );

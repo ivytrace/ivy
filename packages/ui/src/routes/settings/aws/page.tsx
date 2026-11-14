@@ -138,7 +138,7 @@ function AccountCard({
           {pending ? (
             <span className="font-semibold">{account.name}</span>
           ) : (
-            <Link to={accountLink(workspace, account.id)} className="font-semibold text-primary hover:underline">
+            <Link to={accountLink(workspace, account.id)} className="link">
               {account.name}
             </Link>
           )}

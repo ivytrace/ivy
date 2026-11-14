@@ -245,7 +245,7 @@ export function Deploy({ account, onConnected, bare }: { account: AwsAccount; on
           <Step n={2}>
             Open{" "}
             <a
-              className="text-primary hover:underline"
+              className="link"
               href={`https://${account.stack_region}.console.aws.amazon.com/cloudformation/home?region=${account.stack_region}#/stacks/create`}
               target="_blank"
               rel="noreferrer"

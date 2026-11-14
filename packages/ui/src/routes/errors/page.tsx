@@ -48,7 +48,7 @@ function columnsFor(scope: Scope): ColumnDef<ErrorGroup, unknown>[] {
     accessorKey: "function",
     header: "Function",
     cell: ({ row }) => (
-      <Link to={invocationsLink(rowScope(scope, row.original), { function: row.original.function })} className="font-medium text-primary hover:underline">
+      <Link to={invocationsLink(rowScope(scope, row.original), { function: row.original.function })} className="link">
         {row.original.function}
       </Link>
     ),
