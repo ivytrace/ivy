@@ -1,3 +1,4 @@
+import { answerTicket } from './support.js';
 import { maybeFail, type FunctionDef } from '../trace/generate.js';
 import { InvocationError, sourceIp, USER_AGENTS } from '../trace/invocation.js';
 import { chance, hex, latency, pick, randomInt, shortId, uuid } from '../trace/random.js';
@@ -542,7 +543,7 @@ const sendPush: FunctionDef = {
   },
 };
 
-export const FUNCTIONS: FunctionDef[] = [getOrder, createOrder, processOrder, login, sendPush, resizeImage, dailyDigest];
+export const FUNCTIONS: FunctionDef[] = [getOrder, createOrder, processOrder, login, sendPush, resizeImage, dailyDigest, answerTicket];
 
 /** The function that gets an error spike during the simulated incident window. */
 export const INCIDENT_FUNCTION = processOrder.name;

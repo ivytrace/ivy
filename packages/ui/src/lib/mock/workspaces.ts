@@ -67,6 +67,7 @@ export function seedWorkspaces(empty: boolean): MockWorkspace[] {
     project("checkout-staging", "Checkout (staging)", 30),
     project("billing-api-prod", "Billing API (prod)", 20),
     project("billing-api-staging", "Billing API (staging)", 20),
+    project("support-api-prod", "Support API (prod)", 10),
     project("default", "Default", 40, { default: true }),
     project("legacy-reports", "Legacy reports", 60, { archived: true }),
   ];
@@ -89,6 +90,7 @@ export function seedWorkspaces(empty: boolean): MockWorkspace[] {
     key("checkout-prod", "Auto-trace (Lambda functions)", "auto-trace", 30),
     key("checkout-prod", "ci", "user", 10),
     key("billing-api-prod", "Auto-trace (Lambda functions)", "auto-trace", 20),
+    key("support-api-prod", "Auto-trace (Lambda functions)", "auto-trace", 10),
   );
 
   // Someone else's workspace you're a member of: only the untouched default project (onboarding).

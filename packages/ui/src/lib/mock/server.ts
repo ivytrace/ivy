@@ -30,6 +30,7 @@ export const PROJECT_OF: Record<string, string> = {
   "orders-processQueue": "checkout-prod",
   "auth-getProfile": "billing-api-prod",
   "reports-nightlyExport": "billing-api-staging",
+  "support-answerTicket": "support-api-prod",
 };
 
 /** Seconds after a rule or key is created in an empty workspace until the mock "receives" a first trace. */

@@ -1,4 +1,5 @@
 import type { ErrorGroup, Invocation, Span, SpanEvent, Trace } from "@ivy/spans";
+import * as AI from "./ai-traces.js";
 
 /**
  * Realistic traces in the `GET /api/traces/:id` shape, modelled on the UI's mock fixtures and the
@@ -421,4 +422,98 @@ export const errorGroups: ErrorGroup[] = [
   },
 ];
 
-export const traces = [checkoutFailed, checkoutOk, queueFailed, plainOtel];
+function supportInvocation(id: string, duration: number, response: string): SpanSpec {
+  return {
+    id,
+    name: "support-answerTicket",
+    kind: "SERVER",
+    offset: 0,
+    duration,
+    status: "OK",
+    attributes: {
+      "ivy.invocation": "true",
+      "faas.invocation_id": "5a7e1c90-2b3d-4e5f-8a9b-0c1d2e3f4a5b",
+      "faas.coldstart": "false",
+      "faas.trigger": "http",
+      "ivy.trigger.source": "aws:apigatewayv2",
+      "cloud.resource_id": "arn:aws:lambda:eu-west-1:123456789012:function:support-answerTicket",
+      "http.request.method": "POST",
+      "url.path": "/support/messages",
+      "http.route": "/support/messages",
+      "http.response.status_code": "200",
+      "ivy.memory_used_mb": "142",
+      "ivy.payload.request": JSON.stringify({
+        routeKey: "POST /support/messages",
+        headers: { "content-type": "application/json", authorization: "[redacted]" },
+        body: JSON.stringify({ customerId: "cus_ada", message: AI.QUESTION }),
+      }),
+      "ivy.payload.response": JSON.stringify({ statusCode: 200, body: JSON.stringify({ reply: response }) }),
+    },
+    events: [log(3, "info", "Answering ticket for cus_ada")],
+  };
+}
+
+const llmHttp = (host: string, path: string, status = 200) => ({
+  "http.request.method": "POST",
+  "url.full": `https://${host}${path}`,
+  "server.address": host,
+  "server.port": "443",
+  "http.response.status_code": String(status),
+});
+
+const orderLookup = (id: string, parent: string, offset: number): SpanSpec => ({
+  id,
+  parent,
+  name: "DynamoDB.GetItem",
+  offset,
+  duration: 17.6,
+  status: "OK",
+  attributes: aws(
+    "DynamoDB",
+    "GetItem",
+    { "aws.dynamodb.table_names": '["orders-prod"]' },
+    { TableName: "orders-prod", Key: { pk: { S: "ORDER#ord_8812" } } },
+    { Item: { pk: { S: "ORDER#ord_8812" }, status: { S: "shipped" }, carrier: { S: "DHL" } } },
+  ),
+});
+
+/** API Gateway → Lambda support bot on the Vercel AI SDK 6 (`ai.*` spans): generateText with a tool call, then streamText. */
+export const supportBot = build(traceIdAt(20_000, "a1b2c3d4e5f6a7b8c9d0e1f2"), 20_000, "eu-west-1", "support-answerTicket", [
+  supportInvocation("e1", 2140.6, AI.REPLY),
+  { id: "e2", parent: "e1", name: "ai.generateText", kind: "INTERNAL", offset: 9, duration: 1630.2, status: "UNSET", attributes: AI.aiSdkAttributes.generateText },
+  { id: "e3", parent: "e2", name: "ai.generateText.doGenerate", kind: "INTERNAL", offset: 11, duration: 611.4, attributes: AI.aiSdkAttributes.doGenerate(1) },
+  { id: "e4", parent: "e3", name: "POST api.openai.com", offset: 13, duration: 606.8, attributes: llmHttp("api.openai.com", "/v1/chat/completions") },
+  { id: "e5", parent: "e2", name: "ai.toolCall", kind: "INTERNAL", offset: 625, duration: 21.3, attributes: AI.aiSdkAttributes.toolCall },
+  orderLookup("e6", "e5", 627),
+  { id: "e7", parent: "e2", name: "ai.generateText.doGenerate", kind: "INTERNAL", offset: 650, duration: 987.5, attributes: AI.aiSdkAttributes.doGenerate(2) },
+  { id: "e8", parent: "e7", name: "POST api.openai.com", offset: 652, duration: 983.1, attributes: llmHttp("api.openai.com", "/v1/chat/completions") },
+  { id: "e9", parent: "e1", name: "ai.streamText", kind: "INTERNAL", offset: 1645, duration: 488.9, attributes: AI.aiSdkAttributes.streamText },
+  {
+    id: "ea",
+    parent: "e9",
+    name: "ai.streamText.doStream",
+    kind: "INTERNAL",
+    offset: 1647,
+    duration: 485.2,
+    attributes: AI.aiSdkAttributes.doStream(318.4),
+    events: [
+      { offset: 1965, name: "ai.stream.firstChunk", attributes: { "ai.response.msToFirstChunk": "318.4" } },
+      { offset: 2131, name: "ai.stream.finish", attributes: {} },
+    ],
+  },
+  { id: "eb", parent: "ea", name: "POST api.anthropic.com", offset: 1649, duration: 482.7, attributes: llmHttp("api.anthropic.com", "/v1/messages") },
+]);
+
+/** The same flow on AI SDK 7's GenAI semantic-convention spans (`invoke_agent`, `step n`, `chat`, `execute_tool`). */
+export const supportBotGenAi = build(traceIdAt(25_000, "f1e2d3c4b5a6978877665544"), 25_000, "eu-west-1", "support-answerTicket", [
+  supportInvocation("g1", 1652.4, AI.ANSWER),
+  { id: "g2", parent: "g1", name: "invoke_agent gpt-4o-mini", kind: "INTERNAL", offset: 9, duration: 1630.2, attributes: AI.genAiAttributes.agent },
+  { id: "g3", parent: "g2", name: "step 1", kind: "INTERNAL", offset: 10, duration: 638.1, attributes: AI.genAiAttributes.step },
+  { id: "g4", parent: "g3", name: "chat gpt-4o-mini", offset: 11, duration: 611.4, attributes: AI.genAiAttributes.chat(1) },
+  { id: "g5", parent: "g3", name: "execute_tool getOrder", kind: "INTERNAL", offset: 625, duration: 21.3, attributes: AI.genAiAttributes.tool },
+  orderLookup("g6", "g5", 627),
+  { id: "g7", parent: "g2", name: "step 2", kind: "INTERNAL", offset: 649, duration: 989.0, attributes: AI.genAiAttributes.step },
+  { id: "g8", parent: "g7", name: "chat gpt-4o-mini", offset: 650, duration: 987.5, attributes: AI.genAiAttributes.chat(2) },
+]);
+
+export const traces = [checkoutFailed, checkoutOk, queueFailed, plainOtel, supportBot, supportBotGenAi];

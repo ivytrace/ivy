@@ -21,7 +21,16 @@ import { PickProject } from "@/components/common/pick-project";
 import { ALL_PROJECTS, invocationsLink } from "@/lib/links/links";
 import { useScope } from "@/lib/links/use-scope";
 import type { GraphNode } from "@/lib/spans/graph";
-import { describeSpan, getException, getLogs, isInvocationSpan } from "@/lib/spans/services";
+import { LlmUsageTable } from "@/components/trace/llm-details";
+import {
+  describeSpan,
+  formatTokens,
+  getException,
+  getLogs,
+  isInvocationSpan,
+  llmUsage,
+  type LlmUsage,
+} from "@/lib/spans/services";
 import { buildWaterfall, filterInvocation, findRootInvocation } from "@/lib/spans/tree";
 import type { Span } from "@/lib/spans/types";
 import { formatDuration, formatTimestamp } from "@/lib/utils/format";
@@ -56,9 +65,10 @@ function ConsoleLinks({ invocation }: { invocation: Span }) {
   );
 }
 
-function Summary({ invocation, traceId }: { invocation: Span; traceId: string }) {
+function Summary({ invocation, traceId, usage }: { invocation: Span; traceId: string; usage?: LlmUsage }) {
   const a = invocation.attributes;
   const exception = getException(invocation);
+  const tokens = usage && usage.calls > 0;
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <dl className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
@@ -83,6 +93,18 @@ function Summary({ invocation, traceId }: { invocation: Span; traceId: string })
             <dd className="mr-4 hidden font-semibold text-foreground md:block">{a["ivy.memory_used_mb"]} MB</dd>
           </>
         )}
+        {tokens && (
+          <>
+            <dt>Tokens</dt>
+            <dd className="mr-4 font-semibold text-foreground">
+              <Tooltipped title={`${usage.calls} LLM ${usage.calls === 1 ? "call" : "calls"}: input → output tokens`}>
+                <span className="tabular-nums">
+                  {formatTokens(usage.inputTokens)} → {formatTokens(usage.outputTokens)}
+                </span>
+              </Tooltipped>
+            </dd>
+          </>
+        )}
         <dt className="hidden lg:block">Trace</dt>
         <dd className="mr-4 hidden font-mono text-xs font-semibold text-foreground lg:block">{traceId}</dd>
       </dl>
@@ -91,7 +113,7 @@ function Summary({ invocation, traceId }: { invocation: Span; traceId: string })
   );
 }
 
-function Overview({ invocation }: { invocation: Span }) {
+function Overview({ invocation, usage }: { invocation: Span; usage?: LlmUsage }) {
   const d = describeSpan(invocation);
   const exception = getException(invocation);
   return (
@@ -106,6 +128,12 @@ function Overview({ invocation }: { invocation: Span }) {
         <h4 className="mb-3 text-sm font-medium">Invocation</h4>
         <SpanFields span={invocation} />
       </section>
+      {usage && usage.calls > 0 && (
+        <section>
+          <h4 className="mb-3 text-sm font-medium">LLM usage</h4>
+          <LlmUsageTable usage={usage} />
+        </section>
+      )}
       <PayloadPreview title="Event payload" value={d.request} truncated={d.truncated} />
       <PayloadPreview title="Return value" value={d.response} truncated={d.truncated} />
       <PayloadPreview title="Resource" value={invocation.resource} defaultOpen={false} />
@@ -131,6 +159,7 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
     return buildWaterfall(filterInvocation(all.rows, invocation.span_id).map((r) => r.span));
   }, [spans, filtering, invocation.span_id]);
   const visibleSpans = useMemo(() => rows.map((r) => r.span), [rows]);
+  const usage = useMemo(() => llmUsage(visibleSpans), [visibleSpans]);
   const visibleIds = new Set(visibleSpans.map((s) => s.span_id));
   const logs = getLogs(spans).filter((l) => visibleIds.has(l.spanId));
 
@@ -170,7 +199,7 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
         <h1 className="truncate text-2xl font-bold">
           {invocation.attributes["faas.invocation_id"] ?? invocation.name}
         </h1>
-        <Summary invocation={invocation} traceId={traceId} />
+        <Summary invocation={invocation} traceId={traceId} usage={usage} />
       </div>
 
       <div className="h-full flex-1 overflow-hidden md:flex">
@@ -196,7 +225,7 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
               )}
             </div>
             <TabsContent value="overview">
-              <Overview invocation={invocation} />
+              <Overview invocation={invocation} usage={usage} />
             </TabsContent>
             <TabsContent value="timeline">
               <Waterfall rows={rows} totalMs={totalMs} openIds={openIds} onToggle={toggle} />

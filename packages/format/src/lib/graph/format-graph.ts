@@ -3,6 +3,7 @@ import { ms } from "../text/text.js";
 import { rootInvocation } from "../trace/tree.js";
 
 const KIND: Record<string, string> = {
+  ai: "LLM",
   apigw: "API Gateway",
   lambda: "Lambda",
   function: "function",
@@ -27,7 +28,14 @@ export function formatServiceGraph(trace: Trace): string {
   const { nodes, edges } = buildServiceGraph(trace.spans);
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const spans = new Map(trace.spans.map((s) => [s.span_id, s]));
-  const total = (n: GraphNode) => n.spanIds.reduce((sum, id) => sum + (spans.get(id)?.duration_ms ?? 0), 0);
+  /** Time in the node; spans nested in another span of the same node (an LLM operation's model calls) count once. */
+  const total = (n: GraphNode) => {
+    const ids = new Set(n.spanIds);
+    return n.spanIds.reduce((sum, id) => {
+      const span = spans.get(id);
+      return span && !ids.has(span.parent_span_id) ? sum + span.duration_ms : sum;
+    }, 0);
+  };
 
   const describe = (n: GraphNode) => {
     if (n.isTrigger) return `${n.label} [trigger]`;

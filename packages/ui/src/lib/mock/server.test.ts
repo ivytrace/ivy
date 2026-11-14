@@ -14,7 +14,7 @@ import type {
   VerifyResponse,
   Workspace,
 } from "../api/types";
-import { describeSpan, getLogs } from "../spans/services";
+import { describeSpan, getLogs, llmUsage } from "../spans/services";
 
 function client(options: Parameters<typeof createMockHandler>[0] = {}) {
   const handle = createMockHandler(options);
@@ -53,7 +53,7 @@ describe("mock API: workspaces and data", () => {
     // Other projects don't see it; all projects do, labelled.
     expect(call<{ items: FunctionSummary[] }>("GET", "/api/w/acme/p/checkout-staging/functions?since=7d").body.items).toEqual([]);
     const all = call<{ items: FunctionSummary[] }>("GET", "/api/w/acme/functions?since=7d").body.items;
-    expect(new Set(all.map((f) => f.project))).toEqual(new Set(["checkout-prod", "billing-api-prod", "billing-api-staging"]));
+    expect(new Set(all.map((f) => f.project))).toEqual(new Set(["checkout-prod", "billing-api-prod", "billing-api-staging", "support-api-prod"]));
     expect(call<{ items: ErrorGroup[] }>("GET", "/api/w/acme/errors?since=7d").body.items[0].project).toBeTruthy();
   });
 
@@ -66,6 +66,20 @@ describe("mock API: workspaces and data", () => {
     expect(icons).toContain("dynamodb");
     expect(getLogs(trace.spans).length).toBeGreaterThan(0);
     expect(call("GET", `/api/w/acme/p/billing-api-prod/traces/${checkout.sample_trace_id}`).status).toBe(404);
+  });
+
+  it("serves an AI SDK trace: generateText with a tool call, then streamText", () => {
+    const call = client();
+    const base = "/api/w/acme/p/support-api-prod";
+    const inv = call<InvocationsResponse>("GET", `${base}/invocations?since=7d&status=ok&function=support-answerTicket`).body.items[0];
+    const spans = call<Trace>("GET", `${base}/traces/${inv.trace_id}`).body.spans;
+    expect(spans.map((s) => s.name)).toEqual(
+      expect.arrayContaining(["ai.generateText", "ai.generateText.doGenerate", "ai.toolCall", "ai.streamText.doStream", "DynamoDB.GetItem"]),
+    );
+    expect(llmUsage(spans)).toMatchObject({ calls: 3, inputTokens: 1877, outputTokens: 103 });
+    const tool = spans.find((s) => s.name === "ai.toolCall")!;
+    expect(spans.find((s) => s.name === "DynamoDB.GetItem")!.parent_span_id).toBe(tool.span_id);
+    expect(describeSpan(spans.find((s) => s.name === "ai.streamText.doStream")!).llm?.ttftMs).toBeGreaterThan(200);
   });
 
   it("creates projects, keys and invitations", () => {
