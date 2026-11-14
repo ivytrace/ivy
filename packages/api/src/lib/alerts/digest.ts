@@ -1,5 +1,7 @@
 import { FAILURE_LABELS } from '@ivy/spans';
+import { TRACE_TAG } from '../aws/assign.js';
 import { publicUrl } from '../aws/config.js';
+import { awsStore } from '../aws/store.js';
 import { sendEmail } from '../email/send.js';
 import { DEFAULT_TENANT } from '../tenancy/tenants.js';
 import { multiWorkspaceMode } from '../tenancy/members.js';
@@ -74,6 +76,41 @@ export interface DigestModel {
   topGroups: DigestGroup[];
   /** Project ID → slug and name. */
   projects: Map<string, { slug: string; name: string }>;
+  untraced: UntracedFunctions | null;
+}
+
+/** Up to three function names, and how many more there are. */
+export interface UntracedFunctions {
+  names: string[];
+  more: number;
+}
+
+export const UNTRACED_SHOWN = 3;
+
+/**
+ * Functions first seen during the period in the workspace's AWS accounts that nothing traces yet
+ * (state `available`: no tag, manual choice or rule). Null without connected accounts or such functions.
+ */
+export async function newUntracedFunctions(tenantId: string, period: Pick<DigestPeriod, 'from' | 'to'>): Promise<UntracedFunctions | null> {
+  const store = awsStore();
+  const accounts = new Set((await store.listAccounts(tenantId)).filter((a) => a.status !== 'pending').map((a) => a.id));
+  if (!accounts.size) return null;
+  const key = (f: { account_id: string; region: string; function_name: string }) => `${f.account_id}/${f.region}/${f.function_name}`;
+  const excluded = new Set((await store.listSettings(tenantId)).filter((s) => s.mode === 'exclude').map(key));
+  const fresh = (await store.listFunctions(tenantId))
+    .filter(
+      (f) =>
+        accounts.has(f.account_id) &&
+        f.state === 'available' &&
+        f.first_seen_at >= period.from &&
+        f.first_seen_at < period.to &&
+        f.tags[TRACE_TAG]?.trim().toLowerCase() !== 'false' &&
+        !excluded.has(key(f)),
+    )
+    .sort((a, b) => a.first_seen_at - b.first_seen_at || a.function_name.localeCompare(b.function_name));
+  if (!fresh.length) return null;
+  const names = [...new Set(fresh.map((f) => f.function_name))];
+  return { names: names.slice(0, UNTRACED_SHOWN), more: Math.max(0, names.length - UNTRACED_SHOWN) };
 }
 
 export async function buildDigest(tenant: TenantRecord, period: DigestPeriod): Promise<DigestModel> {
@@ -87,6 +124,7 @@ export async function buildDigest(tenant: TenantRecord, period: DigestPeriod): P
     newGroups: data.groups.filter((g) => g.first_seen >= period.from).slice(0, 10),
     topGroups: data.groups.slice(0, 10),
     projects,
+    untraced: await newUntracedFunctions(tenant.id, period),
   };
 }
 
@@ -140,6 +178,8 @@ export function renderDigest(m: DigestModel, links: RenderLinks) {
   ];
   const settingsUrl = `${links.baseUrl}/w/${enc(m.workspace.slug)}/settings/notifications`;
   const projectName = (g: DigestGroup) => m.projects.get(g.project_id)?.name ?? 'unknown project';
+  const awsUrl = `${links.baseUrl}/w/${enc(m.workspace.slug)}/settings/aws`;
+  const untracedList = (names: string[]) => (m.untraced?.more ? `${names.join(', ')} and ${m.untraced.more} more` : names.join(', '));
 
   const text = [
     `Ivy weekly digest: ${m.workspace.name}`,
@@ -158,6 +198,7 @@ export function renderDigest(m: DigestModel, links: RenderLinks) {
           (g) => `- ${n(g.count)}× (${trend(g.count, g.previous)}) ${groupTitle(g)}: ${trim(g.error_message, 120)}\n  ${g.function} · ${projectName(g)}\n  ${groupUrl(m, g, links.baseUrl)}`,
         )
       : ['No errors this week.']),
+    ...(m.untraced ? ['', 'New functions not traced yet', `${untracedList(m.untraced.names)}.`, `Choose what to trace: ${awsUrl}`] : []),
     '',
     `Notification settings: ${settingsUrl}`,
     ...(links.unsubscribeUrl ? [`Unsubscribe: ${links.unsubscribeUrl}`] : []),
@@ -205,6 +246,16 @@ export function renderDigest(m: DigestModel, links: RenderLinks) {
 <tr><td style="padding:0 28px 8px;">
   ${section('New error groups this week', m.newGroups.length ? groupRows(m.newGroups, false) : empty('None.'))}
   ${section('Top error groups', m.topGroups.length ? groupRows(m.topGroups, true) : empty('No errors this week.'))}
+  ${
+    m.untraced
+      ? section(
+          'New functions not traced yet',
+          `<tr><td style="padding:10px 0;border-top:1px solid #e4e4e7;font-size:13px;color:#27272a;">${untracedList(
+            m.untraced.names.map((name) => `<code style="font-family:Menlo,Consolas,monospace;">${esc(trim(name, 80))}</code>`),
+          )}. <a href="${esc(awsUrl)}" style="color:#15803d;">Choose what to trace</a></td></tr>`,
+        )
+      : ''
+  }
 </td></tr>
 <tr><td style="padding:20px 28px 24px;${muted}font-size:12px;border-top:1px solid #e4e4e7;">
   You get this because you are a member of ${esc(m.workspace.name)} in Ivy.

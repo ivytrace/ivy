@@ -504,5 +504,12 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
     return presentRule(r, rules.length - 1);
   }
 
-  return { handle, addRule, hasAccounts: () => accounts.length > 0 };
+  /** Names of functions first seen since `since` that nothing traces yet (the digest's hint), oldest first. */
+  const newUntraced = (since: number) =>
+    functions
+      .filter((f) => f.first_seen_ms >= since && accounts.some((a) => a.account_id === f.account_id) && assign(f).state === "available")
+      .sort((a, b) => a.first_seen_ms - b.first_seen_ms)
+      .map((f) => f.name);
+
+  return { handle, addRule, hasAccounts: () => accounts.length > 0, newUntraced };
 }

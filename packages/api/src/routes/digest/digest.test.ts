@@ -2,7 +2,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { createApp } from '../../app.js';
 import { startTestIssuer, type TestUser } from '../../lib/auth/testing.js';
 import { setAlertDataForTests, type AlertDataSource, type DigestData } from '../../lib/alerts/data.js';
-import { digestPeriod, digestRecipients, readUnsubscribeToken, resetDigestRunsForTests, sendDueDigests, unsubscribeToken } from '../../lib/alerts/digest.js';
+import {
+  digestPeriod,
+  digestRecipients,
+  newUntracedFunctions,
+  readUnsubscribeToken,
+  resetDigestRunsForTests,
+  sendDueDigests,
+  unsubscribeToken,
+} from '../../lib/alerts/digest.js';
+import { memoryStore } from '../../lib/aws/memory-store.js';
+import { setAwsStore } from '../../lib/aws/store.js';
+import type { AwsAccount, FunctionStatus, TraceState } from '../../lib/aws/types.js';
 import { alertStore, memoryAlertStore, setAlertStore } from '../../lib/alerts/store.js';
 import { decodedMail, mailHeader, startSmtpCatcher } from '../../lib/email/testing.js';
 import { defaultProjectId } from '../../lib/tenancy/ids.js';
@@ -27,6 +38,51 @@ async function call(user: TestUser, method: string, path: string, body?: unknown
   const res = await app.request(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, body: (await res.json()) as any };
 }
+
+let aws: ReturnType<typeof memoryStore>;
+
+const awsAccount = (tenant: string, status: AwsAccount['status'] = 'connected'): AwsAccount => ({
+  tenant_id: tenant,
+  id: 'conn-1',
+  name: 'Prod',
+  account_id: '123456789012',
+  role_arn: 'arn:aws:iam::123456789012:role/IvyTrace',
+  external_id: 'ext',
+  event_secret: 'secret',
+  stack_name: 'ivy-trace',
+  stack_region: 'eu-west-1',
+  default_project_id: '',
+  reviewed_at: 0,
+  regions: ['eu-west-1'],
+  all_regions: false,
+  status,
+  error: '',
+  created_at: 1,
+  verified_at: 1,
+  last_sync_at: 1,
+  throttle_metrics: false,
+  throttle_status: '',
+  throttles_polled_to: 0,
+});
+
+const lambdaFn = (tenant: string, name: string, firstSeen: number, state: TraceState = 'available', tags: Record<string, string> = {}): FunctionStatus => ({
+  tenant_id: tenant,
+  account_id: 'conn-1',
+  region: 'eu-west-1',
+  function_name: name,
+  function_arn: `arn:aws:lambda:eu-west-1:123456789012:function:${name}`,
+  runtime: 'nodejs22.x',
+  state,
+  reason: '',
+  project_id: '',
+  project_source: '',
+  rule_id: '',
+  stack: '',
+  tags,
+  last_modified: '',
+  first_seen_at: firstSeen,
+  updated_at: 1,
+});
 
 /** Per workspace ID: what the fake "ClickHouse" has for the week. */
 let weeks: Map<string, DigestData>;
@@ -93,6 +149,8 @@ beforeEach(async () => {
   store = await resetTenancyForTests();
   setAlertStore(memoryAlertStore());
   setAlertDataForTests(fakeData);
+  aws = memoryStore();
+  setAwsStore(aws.store);
   resetDigestRunsForTests();
   smtp.messages.length = 0;
   vi.stubEnv('IVY_SMTP_URL', smtp.url);
@@ -210,5 +268,63 @@ describe('weekly digest', () => {
     expect(preview.body).toMatchObject({ subject: expect.stringContaining('Ivy weekly digest for Acme'), empty: false });
     expect(preview.body.html).toContain('<!doctype html>');
     expect(preview.body.text).toContain('Top error groups');
+  });
+});
+
+describe('new functions not traced yet', () => {
+  const period = digestPeriod(MONDAY);
+
+  async function seed() {
+    await aws.store.saveAccount(awsAccount(acme.id));
+    const at = (days: number) => period.from + days * DAY;
+    await aws.store.replaceRegionFunctions(acme.id, 'conn-1', 'eu-west-1', [
+      lambdaFn(acme.id, 'orders-a', at(1)),
+      lambdaFn(acme.id, 'orders-b', at(2)),
+      lambdaFn(acme.id, 'orders-c', at(3)),
+      lambdaFn(acme.id, 'orders-d', at(4)),
+      lambdaFn(acme.id, 'orders-e', at(5)),
+      lambdaFn(acme.id, 'before-week', period.from - 1),
+      lambdaFn(acme.id, 'after-week', period.to),
+      lambdaFn(acme.id, 'tagged-off', at(1), 'opted_out', { 'ivy:trace': 'false' }),
+      lambdaFn(acme.id, 'excluded', at(1), 'opted_out'),
+      lambdaFn(acme.id, 'excluded-stale', at(1)),
+      lambdaFn(acme.id, 'python-fn', at(1), 'unsupported'),
+      lambdaFn(acme.id, 'traced-fn', at(1), 'traced'),
+    ]);
+    await aws.store.saveSetting(acme.id, { account_id: 'conn-1', region: 'eu-west-1', function_name: 'excluded-stale', mode: 'exclude', project_id: '' });
+  }
+
+  it('lists the first three of the week, then "and N more", skipping excluded, unsupported and traced ones', async () => {
+    await seed();
+    expect(await newUntracedFunctions(acme.id, period)).toEqual({ names: ['orders-a', 'orders-b', 'orders-c'], more: 2 });
+
+    await sendDueDigests(MONDAY + 5 * 60_000);
+    const body = decodedMail(smtp.messages[0].raw);
+    expect(body).toContain('New functions not traced yet');
+    expect(body).toContain('orders-a, orders-b, orders-c and 2 more.');
+    expect(body).toContain('Choose what to trace: https://ivy.example.test/w/acme/settings/aws');
+    expect(body).not.toContain('before-week');
+    expect(body).not.toContain('excluded-stale');
+  });
+
+  it('is in the settings preview too', async () => {
+    await aws.store.saveAccount(awsAccount(acme.id));
+    await aws.store.saveFunction(lambdaFn(acme.id, 'fresh-fn', Date.now() - 60_000));
+    const preview = (await call(erin, 'GET', '/api/w/acme/digest/preview')).body;
+    expect(preview.text).toContain('New functions not traced yet\nfresh-fn.');
+    expect(preview.html).toContain('Choose what to trace');
+  });
+
+  it('is left out without new untraced functions or without connected accounts', async () => {
+    expect(await newUntracedFunctions(acme.id, period)).toBeNull();
+    await aws.store.saveAccount(awsAccount(acme.id, 'pending'));
+    await aws.store.saveFunction(lambdaFn(acme.id, 'orders-a', period.from + DAY));
+    expect(await newUntracedFunctions(acme.id, period)).toBeNull();
+    await aws.store.saveAccount(awsAccount(acme.id));
+    await aws.store.saveFunction(lambdaFn(acme.id, 'orders-a', period.from + DAY, 'traced'));
+    expect(await newUntracedFunctions(acme.id, period)).toBeNull();
+
+    await sendDueDigests(MONDAY + 5 * 60_000);
+    expect(decodedMail(smtp.messages[0].raw)).not.toContain('not traced yet');
   });
 });
