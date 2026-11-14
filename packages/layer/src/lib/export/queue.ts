@@ -1,5 +1,5 @@
 import { buildExportRequest, type OtlpKeyValue, type OtlpSpan } from './otlp.js';
-import { postWithRetry } from './transport.js';
+import { postWithRetry, type SendResult } from './transport.js';
 
 export interface Batch {
   resource: OtlpKeyValue[];
@@ -13,12 +13,14 @@ export interface QueueOptions {
   exportTimeoutMs: number;
   maxSpansPerRequest?: number;
   log?: (msg: string) => void;
-  send?: (body: string, budgetMs: number) => Promise<boolean>;
+  send?: (body: string, budgetMs: number) => Promise<boolean | SendResult>;
   now?: () => number;
 }
 
 const MIN_BACKOFF_MS = 5_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
+/** Longest server-requested pause honoured (an environment rarely lives longer). */
+const MAX_RETRY_AFTER_MS = 60 * 60_000;
 
 /** Bounded span queue with retry/backoff and a dropped-span counter reported on the next batch. */
 export class ExportQueue {
@@ -28,6 +30,8 @@ export class ExportQueue {
   dropped = 0;
   private nextAttemptAt = 0;
   private backoffMs = 0;
+  /** Until when the server asked us not to send (Retry-After); respected even by forced flushes. */
+  private serverPauseUntil = 0;
 
   constructor(private opts: QueueOptions) {}
 
@@ -67,6 +71,7 @@ export class ExportQueue {
   private async doFlush(budgetMs: number, force: boolean): Promise<void> {
     const now = this.opts.now ?? Date.now;
     const deadline = now() + budgetMs;
+    if (now() < this.serverPauseUntil) return;
     if (!force && now() < this.nextAttemptAt) return;
     const maxPerRequest = this.opts.maxSpansPerRequest ?? 500;
     while (this.batches.length && deadline - now() > 50) {
@@ -85,21 +90,26 @@ export class ExportQueue {
         first.attributes.push({ key: 'ivy.dropped_spans', value: { intValue: String(dropped) } });
       }
       const body = JSON.stringify(buildExportRequest(taken));
-      const ok = await this.send(body, deadline - now());
+      const sent = await this.send(body, deadline - now());
+      const { ok, retryAfterMs } = typeof sent === 'boolean' ? { ok: sent, retryAfterMs: undefined } : sent;
       if (ok) {
         this.dropped -= dropped;
         this.backoffMs = 0;
         this.nextAttemptAt = 0;
       } else {
-        this.drop(count, 'export failed');
+        this.drop(count, retryAfterMs === undefined ? 'export failed' : `rejected, retry after ${Math.round(retryAfterMs / 1000)} s`);
         this.backoffMs = Math.min(MAX_BACKOFF_MS, this.backoffMs ? this.backoffMs * 2 : MIN_BACKOFF_MS);
         this.nextAttemptAt = now() + this.backoffMs;
+        if (retryAfterMs !== undefined) {
+          this.serverPauseUntil = now() + Math.min(retryAfterMs, MAX_RETRY_AFTER_MS);
+          this.nextAttemptAt = Math.max(this.nextAttemptAt, this.serverPauseUntil);
+        }
         return;
       }
     }
   }
 
-  private send(body: string, budgetMs: number): Promise<boolean> {
+  private send(body: string, budgetMs: number): Promise<boolean | SendResult> {
     if (this.opts.send) return this.opts.send(body, budgetMs);
     const headers: Record<string, string> = {};
     if (this.opts.apiKey) headers.authorization = `Bearer ${this.opts.apiKey}`;

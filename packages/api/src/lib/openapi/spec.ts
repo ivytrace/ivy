@@ -78,6 +78,13 @@ export const openApiDocument = {
         responses: { 200: { description: 'HTML page', content: { 'text/html': { schema: { type: 'string' } } } } },
       },
     },
+    '/api/usage': {
+      get: {
+        tags: ['Meta'], summary: "This month's traces and the workspace's limits", operationId: 'getUsage',
+        description: 'Traces are counted per calendar month (UTC). See limits.md.',
+        responses: { 200: json(ref('Usage')) },
+      },
+    },
     '/api/functions': {
       get: {
         tags: ['Traces'], summary: 'Function overview for the range', operationId: 'listFunctions',

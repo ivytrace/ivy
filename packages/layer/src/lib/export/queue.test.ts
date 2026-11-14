@@ -14,7 +14,7 @@ const span = (id: string): OtlpSpan => ({
   status: { code: 0 },
 });
 
-function setup(results: boolean[], maxQueueSpans = 10) {
+function setup(results: (boolean | { ok: boolean; retryAfterMs?: number })[], maxQueueSpans = 10) {
   const sent: any[] = [];
   let t = 0;
   const q = new ExportQueue({
@@ -73,6 +73,34 @@ describe('ExportQueue', () => {
     await q.flush(1000);
     q.add({ resource: [], spans: [span('b')] });
     await q.flush(1000, true);
+    expect(sent).toHaveLength(2);
+  });
+
+  it('honours Retry-After: no sends (not even forced) until it passes, spans dropped and counted', async () => {
+    const { q, sent, advance } = setup([{ ok: false, retryAfterMs: 300_000 }, true]);
+    q.add({ resource: [], spans: [span('a')] });
+    await q.flush(1000);
+    expect(q.dropped).toBe(1);
+
+    advance(200_000);
+    q.add({ resource: [], spans: [span('b')] });
+    await q.flush(1000);
+    await q.flush(1000, true);
+    expect(sent).toHaveLength(1);
+
+    advance(100_001);
+    await q.flush(1000);
+    expect(sent).toHaveLength(2);
+    expect(dropped(sent[1])).toBe('1');
+  });
+
+  it('caps a very long Retry-After at an hour', async () => {
+    const { q, sent, advance } = setup([{ ok: false, retryAfterMs: 30 * 86_400_000 }, true]);
+    q.add({ resource: [], spans: [span('a')] });
+    await q.flush(1000);
+    advance(3_600_001);
+    q.add({ resource: [], spans: [span('b')] });
+    await q.flush(1000);
     expect(sent).toHaveLength(2);
   });
 });

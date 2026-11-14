@@ -259,3 +259,17 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_function_settings
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, account_id, region, function_name);
+
+-- Per-workspace ingest limits (docs/implementation/limits.md). No row means the defaults
+-- (IVY_DEFAULT_TRACE_QUOTA etc.; unlimited when unset). A NULL quota is unlimited.
+CREATE TABLE IF NOT EXISTS ivy_control.workspace_limits
+(
+    `tenant_id` String,
+    `plan` String DEFAULT '',
+    `monthly_trace_quota` Nullable(UInt64),
+    `over_quota` LowCardinality(String) DEFAULT 'allow',
+    `updated_at` DateTime64(3, 'UTC'),
+    `deleted` UInt8 DEFAULT 0
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY tenant_id;

@@ -6,7 +6,10 @@ import { hashKey } from '../tenancy/ids.js';
 import type { KeyMatch } from '../tenancy/store.js';
 import { FailureLimiter } from './failure-limiter.js';
 import { KeyCache } from './key-cache.js';
-import { jsonRequest, protobufRequest } from './otlp-fixtures.js';
+import type { Limits } from '../limits/limits.js';
+import { effectiveLimits } from '../limits/limits.js';
+import { QuotaGate } from '../limits/quota-gate.js';
+import { jsonInvocations, jsonRequest, protobufInvocations, protobufRequest } from './otlp-fixtures.js';
 import { createIngestHandler } from './router.js';
 import { UsageCounters } from './usage.js';
 
@@ -31,6 +34,8 @@ let router: http.Server;
 let collectorUrl = '';
 let routerUrl = '';
 let usage: UsageCounters;
+let limits: Record<string, Limits> = {};
+let storedTraces: Record<string, number> = {};
 
 function listen(server: http.Server): Promise<string> {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)));
@@ -54,6 +59,8 @@ beforeEach(async () => {
   lookupFails = false;
   lookups = 0;
   usage = new UsageCounters();
+  limits = {};
+  storedTraces = {};
   router?.close();
   router = http.createServer(
     createIngestHandler({
@@ -66,6 +73,10 @@ beforeEach(async () => {
       }),
       limiter: new FailureLimiter(3),
       usage,
+      quota: new QuotaGate({
+        load: async (tenant) => ({ limits: effectiveLimits(limits[tenant] ?? null), used: storedTraces[tenant] ?? 0 }),
+        upgradeUrl: 'https://ivy.example/settings/usage',
+      }),
       collectorUrl: (shard) => (shard === 'shard-1' ? collectorUrl : 'http://127.0.0.1:1'),
       collectorToken: 'internal',
       maxBodyBytes: 64 * 1024,
@@ -167,5 +178,43 @@ describe('ingest router', () => {
     collectorStatus = 401;
     expect((await post(JSON_BODY, { authorization: 'Bearer good-key', 'content-type': 'application/json' })).status).toBe(503);
     expect(usage.snapshot()).toEqual({});
+  });
+
+  describe('monthly trace quota', () => {
+    const headers = { authorization: 'Bearer good-key', 'content-type': 'application/json' };
+    const invocations = (n: number) => JSON.stringify(jsonInvocations(n, 2));
+
+    it('is unlimited without limits', async () => {
+      storedTraces.ten_a = 10_000_000;
+      expect((await post(invocations(5), headers)).status).toBe(200);
+    });
+
+    it('blocks at the quota with block: 429, Retry-After and an upgrade message, nothing forwarded', async () => {
+      limits.ten_a = { plan: 'Free', monthly_trace_quota: 100, over_quota: 'block' };
+      storedTraces.ten_a = 100;
+      const res = await post(invocations(1), headers);
+      expect(res.status).toBe(429);
+      expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
+      const body = (await res.json()) as { code: number; message: string };
+      expect(body.code).toBe(8);
+      expect(body.message).toMatch(/Monthly trace quota reached \(100 traces on the Free plan\).*Upgrade at https:\/\/ivy\.example/);
+      expect(received).toHaveLength(0);
+    });
+
+    it('counts accepted invocations towards the quota until the next refresh', async () => {
+      limits.ten_a = { plan: 'Free', monthly_trace_quota: 10, over_quota: 'block' };
+      storedTraces.ten_a = 4;
+      expect((await post(invocations(6), headers)).status).toBe(200);
+      const blocked = await post(protobufInvocations(1), { authorization: 'Bearer good-key', 'content-type': 'application/x-protobuf' });
+      expect(blocked.status).toBe(429);
+      expect(blocked.headers.get('content-type')).toBe('application/x-protobuf');
+      expect(received).toHaveLength(1);
+    });
+
+    it('never blocks with allow', async () => {
+      limits.ten_a = { plan: 'Pro', monthly_trace_quota: 100, over_quota: 'allow' };
+      storedTraces.ten_a = 5_000;
+      expect((await post(invocations(3), headers)).status).toBe(200);
+    });
   });
 });

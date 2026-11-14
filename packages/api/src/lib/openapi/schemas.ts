@@ -20,7 +20,24 @@ const list = (ref: string) => object({ items: { type: 'array', items: { $ref: `#
 export const schemas = {
   Error: object({ error: str }),
   Health: object({ ok: bool, clickhouse: bool }),
-  Config: object({ version: str, auth: object({ enabled: bool }) }),
+  Config: object(
+    { version: str, auth: object({ enabled: bool }), billing: object({ url: str }) },
+    ['version', 'auth'],
+  ),
+  Limits: object({
+    plan: { type: 'string', description: 'Plan label; empty when none.' },
+    monthly_trace_quota: { type: ['integer', 'null'], description: 'Traces per calendar month (UTC); null is unlimited.' },
+    over_quota: { type: 'string', enum: ['block', 'allow'], description: '`block` rejects ingest at the quota; `allow` keeps accepting.' },
+    source: { type: 'string', enum: ['workspace', 'unset'], description: '`unset`: the workspace has no limits and is unlimited.' },
+  }),
+  Usage: object({
+    workspace: str,
+    month: { type: 'string', examples: ['2026-11'] },
+    period: object({ start: time, end: time }),
+    traces: { type: 'integer', description: 'Traces (Lambda invocations) this month.' },
+    limits: { $ref: '#/components/schemas/Limits' },
+    blocked: { type: 'boolean', description: 'Ingest is being refused: quota reached with over_quota `block`.' },
+  }),
   FunctionSummary: object({
     name: str, region: str, invocations: int, errors: int, error_rate: num, cold_starts: int,
     avg_ms: num, p50_ms: num, p95_ms: num, p99_ms: num, last_invoked: time,

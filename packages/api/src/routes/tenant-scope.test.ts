@@ -37,6 +37,7 @@ const DATA_ROUTES = [
   '/api/stats/timeseries?since=1h&bucket=1m&function=f',
   '/api/traces/673f1a2b0000000000000000000000aa',
   '/api/traces/ffffffff0000000000000000000000aa',
+  '/api/usage',
 ];
 
 describe('tenant scoping of API queries', () => {

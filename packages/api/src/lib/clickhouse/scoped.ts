@@ -10,6 +10,7 @@ export const TENANT_SCOPED_TABLES = [
   'aws_function_settings',
   'api_keys',
   'tenant_members',
+  'workspace_limits',
 ];
 
 /** Setting read by the ClickHouse row policies on the data tables (deploy/clickhouse/schema.sql). */

@@ -3,6 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import { authenticate } from './lib/auth/middleware.js';
 import { mountAgentSurface } from './lib/mcp/mount.js';
 import { serveUi } from './lib/static/serve-ui.js';
+import { internalAuth } from './lib/internal/auth.js';
 import { tenantContext, type TenantResolver } from './lib/tenancy/context.js';
 import { userTenantResolver } from './lib/tenancy/members.js';
 import { deleteAwsAccount } from './routes/aws/accounts/delete.js';
@@ -23,9 +24,22 @@ import { getHealth } from './routes/health/get.js';
 import { getInvocations } from './routes/invocations/get.js';
 import { getTimeseries } from './routes/stats/timeseries.js';
 import { getTrace } from './routes/traces/get.js';
+import { deleteInternalLimits, putInternalLimits } from './routes/internal/limits/put.js';
+import { getInternalMembers } from './routes/internal/members/get.js';
+import { getInternalWorkspace, getInternalWorkspaces } from './routes/internal/workspaces/get.js';
+import { getUsage } from './routes/usage/get.js';
 
 export function createApp(options: { uiDir: string; tenants?: TenantResolver }) {
   const app = new Hono();
+
+  // Internal admin API for an operator's billing service: not under /api, so a proxy can keep it private.
+  app.use('/internal/*', internalAuth());
+  app.get('/internal/workspaces', getInternalWorkspaces);
+  app.get('/internal/workspaces/:id', getInternalWorkspace);
+  app.put('/internal/workspaces/:id/limits', putInternalLimits);
+  app.delete('/internal/workspaces/:id/limits', deleteInternalLimits);
+  app.get('/internal/workspaces/:id/members', getInternalMembers);
+  app.all('/internal/*', (c) => c.json({ error: 'Not found' }, 404));
 
   app.use('/api/*', authenticate());
   // Routes without a tenant: registered before the tenant middleware so it never runs for them.
@@ -35,6 +49,7 @@ export function createApp(options: { uiDir: string; tenants?: TenantResolver }) 
   mountAgentSurface(app, options.tenants, { uiDir: options.uiDir });
 
   app.use('/api/*', tenantContext(options.tenants ?? userTenantResolver()));
+  app.get('/api/usage', getUsage);
   app.get('/api/functions', getFunctions);
   app.get('/api/invocations', getInvocations);
   app.get('/api/traces/:traceId', getTrace);
