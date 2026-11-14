@@ -173,10 +173,13 @@ API reference page (Scalar, loaded from its CDN).
 ## MCP
 
 ### `POST /mcp`
-Remote MCP server (Streamable HTTP, stateless, JSON responses) with the tools `find_failing_invocations`,
-`search_invocations`, `get_trace_summary`, `compare_invocations` and `list_error_groups`. Same tenant resolution
-as `/api/*`. With OIDC configured it needs a bearer token whose audience is `IVY_MCP_RESOURCE`, and answers 401 with
-`WWW-Authenticate: Bearer resource_metadata="…"` otherwise. Details: `mcp.md`.
+Remote MCP server (Streamable HTTP, stateless, JSON responses) with the tools `list_workspaces`,
+`find_failing_invocations`, `search_invocations`, `list_error_groups`, `get_trace_summary`, `compare_invocations`,
+and the MCP Apps tools `render_waterfall` and `render_graph` (views served as `ui://ivy/*.html` resources). Tools
+cover every workspace the caller is a member of, one tenant-scoped read per workspace, unless given `workspace`.
+With OIDC configured it needs a bearer token whose audience is `IVY_MCP_RESOURCE` (MCP clients registered under
+`IVY_OIDC_CLIENT_ID` are accepted there), and answers 401 with `WWW-Authenticate: Bearer resource_metadata="…"`
+otherwise. Details: `mcp.md`.
 
 ### `GET /.well-known/oauth-protected-resource`, `GET /.well-known/oauth-protected-resource/mcp`
 RFC 9728 protected resource metadata of the MCP endpoint (only when OIDC is configured; 404 otherwise).

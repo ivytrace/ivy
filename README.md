@@ -43,7 +43,9 @@ curl 'http://localhost:3000/api/traces/<trace id>?format=text'    # one trace as
 open http://localhost:3000/api/docs                               # API reference (OpenAPI at /api/openapi.json)
 ```
 
-With OIDC configured, `/mcp` is an OAuth protected resource (`docs/implementation/mcp.md`).
+The MCP tools cover all of your workspaces. `render_waterfall` and `render_graph` show a trace as an
+interactive view (MCP Apps) in hosts that support it, and as text elsewhere. With OIDC configured, `/mcp` is an
+OAuth protected resource (`docs/implementation/mcp.md`).
 
 See `docs/implementation/span-conventions.md`, `docs/implementation/api.md`, `docs/implementation/mcp.md` and
 `docs/implementation/tenancy.md` (tenants, API keys, ingest router, sharding plan).
