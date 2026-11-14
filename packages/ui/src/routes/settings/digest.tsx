@@ -92,7 +92,7 @@ export default function DigestSettings() {
                   <>
                     {" · "}
                     {d.subscribed ? "including you" : "you unsubscribed"} (
-                    <Link to={settingsLink(workspace, "notifications")} className="text-primary hover:underline">
+                    <Link to={settingsLink(workspace, "notifications")} className="link">
                       your notifications
                     </Link>
                     )

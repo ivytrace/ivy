@@ -59,7 +59,7 @@ function columnsFor(scope: Scope): ColumnDef<FunctionSummary, unknown>[] {
     header: "Function",
     cell: ({ row }) => (
       <Link to={invocationsLink(rowScope(scope, row.original), { function: row.original.name })} className="block">
-        <span className="block font-semibold text-primary">{row.original.name}</span>
+        <span className="link block">{row.original.name}</span>
         <span className="text-xs text-muted-foreground">{row.original.region}</span>
       </Link>
     ),

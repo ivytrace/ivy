@@ -36,7 +36,7 @@ function columnsFor(scope: Scope): ColumnDef<Invocation, unknown>[] {
     header: "Time",
     cell: ({ row }) => (
       <Tooltipped title={formatTimestamp(row.original.ts)}>
-        <Link to={linkTo(row.original)} className="whitespace-nowrap font-medium text-primary hover:underline">
+        <Link to={linkTo(row.original)} className="link whitespace-nowrap">
           {formatAgo(row.original.ts)}
         </Link>
       </Tooltipped>
@@ -204,7 +204,7 @@ export default function Invocations() {
             {" "}
             requests in this time range. Lambda rejected them before they reached the function, so they have no traces.{" "}
           </span>
-          <Link to={errorsLink(scope, fn)} className="text-primary hover:underline">
+          <Link to={errorsLink(scope, fn)} className="link">
             Errors
           </Link>
         </p>

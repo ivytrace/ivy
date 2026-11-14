@@ -70,7 +70,7 @@ function MessageText({ text, muted = false }: { text: string; muted?: boolean })
         ),
       )}
       {long && (
-        <button type="button" className="mt-1 text-[11px] text-primary hover:underline" onClick={() => setExpanded(!expanded)}>
+        <button type="button" className="link mt-1 text-[11px]" onClick={() => setExpanded(!expanded)}>
           {expanded ? "Show less" : `Show all (${text.length.toLocaleString("en")} characters)`}
         </button>
       )}

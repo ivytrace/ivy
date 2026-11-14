@@ -7,7 +7,7 @@
 - Vitest, with tests next to the source files they cover.
 - Deviations from the usual stack are deliberate (see `docs/spec/001-ivy-trace-v1.md`): pnpm instead of Yarn, ClickHouse instead of DynamoDB, docker compose instead of CDK/Lambda for the backend.
 - TypeScript everywhere, with one exception: the layer's Lambda extension (`packages/layer/extension`) is Rust, because a Node process added ~30 ms to every cold start (see `docs/implementation/layer.md`).
-- The UI (and later the website) is dark mode only. No light theme, no theme toggle.
+- The UI (and later the website) is dark mode only. No light theme, no theme toggle. Links use the shared `link` style (medium weight, white, underlined); the green accent is reserved for primary buttons.
 - No Claude Code attribution in commits or PRs: no `Co-Authored-By: Claude` or `Claude-Session` trailers, no "Generated with Claude Code" lines.
 - The product is called "Ivy" in all prose and UI. "ivytrace"/"Ivy Trace" is only for domains (ivytrace.dev) and GitHub/npm org names, because "ivy" alone is too generic.
 - Keep every UI surface visually in sync: the dashboard (`packages/ui`), the MCP App views (`packages/mcp`) and the website's trace demo (maintained in the hosted repo). A visual change to one (colours, tabs, waterfall, service graph, icons, badges) is applied to the others in the same piece of work. The MCP App views reuse the dashboard's components rather than copying them; the website demo is a copy, so update it explicitly and note it in the hand-off when you can't.

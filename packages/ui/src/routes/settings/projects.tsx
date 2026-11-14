@@ -144,7 +144,7 @@ function ProjectCard({
           {project.archived ? (
             <span className="font-semibold">{project.name}</span>
           ) : (
-            <Link to={pageLink({ workspace, project: project.slug }, "functions")} className="font-semibold text-primary hover:underline">
+            <Link to={pageLink({ workspace, project: project.slug }, "functions")} className="link">
               {project.name}
             </Link>
           )}
