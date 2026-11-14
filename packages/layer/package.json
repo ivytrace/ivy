@@ -10,8 +10,12 @@
     "e2e": "node scripts/e2e.mjs"
   },
   "devDependencies": {
+    "@ai-sdk/otel": "^1.0.173",
     "@aws-sdk/client-dynamodb": "^3.1169.0",
+    "@opentelemetry/api": "^1.10.0",
     "@types/node": "^22.20.5",
+    "ai": "^7.0.173",
+    "ai-v6": "npm:ai@^6.0.332",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.3",
     "vitest": "^5.1.0"

@@ -6,6 +6,7 @@ import { instrumentConsole } from './lib/instrumentation/console.js';
 import { instrumentFetch } from './lib/instrumentation/fetch.js';
 import { instrumentHttp } from './lib/instrumentation/http.js';
 import { loadUserHandler } from './lib/loader/user-function.js';
+import { installOtelBridge } from './lib/otel-bridge/index.js';
 import { Tracer, type SpanBatch } from './lib/tracer/tracer.js';
 import { wrapHandler } from './lib/tracer/wrap.js';
 
@@ -65,6 +66,7 @@ async function createTracer(): Promise<Tracer> {
   instrumentFetch(tracer);
   instrumentAwsSdk(tracer);
   if (config.captureLogs) instrumentConsole(tracer);
+  installOtelBridge(tracer);
   return tracer;
 }
 
