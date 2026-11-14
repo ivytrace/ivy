@@ -171,5 +171,8 @@ describe("MCP auth", () => {
   it("has no metadata and no auth when auth is off", async () => {
     const app = mcpRoutes({ data: () => fakeData() });
     expect((await app.request("/.well-known/oauth-protected-resource")).status).toBe(404);
+    expect((await app.request("/.well-known/oauth-protected-resource/mcp")).status).toBe(404);
+    const client = await connect(app);
+    expect((await client.listTools()).tools).toHaveLength(5);
   });
 });

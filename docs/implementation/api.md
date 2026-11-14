@@ -3,7 +3,10 @@
 Served by `packages/api` (Hono) on port `3000`. All JSON. Timestamps in responses are
 ISO 8601 strings with millisecond precision (UTC). Durations are milliseconds (float).
 
-Every `/api/*` route except `/api/health`, `/api/config` and `/api/aws/events` runs for one tenant, resolved by
+The OpenAPI 3.1 version of this contract is served at `GET /api/openapi.json`, with a reference page at
+`GET /api/docs` (both public). Agents can also use the MCP server at `/mcp` (see below and `mcp.md`).
+
+Every `/api/*` route except `/api/health`, `/api/config`, `/api/aws/events`, `/api/openapi.json` and `/api/docs` runs for one tenant, resolved by
 middleware from the request (today always `default`; after OIDC, the user's tenant). Data is only ever read for
 that tenant. See `tenancy.md`.
 
@@ -59,6 +62,9 @@ All spans of a trace, sorted by start time.
 Attribute values are strings in storage; the API returns them as stored (strings).
 JSON-valued attributes (`ivy.payload.*`, headers, arrays) are JSON strings for the UI to parse.
 404 if not found.
+
+`?format=text` returns `text/plain` instead: the trace as a compact text tree for LLMs (`@ivy/format`, see `mcp.md`).
+`detail=summary|normal|full` (default `normal`), `max_tokens` (default 4000, `0` = no limit). 400 for other values.
 
 ## `GET /api/errors`
 Error groups, grouped by fingerprint (function + error type + normalized message).
@@ -147,6 +153,26 @@ Body `{ "tracing_enabled": false }`. Stores the setting, then attaches/detaches 
 ### `POST /api/aws/events`
 EventBridge API destination target, authenticated with the `x-ivy-event-secret` header (per connection), not user auth.
 Syncs the event's region. 202, or 401/403.
+
+## OpenAPI
+
+### `GET /api/openapi.json`
+This contract as an OpenAPI 3.1 document (hand-maintained in `src/lib/openapi/`; a test checks it lists exactly the
+routes the app serves). Security scheme: OIDC bearer token, off on self-hosted setups without OIDC.
+
+### `GET /api/docs`
+API reference page (Scalar, loaded from its CDN).
+
+## MCP
+
+### `POST /mcp`
+Remote MCP server (Streamable HTTP, stateless, JSON responses) with the tools `find_failing_invocations`,
+`search_invocations`, `get_trace_summary`, `compare_invocations` and `list_error_groups`. Same tenant resolution
+as `/api/*`. With OIDC configured it needs a bearer token whose audience is `IVY_MCP_RESOURCE`, and answers 401 with
+`WWW-Authenticate: Bearer resource_metadata="…"` otherwise. Details: `mcp.md`.
+
+### `GET /.well-known/oauth-protected-resource`, `GET /.well-known/oauth-protected-resource/mcp`
+RFC 9728 protected resource metadata of the MCP endpoint (only when OIDC is configured; 404 otherwise).
 
 ## Ingest (separate service, port 4318)
 

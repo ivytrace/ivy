@@ -31,6 +31,11 @@ export function mcpRoutes(options: McpRoutesOptions): Hono {
     app.get("/.well-known/oauth-protected-resource", (c) => c.json(metadata));
     app.get(`/.well-known/oauth-protected-resource${path}`, (c) => c.json(metadata));
     app.use(path, bearerAuth(options.auth, options.onAuthenticated));
+  } else {
+    // Without auth there is no metadata; answer 404 rather than letting the host's catch-all (e.g. the SPA) reply.
+    const none = (c: Context) => c.json({ error: "Not found" }, 404);
+    app.get("/.well-known/oauth-protected-resource", none);
+    app.get("/.well-known/oauth-protected-resource/*", none);
   }
   for (const middleware of options.middleware ?? []) app.use(path, middleware);
 

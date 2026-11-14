@@ -100,7 +100,7 @@ function errorLines(span: Span, prefix: string, settings: Settings): Line[] {
   const ex = getException(span);
   if (!ex) return [];
   const message = oneLine(ex.message || "", 300);
-  const typed = message.startsWith(ex.type) || (ex.type === "Error" && /^[A-Z]\w*: /.test(message));
+  const typed = message.includes(ex.type) || (ex.type === "Error" && /^[A-Z]\w*: /.test(message));
   const title = typed ? message : `${ex.type}${message ? `: ${message}` : ""}`;
   const lines: Line[] = [{ text: `${prefix}! ${title}`, keep: true }];
   const frames = (ex.stacktrace ?? "")
