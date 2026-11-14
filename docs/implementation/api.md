@@ -3,9 +3,15 @@
 Served by `packages/api` (Hono) on port `3000`. All JSON. Timestamps in responses are
 ISO 8601 strings with millisecond precision (UTC). Durations are milliseconds (float).
 
+Auth (`auth.md`): with OIDC configured (`IVY_OIDC_ISSUER`), every `/api/*` route except `GET /api/health`,
+`GET /api/config` and `POST /api/aws/events` needs `Authorization: Bearer <access token>` (a JWT from the configured
+issuer, for `IVY_OIDC_AUDIENCE`, issued to the dashboard's client or one of its agents). Without it: 401
+`{ "error": "Authentication required" }`; invalid or expired: 401 with `WWW-Authenticate: Bearer error="invalid_token"`;
+provider unreachable: 503. Without OIDC configured nothing is checked.
+
 Every `/api/*` route except `/api/health`, `/api/config` and `/api/aws/events` runs for one tenant, resolved by
-middleware from the request (today always `default`; after OIDC, the user's tenant). Data is only ever read for
-that tenant. See `tenancy.md`.
+middleware from the request: `default` with auth off or in single-tenant mode, otherwise the signed-in user's tenant
+(`auth.md`, "Users and tenants"). Data is only ever read for that tenant. See `tenancy.md`.
 
 Time range params, accepted by every list endpoint:
 - `since=15m|1h|24h|7d` (default `24h`), or
@@ -15,8 +21,9 @@ Time range params, accepted by every list endpoint:
 `{ "ok": true, "clickhouse": true }` (the control database and every shard answer a ping; 503 otherwise)
 
 ## `GET /api/config`
-`{ "version": "0.1.0", "auth": { "enabled": false } }`
-The UI shows the "authentication disabled" banner when `auth.enabled` is false.
+`{ "version": "0.1.0", "auth": { "enabled": false } }`, or with OIDC:
+`{ "version": "0.1.0", "auth": { "enabled": true, "issuer": "https://auth.includable.com", "clientId": "ivy", "audience": "https://ivytrace.dev/api", "scopes": "openid email profile offline_access" } }`.
+The UI configures sign-in from it at runtime, and shows the "authentication disabled" banner when `auth.enabled` is false. Public.
 
 ## `GET /api/functions`
 Function overview for the range.
