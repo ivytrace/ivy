@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
+import { authenticate } from './lib/auth/middleware.js';
 import { serveUi } from './lib/static/serve-ui.js';
 import { deleteAwsAccount } from './routes/aws/accounts/delete.js';
 import { getAwsAccount, getAwsAccounts } from './routes/aws/accounts/get.js';
@@ -23,6 +24,7 @@ import { getTrace } from './routes/traces/get.js';
 export function createApp(options: { uiDir: string }) {
   const app = new Hono();
 
+  app.use('/api/*', authenticate());
   app.get('/api/health', getHealth);
   app.get('/api/config', getConfig);
   app.get('/api/functions', getFunctions);

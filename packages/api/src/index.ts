@@ -2,7 +2,10 @@ import path from 'node:path';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { startSyncLoop } from './lib/aws/scheduler.js';
+import { readAuthConfig } from './lib/auth/config.js';
 
+const auth = readAuthConfig();
+console.log(auth ? `Auth: OIDC (${auth.issuer}, client ${auth.clientId})` : 'Auth: disabled (IVY_OIDC_ISSUER not set)');
 const port = Number(process.env.PORT ?? 3000);
 const uiDir = process.env.IVY_UI_DIR ?? path.resolve(process.cwd(), '../ui/dist');
 

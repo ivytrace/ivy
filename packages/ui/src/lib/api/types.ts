@@ -1,8 +1,16 @@
 export type { Span, SpanEvent, Trace } from "../spans/types.ts";
 
+export interface AuthSettings {
+  enabled: true;
+  issuer: string;
+  clientId: string;
+  audience: string;
+  scopes: string;
+}
+
 export interface Config {
   version: string;
-  auth: { enabled: boolean };
+  auth: AuthSettings | { enabled: false };
 }
 
 export interface FunctionSummary {
