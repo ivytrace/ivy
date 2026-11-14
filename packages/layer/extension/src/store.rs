@@ -215,6 +215,12 @@ impl SpanStore {
         self.wait_while(self.lock(), deadline, |i| i.entries.get(request_id).is_some_and(|e| e.is_final) || i.platform.done(request_id).is_some()).1
     }
 
+    /// At `INVOKE`: an earlier attempt with the same request ID (Lambda retries async invocations with the same
+    /// ID) was another trace, so its in-progress IDs no longer apply.
+    pub fn start_invocation(&self, request_id: &str) {
+        self.lock().in_progress.retain(|p| p.0 != request_id);
+    }
+
     /// A provisional invocation span (`ivy.in_progress`) for a request that is still running, with the IDs its
     /// final span will have. `None` once the invocation is over. Spans the tracer already handed over (a timeout
     /// snapshot) get its trace ID.
@@ -785,6 +791,19 @@ mod tests {
         assert_eq!(roots(&out)[0]["traceId"], trace.as_str());
         assert!(a(&roots(&out)[0], "ivy.in_progress").is_none());
         assert_eq!(late[0].spans[0]["traceId"], trace.as_str(), "a chunk arriving after the export gets it too");
+    }
+
+    #[test]
+    fn a_retry_with_the_same_request_id_keeps_its_own_trace_id() {
+        let s = SpanStore::default();
+        s.in_progress(&long_ctx(), 1_717_236_900_000, 1_717_236_006_000, &opts()).unwrap();
+        s.add("req-long", true, json!([]), vec![root("x")]);
+        s.finish(Some(&long_ctx()), &opts());
+        s.start_invocation("req-long");
+        let mut retry = root("x");
+        retry["traceId"] = json!("665af0b0bbbbbbbbbbbbbbbbbbbbbbbb");
+        s.add("req-long", true, json!([]), vec![retry]);
+        assert_eq!(s.drain()[0].spans[0]["traceId"], "665af0b0bbbbbbbbbbbbbbbbbbbbbbbb");
     }
 
     #[test]

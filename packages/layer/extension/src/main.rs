@@ -382,6 +382,9 @@ fn main() {
             std::process::exit(0);
         }
         let invoked_at = epoch_ms();
+        if let Some(id) = event.request_id.as_deref() {
+            store.start_invocation(id);
+        }
         let mut late_hello_wait = None;
         if expect_hello && !store.is_attached() {
             let wait_ms = HELLO_WAIT_MS.min(event.deadline_ms - epoch_ms()).max(0) as u64;
@@ -489,6 +492,10 @@ mod tests {
         assert_eq!(provisional["status"]["code"], 0);
         assert_eq!(provisional["name"], "import-worker");
         assert!(spans::attr(provisional, "ivy.payload.request").is_none());
+        let body = recorder.0.lock().unwrap()[0].1.to_string();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(body.as_bytes()).unwrap();
+        println!("in-progress request: {} bytes of JSON, {} gzipped", body.len(), gz.finish().unwrap().len());
         let final_root = &sent[1].1;
         assert!(spans::attr(final_root, "ivy.in_progress").is_none());
         assert_eq!((&final_root["traceId"], &final_root["spanId"]), (&provisional["traceId"], &provisional["spanId"]), "the final span has the provisional's IDs");
