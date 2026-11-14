@@ -73,6 +73,12 @@ services:
       IVY_INGEST_TRUST_PROXY: ${IVY_INGEST_TRUST_PROXY:-}
       IVY_INGEST_MAX_BODY_BYTES: ${IVY_INGEST_MAX_BODY_BYTES:-}
       IVY_SHARDS: ${IVY_SHARDS:-}
+      # Monthly trace quotas (docs/implementation/limits.md); the 429 message links to IVY_UPGRADE_URL,
+      # else to IVY_PUBLIC_URL/settings/usage
+      IVY_PUBLIC_URL: ${IVY_PUBLIC_URL:-}
+      IVY_UPGRADE_URL: ${IVY_UPGRADE_URL:-}
+      IVY_QUOTA_REFRESH_SECONDS: ${IVY_QUOTA_REFRESH_SECONDS:-}
+      IVY_QUOTA_RETRY_AFTER_SECONDS: ${IVY_QUOTA_RETRY_AFTER_SECONDS:-}
     ports:
       - "${IVY_OTLP_HTTP_PORT:-4318}:4318"
     healthcheck:
@@ -118,6 +124,9 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
       AWS_REGION: ${AWS_REGION:-}
+      # Internal admin API at /internal/* (off when unset) and the UI's billing buttons (limits.md)
+      IVY_INTERNAL_API_TOKEN: ${IVY_INTERNAL_API_TOKEN:-}
+      IVY_BILLING_URL: ${IVY_BILLING_URL:-}
     ports:
       - "${IVY_API_PORT:-3000}:3000"
     depends_on:

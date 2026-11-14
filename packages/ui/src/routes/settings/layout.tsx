@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router";
-import { Cloud, FolderKanban, Settings2, Users } from "lucide-react";
+import { Cloud, FolderKanban, Gauge, Settings2, Users } from "lucide-react";
 
 import { NewBadge } from "@/components/aws/account-parts";
 import { useAwsAccounts, useMultiWorkspace, useWorkspaceInfo } from "@/lib/api/hooks";
@@ -19,6 +19,7 @@ export default function SettingsLayout() {
     ...(multi ? [{ section: "members" as const, label: "Members", icon: Users }] : []),
     { section: "projects", label: "Projects", icon: FolderKanban },
     { section: "aws", label: "AWS accounts", icon: Cloud, badge: newFunctions },
+    { section: "usage", label: "Usage", icon: Gauge },
   ];
 
   return (

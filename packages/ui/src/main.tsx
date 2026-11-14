@@ -15,6 +15,7 @@ import MembersSettings from "@/routes/settings/members";
 import ProjectsSettings from "@/routes/settings/projects";
 import AwsAccounts from "@/routes/settings/aws/page";
 import AwsAccountPage from "@/routes/settings/aws/account";
+import UsagePage from "@/routes/settings/usage/page";
 import InvitePage from "@/routes/invite/page";
 import WelcomePage from "@/routes/welcome/page";
 import { LegacyRedirect, ProjectLayout, WorkspaceIndex } from "@/routes/scope/redirects";
@@ -56,6 +57,7 @@ const router = createBrowserRouter([
       { path: "settings", element: <LegacyRedirect /> },
       { path: "settings/aws", element: <LegacyRedirect /> },
       { path: "settings/aws/:id", element: <LegacyRedirect /> },
+      { path: "settings/usage", element: <LegacyRedirect /> },
       {
         path: "w/:workspace",
         children: [
@@ -70,6 +72,7 @@ const router = createBrowserRouter([
               { path: "projects", element: <ProjectsSettings /> },
               { path: "aws", element: <AwsAccounts /> },
               { path: "aws/:id", element: <AwsAccountPage /> },
+              { path: "usage", element: <UsagePage /> },
             ],
           },
           {

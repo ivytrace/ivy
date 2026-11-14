@@ -64,6 +64,8 @@ the dashboard's (`/w/:workspace/:project/…`); and agents/MCP tools can build t
 With auth off: `"auth": { "enabled": false }` and `"workspaces": { "multi": false }`. `email.enabled` is true when
 `IVY_SMTP_URL` and `IVY_EMAIL_FROM` are set (invitations are then also emailed). `aws.quick_create` is true when
 the `publish-cfn-template` hook is installed (see "Hosting hooks"); otherwise connecting AWS is download-only.
+With `IVY_BILLING_URL` set it also has `"billing": { "url": "https://ivytrace.dev/billing" }`: the usage page then
+shows owners "Upgrade" / "Manage billing" (`limits.md`).
 
 ## Account-level routes
 
@@ -133,6 +135,20 @@ deleted; retention drops them. `{ "deleted": true }`.
   works once. A new invitation for the same email revokes the previous pending one. 409 if the email is already a
   member. The link's origin is `IVY_PUBLIC_URL`, else the request's `Origin`.
 - `DELETE /api/w/:workspace/invitations/:id` → the revoked invitation. 409 if it isn't pending.
+
+### `GET /api/w/:workspace/usage`
+This month's traces (Lambda invocations, calendar month in UTC) of **all the workspace's projects**, and the
+workspace's limits. Any member. The count is exact and cached for up to a minute. Billing is per workspace, so there
+is no per-project usage route.
+```json
+{ "workspace": "ten_4Fq…", "month": "2026-11",
+  "period": { "start": "2026-11-01T00:00:00.000Z", "end": "2026-12-01T00:00:00.000Z" },
+  "traces": 62418,
+  "limits": { "plan": "Free", "monthly_trace_quota": 100000, "over_quota": "block", "source": "workspace" },
+  "blocked": false }
+```
+`monthly_trace_quota: null` is unlimited; `source: "unset"` means the workspace has no limits (unlimited, the default).
+`blocked`: ingest is answering 429 (quota reached with `over_quota: "block"`). See `limits.md`.
 
 ### Projects
 
@@ -473,6 +489,45 @@ project's ingest key). The spans are stored under the key's workspace and projec
 `ivy.project_id` sent by the client are overwritten. Answers as OTLP/HTTP: the collector's response on success;
 400, 401 (also for keys of archived projects), 413, 415, 429 (`Retry-After`) or 503 (`Retry-After`) with a
 `google.rpc.Status` body otherwise. `/v1/logs` and `/v1/metrics` are 404; there is no gRPC.
+A workspace over a monthly trace quota with `over_quota: block` gets 429, `Retry-After: 300` (or until the month
+ends) and `{"code":8,"message":"Monthly trace quota reached (…). … Upgrade at https://…/w/<slug>/settings/usage."}`
+(`limits.md`).
+
+## Internal admin API (separate, not under `/api`)
+
+For the operator's billing service; not part of the public contract and not in the OpenAPI document. Served by the
+API process at `/internal/*`, which only exists when `IVY_INTERNAL_API_TOKEN` is set (≥ 32 characters; otherwise every
+`/internal/*` path is 404). Every call needs `Authorization: Bearer $IVY_INTERNAL_API_TOKEN`: 401 otherwise. OIDC and
+workspace membership don't apply. Keep the prefix off public proxies (ivytrace.dev routes only `/api/*` and the app's
+paths to the API). Errors are `{ "error": "…" }` (400 invalid body or month, 404 unknown workspace).
+
+`:id` is the workspace (tenant) ID. `month` is `YYYY-MM` (UTC), default the current month. Usage objects are as in
+`GET /api/w/:workspace/usage`, plus the workspace's `name` and `slug`; the count is never cached here.
+
+### `GET /internal/workspaces?month=&limits=unset`
+Every workspace with its traces in the month and its limits. `limits=unset` keeps only workspaces without a limits
+row (for a reconcile job that gives new workspaces a free tier).
+```json
+{ "month": "2026-11", "items": [ { "name": "Acme", "slug": "acme", "workspace": "ten_…", "month": "2026-11", "period": { … },
+  "traces": 2481904, "limits": { "plan": "Pro", "monthly_trace_quota": 100000, "over_quota": "allow", "source": "workspace" },
+  "blocked": false } ] }
+```
+
+### `GET /internal/workspaces/:id?month=`
+One workspace's usage object.
+
+### `PUT /internal/workspaces/:id/limits`
+Body `{ "plan": "Free", "monthly_trace_quota": 100000 | null, "over_quota": "block" | "allow" }` (all optional:
+`""`, `null` = unlimited, `allow`). Replaces the workspace's limits. The ingest routers pick it up within
+`IVY_QUOTA_REFRESH_SECONDS`.
+`{ "workspace": "ten_…", "limits": { …, "source": "workspace" }, "updated_at": "…" }`
+
+### `DELETE /internal/workspaces/:id/limits`
+Removes the row: the workspace is unlimited again. `{ "workspace": "ten_…", "limits": { …, "source": "unset" } }`
+
+### `GET /internal/workspaces/:id/members`
+`{ "workspace": "ten_…", "items": [ { "sub": "idn_…", "email": "erin@example.com", "role": "owner" | "member" } ] }`
+(from `ivy_control.tenant_members`).
 
 ### `GET /health`
 `{ "ok": true }`

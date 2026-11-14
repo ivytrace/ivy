@@ -13,6 +13,7 @@ export const TENANT_SCOPED_TABLES = [
   'projects',
   'invitations',
   'aws_project_rules',
+  'workspace_limits',
 ];
 
 /** Span tables, keyed (tenant, project, …): reads also need a project filter, or an explicit "all projects". */

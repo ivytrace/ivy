@@ -2,6 +2,7 @@ import { Outlet, useMatch } from "react-router";
 
 import { AuthBanner } from "@/components/layout/auth-banner";
 import { Menu } from "@/components/layout/menu";
+import { UsageBanner } from "@/components/layout/usage-banner";
 import { cn } from "@/lib/utils/cn";
 import { RequireAuth } from "@/routes/auth/pages";
 import { ScopeTracker } from "@/routes/scope/redirects";
@@ -14,6 +15,7 @@ export default function Root() {
       <ScopeTracker />
       <div className={cn("flex min-h-screen flex-col", isTracePage && "md:h-screen")}>
         <AuthBanner />
+        <UsageBanner />
         <Menu />
         {isTracePage ? (
           <Outlet />

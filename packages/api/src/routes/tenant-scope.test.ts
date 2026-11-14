@@ -76,6 +76,19 @@ describe('project scoping of data queries', () => {
     }
   });
 
+  it('workspace usage counts all projects of the tenant, explicitly', async () => {
+    setClientsForTests({ shard: fake, control: fake });
+    const res = await (await appFor(workspace)).request('/api/w/acme/usage');
+    expect(res.status).toBe(200);
+    const spans = captured.filter((q) => /FROM invocations/.test(q.query));
+    expect(spans).toHaveLength(1);
+    for (const q of captured) {
+      expect(q.query_params.tenant).toBe(workspace.id);
+      expect(q.query_params.project).toBeUndefined();
+      expect(q.clickhouse_settings[PROJECT_SETTING]).toBeUndefined();
+    }
+  });
+
   it('scopes the auto-trace config reads to the request tenant', async () => {
     setClientsForTests({ shard: fake, control: fake });
     const app = await appFor(workspace);

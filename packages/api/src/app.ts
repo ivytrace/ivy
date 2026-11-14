@@ -3,6 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import { authenticate } from './lib/auth/middleware.js';
 import { mountAgentSurface } from './lib/mcp/mount.js';
 import { serveUi } from './lib/static/serve-ui.js';
+import { internalAuth } from './lib/internal/auth.js';
 import { allProjects, projectContext, workspaceContext, type WorkspaceAccess } from './lib/tenancy/context.js';
 import { userWorkspaceAccess } from './lib/tenancy/members.js';
 import { deleteAwsAccount } from './routes/aws/accounts/delete.js';
@@ -41,6 +42,10 @@ import { patchProject } from './routes/projects/patch.js';
 import { postProject } from './routes/projects/post.js';
 import { getTimeseries } from './routes/stats/timeseries.js';
 import { getTrace } from './routes/traces/get.js';
+import { deleteInternalLimits, putInternalLimits } from './routes/internal/limits/put.js';
+import { getInternalMembers } from './routes/internal/members/get.js';
+import { getInternalWorkspace, getInternalWorkspaces } from './routes/internal/workspaces/get.js';
+import { getUsage } from './routes/usage/get.js';
 import { deleteWorkspaceRoute } from './routes/workspaces/delete.js';
 import { getWorkspace, getWorkspaces } from './routes/workspaces/get.js';
 import { patchWorkspace } from './routes/workspaces/patch.js';
@@ -49,6 +54,16 @@ import { postWorkspace } from './routes/workspaces/post.js';
 export function createApp(options: { uiDir: string; access?: WorkspaceAccess }) {
   const access = options.access ?? userWorkspaceAccess();
   const app = new Hono();
+
+  // Internal admin API for an operator's billing service: not under /api, so a proxy can keep it private.
+  app.use('/internal/*', internalAuth());
+  app.get('/internal/workspaces', getInternalWorkspaces);
+  app.get('/internal/workspaces/:id', getInternalWorkspace);
+  app.put('/internal/workspaces/:id/limits', putInternalLimits);
+  app.delete('/internal/workspaces/:id/limits', deleteInternalLimits);
+  app.get('/internal/workspaces/:id/members', getInternalMembers);
+  app.all('/internal/*', (c) => c.json({ error: 'Not found' }, 404));
+
   app.use('/api/*', authenticate());
   app.get('/api/health', getHealth);
   app.get('/api/config', getConfig);
@@ -77,6 +92,8 @@ export function createApp(options: { uiDir: string; access?: WorkspaceAccess }) 
   app.get(`${ws}/invitations`, getInvitations);
   app.post(`${ws}/invitations`, postInvitation);
   app.delete(`${ws}/invitations/:id`, deleteInvitation);
+  // This month's traces against the workspace's limits: workspace-level, across all its projects.
+  app.get(`${ws}/usage`, getUsage);
   app.get(`${ws}/projects`, getProjects);
   app.post(`${ws}/projects`, postProject);
   app.get(prj, getProject);

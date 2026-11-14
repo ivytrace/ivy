@@ -151,6 +151,13 @@ export const openApiDocument = {
         parameters: [ws, path('id', 'Invitation ID.')], responses: { 200: json(ref('Invitation')), ...owner, ...notFound, 409: error('Not pending') },
       },
     },
+    '/api/w/{workspace}/usage': {
+      get: {
+        tags: ['Workspaces'], summary: "This month's traces and the workspace's limits", operationId: 'getUsage',
+        description: 'Traces (Lambda invocations) of all the workspace\'s projects, per calendar month (UTC). See limits.md.',
+        parameters: [ws], responses: { 200: json(ref('Usage')), ...notFound },
+      },
+    },
     '/api/w/{workspace}/projects': {
       get: {
         tags: ['Projects'], summary: 'Projects', operationId: 'listProjects',

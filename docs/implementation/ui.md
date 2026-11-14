@@ -140,6 +140,10 @@ Paths below are relative to `/w/:workspace/:project`.
   trace it into a project, exclude it, or follow tags and rules again. Rows show the state, the project and what decided
   it (tag, manual, rule). The page notes that moving a function only affects new data. A few seconds after opening, the
   account is marked reviewed (clears "N new").
+- `/w/:workspace/settings/usage`: plan, this month's traces of all the workspace's projects against the quota, the
+  80%/100% notice (also shown app-wide on the workspace's pages), and, for owners only, Upgrade / Manage billing when
+  `/api/config` has a billing URL; members see "Only workspace owners can change billing". `/settings/usage` redirects
+  there. See `limits.md`.
 - Global: a time range picker (presets map to `since`, custom ranges to `from`/`to`; the preset is stored in
   localStorage), a ⌘K search (functions, jump to a trace ID, search invocations; within the current project), and the
   "Authentication disabled" banner shown when `GET /api/config` returns `auth.enabled: false`.

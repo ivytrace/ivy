@@ -31,13 +31,16 @@ export const invocationsLink = (s: Scope, filters: { function?: string; status?:
 
 export const errorsLink = (s: Scope, fn?: string) => `${pageLink(s, "errors")}${fn ? `?function=${enc(fn)}` : ""}`;
 
-export type SettingsSection = "general" | "members" | "projects" | "aws";
+export type SettingsSection = "general" | "members" | "projects" | "aws" | "usage";
 
 export const settingsLink = (workspace: string, section: SettingsSection = "general") => `/w/${enc(workspace)}/settings/${section}`;
 
 export const awsAccountsLink = (workspace: string) => settingsLink(workspace, "aws");
 
 export const accountLink = (workspace: string, id: string) => `${awsAccountsLink(workspace)}/${enc(id)}`;
+
+/** The workspace's usage and billing page (also where ingest's 429 message points). */
+export const usageLink = (workspace: string) => settingsLink(workspace, "usage");
 
 /** The workspace and project of a dashboard path; `project` is null on settings pages. */
 export function parseScope(pathname: string): { workspace: string; project: string | null } | null {
@@ -58,6 +61,7 @@ export function legacyTarget(pathname: string, scope: Scope): string | null {
   if (trace) return `${projectBase(scope)}/traces/${trace[1]}`;
   if (path === "/settings") return settingsLink(scope.workspace);
   if (path === "/settings/aws") return awsAccountsLink(scope.workspace);
+  if (path === "/settings/usage") return usageLink(scope.workspace);
   const account = /^\/settings\/aws\/([^/]+)$/.exec(path);
   if (account) return `${awsAccountsLink(scope.workspace)}/${account[1]}`;
   return null;

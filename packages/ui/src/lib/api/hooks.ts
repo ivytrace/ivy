@@ -21,6 +21,7 @@ import type {
   TimeRange,
   TimeseriesPoint,
   Trace,
+  Usage,
   Workspace,
 } from "./types";
 
@@ -48,6 +49,10 @@ export function useMultiWorkspace() {
 }
 
 export const useWorkspaces = () => useApi<ListResponse<Workspace>>(buildUrl("/workspaces"));
+
+/** This month's traces and limits of a workspace (all its projects), refreshed every minute like the server's count. */
+export const useUsage = (workspace: string | null | undefined) =>
+  useApi<Usage>(workspace ? buildUrl(`${wsPath(workspace)}/usage`) : null, { refreshInterval: 60_000, keepPreviousData: false });
 
 export const useWorkspaceInfo = (workspace: string | undefined) =>
   useApi<Workspace>(workspace ? buildUrl(wsPath(workspace)) : null, { keepPreviousData: false });

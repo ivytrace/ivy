@@ -100,8 +100,12 @@ effect within a minute.
 **Usage counters.** Per tenant: requests, spans and bytes (as received) accepted by the collector, in memory per router
 process. Logged once a minute (`[ingest] usage tenant=… requests=… spans=… bytes=…`) and served as JSON on
 `http://127.0.0.1:4320/stats` (`IVY_INGEST_ADMIN_PORT`, loopback only). Counting spans means decompressing and
-walking each body (a small protobuf field walker, or `JSON.parse`). This is the hook for M6 quotas; nothing is enforced
-yet.
+walking each body (a small protobuf field walker, or `JSON.parse`); the walk also counts invocations
+(`ivy.invocation = true`) for quotas.
+
+**Monthly trace quotas** (`limits.md`). After the key lookup, a tenant whose `ivy_control.workspace_limits` row has a
+quota with `over_quota = block`, and whose traces this month (ClickHouse, refreshed every minute, plus this process's
+count since) reached it, gets 429 with `Retry-After`. Without a row a tenant is unlimited.
 
 ### Decision: no public gRPC (4317)
 
@@ -247,7 +251,7 @@ copied with `INSERT … SELECT … WHERE`. Run on the target cell's ClickHouse, 
 6. **Delete from the source**: `ALTER TABLE ivy.otel_traces DELETE WHERE TenantId = 'ten_X'` (and `invocations`,
    `invocations_hourly`) on `shard-1`, or let retention age it out.
 
-Control-plane rows (`tenants`, `projects`, `api_keys`, `aws_*`, …) don't move: they are in `ivy_control`.
+Control-plane rows (`tenants`, `projects`, `api_keys`, `aws_*`, `workspace_limits`, …) don't move: they are in `ivy_control`.
 
 ## Configuration
 
@@ -264,6 +268,8 @@ Control-plane rows (`tenants`, `projects`, `api_keys`, `aws_*`, …) don't move:
 | `IVY_INGEST_MAX_BODY_BYTES` | router | 10 MiB | |
 | `IVY_INGEST_MAX_KEY_FAILURES` | router | `20` | invalid keys per IP per minute before 429 |
 | `IVY_INGEST_TRUST_PROXY` | router | off | client IP from `X-Forwarded-For` |
+| `IVY_QUOTA_REFRESH_SECONDS`, `IVY_QUOTA_RETRY_AFTER_SECONDS`, `IVY_UPGRADE_URL` | router | 60, 300 | monthly quotas, `limits.md` |
+| `IVY_INTERNAL_API_TOKEN` | API | | enables the internal admin API at `/internal/*` (`limits.md`) |
 
 ## Verification
 
@@ -281,8 +287,10 @@ Control-plane rows (`tenants`, `projects`, `api_keys`, `aws_*`, …) don't move:
 
 ## Gaps
 
-- No quotas or per-query limits yet (M6); usage counters are per process and reset on restart.
+- Monthly trace quotas exist (`limits.md`); per-query limits don't yet (M6). Router usage counters are per process and
+  reset on restart.
 - Row policies are fail-open without the setting (see Guards); a dedicated API ClickHouse user would close that.
-- No operator (cross-workspace) admin UI; the CLI talks to the control database directly.
+- No operator (cross-workspace) admin UI; the CLI talks to the control database directly. The internal admin API
+  (`limits.md`) only covers limits, usage and members, for an operator's billing service.
 - The move runbook is manual and has not been rehearsed across two real cells.
 - Every router decompresses and parses each body once to count spans.

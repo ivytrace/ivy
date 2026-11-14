@@ -5,7 +5,13 @@ export interface MockOptions {
   empty?: boolean;
   /** No IVY_CFN_TEMPLATE_URL: the connect flow shows the download fallback (VITE_MOCK_NO_TEMPLATE=1). */
   noTemplate?: boolean;
+  /** Usage fixture (VITE_MOCK_USAGE): free under quota (default), near (85%), over (blocked), paid, unlimited. */
+  usage?: MockUsage;
+  /** Leave out billing.url from /api/config: no billing buttons (VITE_MOCK_NO_BILLING=1). */
+  noBilling?: boolean;
 }
+
+export type MockUsage = "free" | "near" | "over" | "paid" | "unlimited";
 
 interface MockAccount extends Omit<AwsAccount, "syncing" | "counts" | "quick_create_url" | "quick_create_error"> {
   created_ms: number;

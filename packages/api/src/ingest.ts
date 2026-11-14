@@ -3,6 +3,8 @@ import { FailureLimiter } from './lib/ingest/failure-limiter.js';
 import { KeyCache } from './lib/ingest/key-cache.js';
 import { createIngestHandler } from './lib/ingest/router.js';
 import { UsageCounters } from './lib/ingest/usage.js';
+import { loadQuotaSnapshot } from './lib/limits/snapshot.js';
+import { QuotaGate } from './lib/limits/quota-gate.js';
 import { shardConfig, shardConfigs } from './lib/tenancy/shards.js';
 import { tenancyStore } from './lib/tenancy/store.js';
 import { ensureDefaultTenant } from './lib/tenancy/tenants.js';
@@ -29,6 +31,12 @@ const handler = createIngestHandler({
   keys: new KeyCache({ lookup: (hash) => tenancyStore().findKeyByHash(hash) }),
   limiter: new FailureLimiter(num('IVY_INGEST_MAX_KEY_FAILURES', 20)),
   usage,
+  quota: new QuotaGate({
+    load: loadQuotaSnapshot,
+    refreshMs: num('IVY_QUOTA_REFRESH_SECONDS', 60) * 1000,
+    recheckSeconds: num('IVY_QUOTA_RETRY_AFTER_SECONDS', 300),
+    log,
+  }),
   collectorUrl: (shardId) => shardConfig(shardId).collector,
   collectorToken,
   maxBodyBytes: num('IVY_INGEST_MAX_BODY_BYTES', 10 * 1024 * 1024),

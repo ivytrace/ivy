@@ -1,6 +1,7 @@
 import type { ErrorGroup, FunctionSummary, Invocation, InvocationsResponse, TimeseriesPoint } from "../api/types.ts";
 import { createAwsMock, type MockOptions } from "./aws.ts";
 import { buildTrace, INVOCATIONS, type MockInvocation } from "./fixtures.ts";
+import { mockUsage, MOCK_BILLING_URL } from "./usage.ts";
 import { newInvitation, newKey, newProject, newWorkspace, seedWorkspaces, slugFrom, slugOk, type MockWorkspace } from "./workspaces.ts";
 
 export type { MockOptions };
@@ -261,6 +262,7 @@ export function createMockHandler(options: MockOptions = {}) {
       return json(200, { deleted: true });
     }
     if (rest === "/members" && method === "GET") return json(200, { items: ws.members });
+    if (rest === "/usage" && method === "GET") return json(200, mockUsage(options.usage ?? "free", ws.id));
     const member = rest.match(/^\/members\/([^/]+)$/);
     if (member) {
       const m = ws.members.find((x) => x.sub === decodeURIComponent(member[1]));
@@ -345,7 +347,24 @@ export function createMockHandler(options: MockOptions = {}) {
     const params = url.searchParams;
     if (path === "/api/health") return json(200, { ok: true, clickhouse: true });
     if (path === "/api/config") {
-      return json(200, { version: "0.1.0-mock", auth: { enabled: false }, workspaces: { multi: true }, email: { enabled: false }, aws: { quick_create: !options.noTemplate } });
+      return json(200, {
+        version: "0.1.0-mock",
+        auth: { enabled: false },
+        workspaces: { multi: true },
+        email: { enabled: false },
+        aws: { quick_create: !options.noTemplate },
+        ...(options.noBilling ? {} : { billing: { url: MOCK_BILLING_URL } }),
+      });
+    }
+    if (path.startsWith(`${MOCK_BILLING_URL}/`) && method === "POST") {
+      // Stands in for the hosted billing service and Stripe: Checkout returns to the usage page like its success_url.
+      const ws = workspaces.find((w) => w.id === body.workspace || w.slug === body.workspace);
+      if (!ws) return json(403, { error: "You are not a member of this workspace" });
+      if (ws.role !== "owner") return json(403, { error: "Only workspace owners can change billing" });
+      const action = path.slice(MOCK_BILLING_URL.length + 1);
+      const usagePage = `/w/${ws.slug}/settings/usage`;
+      if (action === "checkout") return json(200, { url: `${usagePage}?checkout=success` });
+      if (action === "portal") return json(200, { url: usagePage });
     }
     if (path === "/api/workspaces" && method === "GET") return json(200, { items: workspaces.map(present) });
     if (path === "/api/workspaces" && method === "POST") {
