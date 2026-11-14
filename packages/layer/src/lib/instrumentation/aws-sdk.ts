@@ -1,9 +1,9 @@
-import Module, { createRequire } from 'node:module';
 import { now } from '../tracer/clock.js';
 import { recordError, StatusCode, type Span } from '../tracer/span.js';
 import type { Tracer } from '../tracer/tracer.js';
 import { awsServiceAttributes, operationFromCommandName, serviceFromClientName } from './aws-attributes.js';
 import { SKIP_HTTP } from './http-span.js';
+import { onRequire } from './require-hook.js';
 
 const PATCHED = Symbol.for('ivy.aws-sdk.patched');
 const SPAN = Symbol.for('ivy.aws-sdk.span');
@@ -115,23 +115,13 @@ export function patchSmithyClient(tracer: Tracer, exports: any): void {
  * whether reached via require or via an ESM import of a CJS client) is patched when first loaded.
  */
 export function instrumentAwsSdk(tracer: Tracer): void {
-  const M = Module as any;
-  const load = M._load;
-  M._load = function (request: string, ...rest: any[]) {
-    const exports = load.call(this, request, ...rest);
-    if (CLIENT_MODULES.has(request)) {
-      try {
-        patchSmithyClient(tracer, exports);
-      } catch {
-        // ignore
-      }
-    }
-    return exports;
-  };
-  const require = createRequire(import.meta.url);
-  for (const key of Object.keys(require.cache)) {
+  onRequire((request, exports) => {
+    if (CLIENT_MODULES.has(request)) patchSmithyClient(tracer, exports);
+  });
+  const cache: Record<string, { exports?: unknown } | undefined> = (process.getBuiltinModule('node:module') as any)._cache ?? {};
+  for (const key of Object.keys(cache)) {
     if (/[\\/]@(smithy|aws-sdk)[\\/](core[\\/]dist-cjs[\\/]submodules[\\/]client|smithy-client[\\/]dist-cjs)[\\/]/.test(key)) {
-      patchSmithyClient(tracer, require.cache[key]?.exports);
+      patchSmithyClient(tracer, cache[key]?.exports);
     }
   }
 }

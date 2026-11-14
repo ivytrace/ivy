@@ -1,7 +1,8 @@
 import type { ClientRequest, IncomingMessage, RequestOptions } from 'node:http';
-import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { now } from '../tracer/clock.js';
 import type { Tracer } from '../tracer/tracer.js';
+import { markWrapped } from '../utils/original.js';
+import { onRequire } from './require-hook.js';
 import {
   BodyCollector,
   failHttpSpan,
@@ -95,7 +96,7 @@ function instrumentRequest(tracer: Tracer, req: ClientRequest, info: HttpRequest
 }
 
 function wrap(tracer: Tracer, original: RequestFn, protocol: string): RequestFn {
-  return function (this: unknown, ...args: any[]) {
+  const wrapped = function (this: unknown, ...args: any[]) {
     if (!tracer.active) return original.apply(this, args);
     let parsed: ReturnType<typeof parseArgs>;
     try {
@@ -114,17 +115,42 @@ function wrap(tracer: Tracer, original: RequestFn, protocol: string): RequestFn 
     }
     return req;
   };
+  return markWrapped(wrapped, original);
 }
 
-export function instrumentHttp(tracer: Tracer): void {
-  const require = createRequire(import.meta.url);
-  for (const [name, protocol] of [
-    ['http', 'http:'],
-    ['https', 'https:'],
-  ] as const) {
-    const mod = require(name);
-    mod.request = wrap(tracer, mod.request, protocol);
-    mod.get = wrap(tracer, mod.get, protocol);
-  }
-  syncBuiltinESMExports();
+const PATCHED = Symbol.for('ivy.http.patched');
+
+function patch(tracer: Tracer, name: 'http' | 'https'): void {
+  const mod = process.getBuiltinModule(`node:${name}`) as any;
+  if (mod[PATCHED]) return;
+  mod.request = wrap(tracer, mod.request, `${name}:`);
+  mod.get = wrap(tracer, mod.get, `${name}:`);
+  Object.defineProperty(mod, PATCHED, { value: true });
+  process.getBuiltinModule('node:module').syncBuiltinESMExports();
+}
+
+function isLoaded(name: string): boolean {
+  const list = (process as any).moduleLoadList;
+  return Array.isArray(list) ? list.includes(`NativeModule ${name}`) : true;
+}
+
+/**
+ * Patches `node:http` right away (the runtime has loaded it already) and `node:https` only once
+ * something loads it, because loading https pulls in tls. CommonJS requires are caught by the
+ * require hook; ESM imports of `node:https` by the returned check, which runs after the user
+ * handler is loaded and at the start of each invocation.
+ */
+export function instrumentHttp(tracer: Tracer): () => void {
+  patch(tracer, 'http');
+  let httpsPatched = false;
+  const patchHttps = () => {
+    httpsPatched = true;
+    patch(tracer, 'https');
+  };
+  onRequire((request) => {
+    if (!httpsPatched && (request === 'https' || request === 'node:https')) patchHttps();
+  });
+  return () => {
+    if (!httpsPatched && isLoaded('https')) patchHttps();
+  };
 }
