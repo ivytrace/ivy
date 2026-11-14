@@ -1,7 +1,7 @@
 import { gzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { countSpans, countTraffic, decode, formatOf, PayloadTooLargeError, statusBody } from './otlp.js';
-import { jsonInvocations, jsonRequest, protobufInvocations, protobufRequest } from './otlp-fixtures.js';
+import { jsonInvocations, jsonRequest, protobufInProgressAndFinal, protobufInvocations, protobufRequest } from './otlp-fixtures.js';
 
 describe('otlp', () => {
   it('detects the format from the content type', () => {
@@ -37,6 +37,13 @@ describe('otlp', () => {
         { key: 'ivy.billed_duration_ms', value: { intValue: '52' } as never },
       ],
     });
+    expect(countTraffic(Buffer.from(JSON.stringify(body)), 'json')).toEqual({ spans: 2, invocations: 1 });
+  });
+
+  it('counts an invocation reported as in progress once: the in-progress record is not a trace (billing)', () => {
+    expect(countTraffic(protobufInProgressAndFinal(), 'protobuf')).toEqual({ spans: 2, invocations: 1 });
+    const body = jsonInvocations(1);
+    body.resourceSpans[0].scopeSpans[0].spans.push({ name: 'inv', attributes: [{ key: 'ivy.invocation', value: { boolValue: true } }, { key: 'ivy.in_progress', value: { boolValue: true } }] });
     expect(countTraffic(Buffer.from(JSON.stringify(body)), 'json')).toEqual({ spans: 2, invocations: 1 });
   });
 

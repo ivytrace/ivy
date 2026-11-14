@@ -41,7 +41,8 @@ const INVOCATION: Shape = {
   trace_id: 'string', span_id: 'string', ts: 'iso', function: 'string', region: 'string', status: 'string',
   duration_ms: 'number', cold_start: 'boolean', request_id: 'string', trigger: 'string', http_method: 'string|null',
   http_path: 'string|null', http_status: 'number|null', error_type: 'string|null', error_message: 'string|null',
-  memory_used_mb: 'number|null',
+  memory_used_mb: 'number|null', memory_limit_mb: 'number|null', failure_phase: 'string|null', failure_kind: 'string|null',
+  synthetic: 'boolean', init_duration_ms: 'number|null', deadline: 'string|null', last_seen: 'string|null',
 };
 const SPAN: Shape = {
   span_id: 'string', parent_span_id: 'string', name: 'string', kind: 'string', service: 'string', start: 'iso',

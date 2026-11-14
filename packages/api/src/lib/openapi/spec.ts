@@ -23,10 +23,11 @@ const range = [
 const fn = query('function', 'Exact function name.');
 const invocationFilters = [
   fn,
-  query('status', 'Only ok or error.', { type: 'string', enum: ['ok', 'error'] }),
+  query('status', 'Only ok, error or in_progress (still running).', { type: 'string', enum: ['ok', 'error', 'in_progress'] }),
   query('q', 'Free text: request ID or trace ID (exact), or text in the error message or HTTP path.'),
   query('limit', 'Page size.', { type: 'integer', minimum: 1, maximum: 500, default: 50 }),
   query('cursor', 'Opaque cursor from next_cursor.'),
+  query('ids', 'Comma-separated span IDs (up to 100): only these invocations, in their current state (the final row once it arrived). Used by Live to refresh in-progress rows.'),
 ];
 const accountId = path('id', 'Connection ID (not the AWS account ID).');
 const ws = path('workspace', 'Workspace slug or ID.');

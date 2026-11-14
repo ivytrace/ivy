@@ -133,7 +133,13 @@ export const schemas = {
   FunctionList: list('FunctionSummary'),
   Invocation: object({
     trace_id: str, span_id: str, ...projectFields, ts: time, function: str, region: str,
-    status: { type: 'string', enum: ['ok', 'error'] }, duration_ms: num, cold_start: bool, request_id: str,
+    status: {
+      type: 'string',
+      enum: ['ok', 'error', 'in_progress'],
+      description: 'in_progress: a long-running invocation the extension reported while it ran, without its final record yet. Past deadline (plus 15 s) without one: no completion recorded.',
+    },
+    duration_ms: { type: 'number', description: 'For in_progress rows: from the start to last_seen.' },
+    cold_start: bool, request_id: str,
     trigger: { type: 'string', examples: ['aws:apigatewayv2', 'aws:sqs'] },
     http_method: nstr, http_path: nstr, http_status: { type: ['integer', 'null'] },
     error_type: nstr, error_message: nstr, memory_used_mb: { type: ['number', 'null'] },
@@ -145,6 +151,8 @@ export const schemas = {
       description: 'The extension created the invocation span itself because the tracer reported nothing (init failure, crash): the trace has no child spans.',
     },
     init_duration_ms: { type: ['number', 'null'], description: 'Set on cold starts.' },
+    deadline: { type: ['string', 'null'], format: 'date-time', description: 'in_progress rows only: the invocation deadline.' },
+    last_seen: { type: ['string', 'null'], format: 'date-time', description: 'in_progress rows only: when the extension last reported it running.' },
   }),
   InvocationList: object({
     items: { type: 'array', items: ref('Invocation') },

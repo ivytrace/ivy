@@ -131,7 +131,52 @@ SELECT
     SpanAttributes['ivy.synthetic'] = 'true' AS synthetic,
     toFloat32OrZero(SpanAttributes['ivy.init_duration_ms']) AS init_duration_ms
 FROM ivy.otel_traces
-WHERE SpanAttributes['ivy.invocation'] = 'true';
+WHERE SpanAttributes['ivy.invocation'] = 'true' AND SpanAttributes['ivy.in_progress'] != 'true';
+
+-- Long-running invocations the extension reported as in progress (`ivy.in_progress`, docs/implementation/layer.md).
+-- Kept apart from `invocations`, so that table, its rollup and the trace count (billing) only ever see the final
+-- invocation span. The list reads rows from here whose final span (same trace and span ID) is not in `invocations`
+-- yet. A refresh replaces the row (newest `last_seen` wins).
+CREATE TABLE IF NOT EXISTS ivy.invocations_in_progress
+(
+    `tenant_id` LowCardinality(String),
+    `project_id` LowCardinality(String),
+    `ts` DateTime64(3) CODEC(Delta(8), ZSTD(1)),
+    `trace_id` String CODEC(ZSTD(1)),
+    `span_id` String CODEC(ZSTD(1)),
+    `function` LowCardinality(String),
+    `region` LowCardinality(String),
+    `cold_start` Bool,
+    `request_id` String CODEC(ZSTD(1)),
+    `trigger` LowCardinality(String),
+    `memory_limit_mb` UInt32,
+    `deadline` DateTime64(3),
+    `last_seen` DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(last_seen)
+PARTITION BY toDate(ts)
+ORDER BY (tenant_id, project_id, function, ts, span_id)
+TTL toDateTime(ts) + toIntervalDay({{RETENTION_DAYS}})
+SETTINGS ttl_only_drop_parts = 1;
+
+DROP VIEW IF EXISTS ivy.invocations_in_progress_mv;
+CREATE MATERIALIZED VIEW ivy.invocations_in_progress_mv TO ivy.invocations_in_progress AS
+SELECT
+    TenantId AS tenant_id,
+    ProjectId AS project_id,
+    toDateTime64(Timestamp, 3) AS ts,
+    TraceId AS trace_id,
+    SpanId AS span_id,
+    if(ResourceAttributes['faas.name'] != '', ResourceAttributes['faas.name'], ServiceName) AS function,
+    ResourceAttributes['cloud.region'] AS region,
+    SpanAttributes['faas.coldstart'] = 'true' AS cold_start,
+    SpanAttributes['faas.invocation_id'] AS request_id,
+    if(SpanAttributes['ivy.trigger.source'] != '', SpanAttributes['ivy.trigger.source'], 'unknown') AS trigger,
+    toUInt32(toUInt64OrZero(ResourceAttributes['faas.max_memory']) / 1048576) AS memory_limit_mb,
+    fromUnixTimestamp64Milli(toInt64OrZero(SpanAttributes['ivy.deadline_ms'])) AS deadline,
+    toDateTime64(Timestamp, 3) + toIntervalMillisecond(intDiv(Duration, 1000000)) AS last_seen
+FROM ivy.otel_traces
+WHERE SpanAttributes['ivy.invocation'] = 'true' AND SpanAttributes['ivy.in_progress'] = 'true';
 
 CREATE TABLE IF NOT EXISTS ivy.invocations_hourly
 (
@@ -197,6 +242,8 @@ CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations_hourly AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
+CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations_in_progress AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.function_throttles AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
 -- The same for projects: project-scoped API queries also set SQL_ivy_project. Workspace-wide
@@ -206,6 +253,8 @@ CREATE ROW POLICY OR REPLACE ivy_project ON ivy.otel_traces AS RESTRICTIVE
 CREATE ROW POLICY OR REPLACE ivy_project ON ivy.invocations AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_project ON ivy.invocations_hourly AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
+CREATE ROW POLICY OR REPLACE ivy_project ON ivy.invocations_in_progress AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_project ON ivy.function_throttles AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
