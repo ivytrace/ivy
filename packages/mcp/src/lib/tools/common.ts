@@ -45,7 +45,8 @@ export const project = z
   .describe("Project slug or ID within the workspace(s), e.g. checkout-prod. Omit to cover all projects.");
 
 /** Prefix that tells the model which workspace a line belongs to. */
-export const label = (w: Workspace) => `[${w.slug}]`;
+/** `[workspace]`, or `[workspace/project]` for rows of an all-projects read. */
+export const label = (w: Workspace, project?: string | null) => `[${w.slug}${project ? `/${project}` : ""}]`;
 
 export const text = (value: string): CallToolResult => ({ content: [{ type: "text", text: value }] });
 

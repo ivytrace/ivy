@@ -2,7 +2,14 @@ import type { FailureKind } from "./failures.js";
 
 /** Response shapes of the list endpoints (docs/implementation/api.md), shared by the formatters and the MCP. */
 
-export interface Invocation {
+/** Set on rows of workspace-wide (all projects) reads. */
+export interface ProjectRef {
+  project_id?: string;
+  /** The project's slug. */
+  project?: string | null;
+}
+
+export interface Invocation extends ProjectRef {
   trace_id: string;
   span_id: string;
   ts: string;
@@ -30,7 +37,7 @@ export interface Invocation {
   init_duration_ms: number | null;
 }
 
-export interface ErrorGroup {
+export interface ErrorGroup extends ProjectRef {
   fingerprint: string;
   function: string;
   error_type: string;
@@ -45,7 +52,7 @@ export interface ErrorGroup {
   failure_kind: FailureKind | null;
 }
 
-export interface FunctionSummary {
+export interface FunctionSummary extends ProjectRef {
   name: string;
   region: string;
   invocations: number;
