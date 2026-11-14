@@ -163,7 +163,7 @@ describe('MCP endpoint in the API', () => {
 
     const client = await connect(app, { authorization: 'Bearer mcp-token' });
     expect((await client.listTools()).tools).toHaveLength(8);
-    expect(verifyAccessToken).toHaveBeenCalledWith('mcp-token', { audience: 'https://ivytrace.dev/mcp' });
+    expect(verifyAccessToken).toHaveBeenCalledWith('mcp-token', { audience: 'https://ivytrace.dev/mcp', mcpClients: true });
   });
 
   it('answers 503 when the identity provider is unreachable', async () => {

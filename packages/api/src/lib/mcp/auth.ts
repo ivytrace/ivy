@@ -19,7 +19,7 @@ export function mcpResource(): string | null {
 export const oidcVerifier: TokenVerifier<AuthUser> = {
   async verify(token, { audience }) {
     try {
-      return await verifyAccessToken(token, { audience });
+      return await verifyAccessToken(token, { audience, mcpClients: true });
     } catch (error) {
       if (error instanceof AuthError && error.status === 401) return null;
       if (error instanceof AuthError) throw new HTTPException(error.status, { message: error.message });
