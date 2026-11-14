@@ -345,13 +345,34 @@ pub fn parse_time_ms(s: &str) -> Option<i64> {
     Some(((days * 86_400 + h * 3_600 + mi * 60 + se - offset_min * 60) * 1_000) + millis)
 }
 
-/// Best-effort redaction of `"key": value` and `key=value` pairs whose key matches a redact entry
-/// (same matching as the tracer: lowercased, `-`/`_` removed, substring).
+const COUNT_SUFFIXES: [&str; 5] = ["tokens", "tokencount", "tokencounts", "tokensdetails", "tokenusage"];
+const CREDENTIAL_PREFIXES: [&str; 18] = [
+    "access", "refresh", "session", "id", "api", "auth", "bearer", "oauth", "csrf", "xsrf", "client", "device", "push", "secret",
+    "security", "reset", "invite", "verification",
+];
+
+/// Token counts (`max_tokens`, `inputTokens`, `x-amzn-bedrock-input-token-count`) are not secrets
+/// (same rule as the tracer's `isTokenCountKey`). `k` is normalized.
+fn is_token_count_key(k: &str) -> bool {
+    COUNT_SUFFIXES.iter().any(|s| k.ends_with(s) && !CREDENTIAL_PREFIXES.iter().any(|p| k[..k.len() - s.len()].ends_with(p)))
+}
+
+/// Whether a key must be redacted (same matching as the tracer: lowercased, `-`/`_` removed, substring,
+/// token counts excluded). Numbers and booleans are kept when only `token` entries matched.
+fn is_secret(key: &str, keys: &[String], scalar: bool) -> bool {
+    let k: String = key.to_ascii_lowercase().chars().filter(|c| *c != '-' && *c != '_').collect();
+    if k.is_empty() || is_token_count_key(&k) {
+        return false;
+    }
+    let mut matched = keys.iter().filter(|e| k.contains(e.as_str())).peekable();
+    if matched.peek().is_none() {
+        return false;
+    }
+    !(scalar && matched.all(|e| e.contains("token")))
+}
+
+/// Best-effort redaction of `"key": value` and `key=value` pairs whose key matches a redact entry.
 pub fn redact(text: &str, keys: &[String]) -> String {
-    let is_secret = |key: &str| {
-        let k: String = key.to_ascii_lowercase().chars().filter(|c| *c != '-' && *c != '_').collect();
-        !k.is_empty() && keys.iter().any(|e| k.contains(e.as_str()))
-    };
     let b = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
@@ -365,12 +386,18 @@ pub fn redact(text: &str, keys: &[String]) -> String {
                 while j < b.len() && b[j].is_ascii_whitespace() {
                     j += 1;
                 }
-                if j < b.len() && b[j] == b':' && !key.contains('\\') && is_secret(key) {
+                if j < b.len() && b[j] == b':' && !key.contains('\\') && is_secret(key, keys, false) {
                     j += 1;
                     while j < b.len() && b[j].is_ascii_whitespace() {
                         j += 1;
                     }
                     let end = value_end(b, j);
+                    let value = &text[j..end];
+                    let scalar = value == "true" || value == "false" || (!value.is_empty() && value.parse::<f64>().is_ok());
+                    if scalar && !is_secret(key, keys, true) {
+                        i += 1;
+                        continue;
+                    }
                     out.push_str(&text[copied..j]);
                     out.push_str("\"[redacted]\"");
                     copied = end;
@@ -382,7 +409,7 @@ pub fn redact(text: &str, keys: &[String]) -> String {
         // key=value
         if b[i] == b'=' && i > 0 {
             let start = text[..i].rfind(|c: char| c.is_whitespace() || "&?,;\"{}".contains(c)).map(|p| p + 1).unwrap_or(0);
-            if start >= copied && start < i && is_secret(&text[start..i]) {
+            if start >= copied && start < i && is_secret(&text[start..i], keys, false) {
                 let end = text[i + 1..].find(|c: char| c.is_whitespace() || "&,;\"}".contains(c)).map(|p| i + 1 + p).unwrap_or(b.len());
                 out.push_str(&text[copied..=i]);
                 out.push_str("[redacted]");
@@ -490,5 +517,18 @@ mod tests {
         assert_eq!(redact(r#"{"x-api-key": 1234}"#, &keys), r#"{"x-api-key": "[redacted]"}"#);
         assert_eq!(redact("GET /cb?code=1&access_token=abc&x=2 ok", &keys), "GET /cb?code=1&access_token=[redacted]&x=2 ok");
         assert_eq!(redact("nothing secret here", &keys), "nothing secret here");
+    }
+
+    #[test]
+    fn keeps_token_counts_in_log_lines() {
+        let keys: Vec<String> = crate::config::DEFAULT_REDACT_KEYS.split(',').map(|k| k.replace('_', "")).collect();
+        let counts = r#"{"max_tokens":1024,"usage":{"input_tokens":812,"outputTokens":24,"cache_read_input_tokens":0},"x-amzn-bedrock-input-token-count":"812"}"#;
+        assert_eq!(redact(counts, &keys), counts);
+        assert_eq!(redact(r#"{"tokenLimit":4096,"token":"abc"}"#, &keys), r#"{"tokenLimit":4096,"token":"[redacted]"}"#);
+        assert_eq!(
+            redact(r#"{"accessToken":"a","refresh_tokens":"b","sessionToken":"c","x-auth-token":"d","apiTokens":"e"}"#, &keys),
+            r#"{"accessToken":"[redacted]","refresh_tokens":"[redacted]","sessionToken":"[redacted]","x-auth-token":"[redacted]","apiTokens":"[redacted]"}"#
+        );
+        assert_eq!(redact(r#"{"cardNumber":4111111111111111,"cvv":123}"#, &keys), r#"{"cardNumber":"[redacted]","cvv":"[redacted]"}"#);
     }
 }

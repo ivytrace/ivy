@@ -13,6 +13,58 @@ describe('createKeyMatcher', () => {
     expect(isSecret('Set-Cookie')).toBe(true);
     expect(isSecret('username')).toBe(false);
   });
+
+  it.each([
+    'max_tokens',
+    'maxTokens',
+    'max_output_tokens',
+    'max_new_tokens',
+    'max_completion_tokens',
+    'input_tokens',
+    'output_tokens',
+    'inputTokens',
+    'outputTokens',
+    'totalTokens',
+    'prompt_tokens',
+    'completion_tokens',
+    'total_tokens',
+    'reasoning_tokens',
+    'cached_tokens',
+    'cache_read_input_tokens',
+    'cache_creation_input_tokens',
+    'cacheReadInputTokens',
+    'budget_tokens',
+    'promptTokenCount',
+    'maxTokenCount',
+    'inputTextTokenCount',
+    'prompt_tokens_details',
+    'completion_tokens_details',
+    'x-amzn-bedrock-input-token-count',
+    'X-Amzn-Bedrock-Output-Token-Count',
+  ])('keeps the token count %s, whatever its value', (key) => {
+    expect(isSecret(key, 812)).toBe(false);
+    expect(isSecret(key, '812')).toBe(false);
+    expect(isSecret(key, { cached_tokens: 0 })).toBe(false);
+  });
+
+  it.each(['token', 'Token', 'access_token', 'accessToken', 'id_token', 'idToken', 'refresh_token', 'refreshTokens', 'sessionToken', 'X-Amz-Security-Token', 'api_token', 'apiTokens', 'x-auth-token', 'authTokens', 'csrfToken', 'bearer_tokens', 'tokenSecret'])(
+    'still redacts the credential %s',
+    (key) => {
+      expect(isSecret(key, 'abc')).toBe(true);
+      expect(isSecret(key, ['abc'])).toBe(true);
+      expect(isSecret(key)).toBe(true);
+    },
+  );
+
+  it('keeps numbers and booleans for keys that only match "token", but not for other secrets', () => {
+    expect(isSecret('tokenLimit', 4096)).toBe(false);
+    expect(isSecret('useToken', true)).toBe(false);
+    expect(isSecret('tokenLimit', '4096')).toBe(true);
+    expect(isSecret('cardNumber', 4111111111111111)).toBe(true);
+    expect(isSecret('cvv', 123)).toBe(true);
+    expect(isSecret('password', 1234)).toBe(true);
+    expect(isSecret('tokenPassword', 1234)).toBe(true);
+  });
 });
 
 describe('serialize', () => {
@@ -42,6 +94,22 @@ describe('serialize', () => {
     expect(r.text).toContain('[truncated 24 bytes]');
   });
 
+  it('keeps token counts in LLM request and response bodies', () => {
+    const body = {
+      anthropic_version: 'bedrock-2023-05-31',
+      max_tokens: 1024,
+      thinking: { type: 'enabled', budget_tokens: 512 },
+      usage: { input_tokens: 812, output_tokens: 24, cache_read_input_tokens: 0 },
+      openai: { usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3, completion_tokens_details: { reasoning_tokens: 0 } } },
+      converse: { usage: { inputTokens: 5, outputTokens: 6, totalTokens: 11 } },
+      auth: { token: 'secret', accessToken: 'a', cardNumber: 4111111111111111, cvv: 123 },
+    };
+    expect(JSON.parse(serialize(body, 16384, isSecret).text)).toEqual({
+      ...body,
+      auth: { token: '[redacted]', accessToken: '[redacted]', cardNumber: '[redacted]', cvv: '[redacted]' },
+    });
+  });
+
   it('returns empty text for undefined', () => {
     expect(serialize(undefined, 10, isSecret)).toEqual({ text: '', truncated: false });
   });
@@ -54,6 +122,11 @@ describe('serializeBody', () => {
   it('falls back to regex redaction for broken JSON and forms', () => {
     expect(redactText('{"password": "abc", "user": "u", "tok', isSecret)).toBe('{"password": "[redacted]", "user": "u", "tok');
     expect(serializeBody('user=a&password=b', 'application/x-www-form-urlencoded', 1000, isSecret).text).toBe('user=a&password=%5Bredacted%5D');
+  });
+  it('keeps token counts in broken JSON', () => {
+    expect(redactText('{"max_tokens": 100, "tokenLimit": 5, "token": "t", "cvv": 123, "usage": {"input_tok', isSecret)).toBe(
+      '{"max_tokens": 100, "tokenLimit": 5, "token": "[redacted]", "cvv": "[redacted]", "usage": {"input_tok',
+    );
   });
 });
 
@@ -68,5 +141,11 @@ describe('redactUrl / redactHeaders', () => {
       'content-type': 'json',
       accept: 'a, b',
     });
+    expect(
+      JSON.parse(redactHeaders({ 'X-Amzn-Bedrock-Input-Token-Count': '812', 'x-amzn-bedrock-output-token-count': '24', 'x-auth-token': 't', 'X-Amz-Security-Token': 's' }, isSecret)),
+    ).toEqual({ 'x-amzn-bedrock-input-token-count': '812', 'x-amzn-bedrock-output-token-count': '24', 'x-auth-token': '[redacted]', 'x-amz-security-token': '[redacted]' });
+  });
+  it('keeps token-count query params', () => {
+    expect(redactUrl('https://x.io/a?max_tokens=10&token=abc', isSecret)).toBe('https://x.io/a?max_tokens=10&token=%5Bredacted%5D');
   });
 });
