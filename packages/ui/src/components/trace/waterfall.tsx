@@ -3,7 +3,7 @@ import { ChevronRight } from "lucide-react";
 
 import { ServiceIcon } from "@/components/common/service-icon";
 import { SpanDetails } from "@/components/trace/span-details";
-import { SpanTitle } from "@/components/trace/span-title";
+import { CollapsedBadge, SpanTitle } from "@/components/trace/span-title";
 import { describeSpan, type ServiceIcon as Icon } from "@/lib/spans/services";
 import type { WaterfallRow } from "@/lib/spans/tree";
 import { cn } from "@/lib/utils/cn";
@@ -83,8 +83,9 @@ export function Waterfall({
                   />
                   <ServiceIcon icon={d.icon} label={d.serviceLabel} />
                   <span className={cn("min-w-0 flex-1 truncate", d.isError && "text-red-400")}>
-                    <SpanTitle description={d} stackNote />
+                    <SpanTitle description={d} stackNote badge={false} />
                   </span>
+                  {d.collapsed && <CollapsedBadge collapsed={d.collapsed} className="ml-0 shrink-0" />}
                 </div>
                 <div className="relative flex h-9 flex-1 items-center pr-20">
                   <div className="relative h-full w-full">

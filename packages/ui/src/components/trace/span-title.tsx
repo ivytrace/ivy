@@ -4,10 +4,10 @@ import { formatCount, type CollapsedInfo, type SpanDescription } from "@/lib/spa
 import { cn } from "@/lib/utils/cn";
 
 /** `× 1,184` on a summary span: similar calls the tracer collapsed into this one span. */
-export function CollapsedBadge({ collapsed }: { collapsed: CollapsedInfo }) {
+export function CollapsedBadge({ collapsed, className }: { collapsed: CollapsedInfo; className?: string }) {
   return (
     <Tooltipped title={`${formatCount(collapsed.count)} similar calls summarised in one span`}>
-      <span className={cn(badgeVariants({ variant: "outline" }), "ml-1.5 px-1.5 py-0 align-middle font-mono text-muted-foreground")}>
+      <span className={cn(badgeVariants({ variant: "outline" }), "ml-1.5 px-1.5 py-0 align-middle font-mono text-muted-foreground", className)}>
         × {formatCount(collapsed.count)}
       </span>
     </Tooltipped>
@@ -22,10 +22,13 @@ export function SpanTitle({
   description,
   count = 1,
   stackNote = false,
+  badge = true,
 }: {
   description: SpanDescription;
   count?: number;
   stackNote?: boolean;
+  /** Render the `× N` badge inline; off when the caller places it outside a truncated title. */
+  badge?: boolean;
 }) {
   const { operation, target, note, isInvocation, llm, collapsed } = description;
   const title = (
@@ -44,7 +47,7 @@ export function SpanTitle({
               <code className="text-foreground/90">{target}</code>
             </>
           )}
-          {collapsed && <CollapsedBadge collapsed={collapsed} />}
+          {badge && collapsed && <CollapsedBadge collapsed={collapsed} />}
         </>
       )}
     </>
