@@ -106,6 +106,8 @@ response clones; overflow is counted in `ivy.dropped_child_spans` / `ivy.dropped
 - **fetch**: `globalThis.fetch` is wrapped; response bodies are read from `res.clone()` when the
   content type is text-like and the length is ≤ 1 MB.
 - **console**: `log/info/warn/error/debug/trace` become `log` events on the root span.
+- **OpenTelemetry API** (Vercel AI SDK and other libraries): a minimal global tracer provider and
+  `AsyncLocalStorage` context manager turn library spans into children of the invocation. See `llm-spans.md`.
 - Calls to the runtime API, the extension port and the Ivy endpoint (host + port) are skipped.
 
 ## Handler semantics

@@ -72,12 +72,25 @@ extension idles.
 | `IVY_MAX_PAYLOAD_BYTES` | `16384` | cap for each `ivy.payload.*` attribute |
 | `IVY_REDACT_KEYS` | see span conventions | comma-separated; a key is redacted if it contains one of these (case-insensitive, `-`/`_` ignored) |
 | `IVY_CAPTURE_LOGS` | `true` | record `console.*` calls as span events |
+| `IVY_CAPTURE_OTEL` | `true` | capture spans that libraries create through `@opentelemetry/api` (Vercel AI SDK, …) |
 | `IVY_TIMEOUT_MARGIN_MS` | `100` | how long before the deadline to snapshot spans for a possible timeout |
 | `IVY_EXPORT_TIMEOUT_MS` | `1000` | per-request export timeout |
 | `IVY_FLUSH_BUDGET_MS` | `2000` | max time the extension spends exporting after each invocation |
 | `IVY_MAX_QUEUE_SPANS` | `2000` | spans buffered while the endpoint is unreachable |
 | `IVY_EXTENSION_PORT` | `9790` | localhost port between the function and the extension |
 | `IVY_DEBUG` | `false` | log layer diagnostics |
+
+## LLM calls (Vercel AI SDK)
+
+Spans the AI SDK emits through OpenTelemetry show up as children of the invocation, with prompts,
+responses, tool calls, tokens and time to first token. No OpenTelemetry SDK is needed:
+
+- AI SDK 3–6: pass `experimental_telemetry: { isEnabled: true }` to `generateText`, `streamText`, …
+- AI SDK 7: `registerTelemetry(new OpenTelemetry())` from `ai` and `@ai-sdk/otel`, once at the top of the handler module.
+
+Other libraries that use `@opentelemetry/api` (OpenAI, Anthropic, LangChain instrumentations) are captured the
+same way. If the app registers its own tracer provider, the layer leaves it alone. Details:
+`docs/implementation/llm-spans.md`.
 
 ## Local end-to-end test
 

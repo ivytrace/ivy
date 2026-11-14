@@ -80,3 +80,74 @@ HTTP (fetch/undici, node:http, node:https), excluding calls to the Ivy endpoint 
 - Keys matching `IVY_REDACT_KEYS` (comma-separated, case-insensitive, default
   `password,secret,token,authorization,cookie,apikey,api_key,accesskey,secretaccesskey,sessiontoken,creditcard,cardnumber,cvv`)
   are replaced with `"[redacted]"` at any depth before serialization.
+
+## Library spans (OpenTelemetry API)
+
+The layer registers a minimal global tracer provider on the `@opentelemetry/api` global (see
+`llm-spans.md`), so spans that libraries create through the OpenTelemetry API become children of the
+invocation span, keeping their own hierarchy. They keep their name, kind, attributes, events and status,
+plus `otel.scope.name` (the library's tracer name, e.g. `ai`, `gen_ai`). Their string attributes follow the
+payload rules: capped at `IVY_MAX_PAYLOAD_BYTES` each (with the `…[truncated N bytes]` suffix and
+`ivy.payload.truncated = true`), JSON strings redacted by key at any depth, string values whose own key
+matches `IVY_REDACT_KEYS` replaced (numbers such as token counts are kept). String arrays are capped per
+element within 4 × `IVY_MAX_PAYLOAD_BYTES`. Spans of the layer's own instrumentation (fetch, http, AWS SDK)
+started inside an active library span become its children.
+
+## LLM spans
+
+Read in `@ivy/spans` (`describeLlm`), never rewritten at ingest: the stored span keeps what the producer
+sent, and the describer normalizes at read time. Ivy recognizes three attribute families.
+
+**Vercel AI SDK** (`ai.*`; AI SDK 3–6 with `experimental_telemetry: { isEnabled: true }`, and AI SDK 7's
+`LegacyOpenTelemetry`):
+
+| span (`ai.operationId`) | kind |
+|---|---|
+| `ai.generateText`, `ai.streamText`, `ai.generateObject`, `ai.streamObject` | operation |
+| `ai.generateText.doGenerate`, `ai.streamText.doStream`, … | model call |
+| `ai.toolCall` | tool |
+| `ai.embed`, `ai.embedMany`, `*.doEmbed` | embedding |
+
+Attributes read: `ai.model.id`, `ai.model.provider` (`openai.chat`, `anthropic.messages`, …),
+`ai.response.model`, `ai.telemetry.functionId`, `ai.prompt` (`{system, prompt, messages}`),
+`ai.prompt.messages` (`[{role, content}]`, content parts `text`, `reasoning`, `tool-call`, `tool-result`,
+`image`/`file`), `ai.prompt.tools`, `ai.prompt.toolChoice`, `ai.response.text`, `ai.response.object`,
+`ai.response.toolCalls`, `ai.response.finishReason` (`ai.finishReason` before AI SDK 5),
+`ai.usage.inputTokens`/`outputTokens`/`totalTokens`/`cachedInputTokens` (`promptTokens`/`completionTokens`
+before AI SDK 5), `ai.usage.tokens` (embeddings), `ai.response.msToFirstChunk` (`ai.stream.msToFirstChunk`
+before AI SDK 5, also on the `ai.stream.firstChunk` event), `ai.settings.*` (temperature, maxOutputTokens,
+topP, topK, penalties, stopSequences, seed, maxRetries), `ai.toolCall.name`/`id`/`args`/`result`
+(`input`/`output` accepted), `ai.value`/`ai.values`.
+
+**OpenTelemetry GenAI semantic conventions** (`gen_ai.*`; AI SDK 7's `OpenTelemetry` from `@ai-sdk/otel`, the
+OpenAI, Anthropic, Bedrock and LangChain instrumentations, OpenLLMetry):
+
+- kind from `gen_ai.operation.name`: `invoke_agent`/`create_agent` operation, `agent_step` step,
+  `execute_tool` tool, `embeddings` embedding, anything else (`chat`, `text_completion`,
+  `generate_content`) model call. Spans without it but with `gen_ai.system`, `gen_ai.provider.name`,
+  `gen_ai.request.model` or `llm.request.type` are model calls; `traceloop.span.kind = tool` is a tool.
+- model and provider: `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.provider.name`
+  (`gen_ai.system` in older versions), `gen_ai.agent.name`.
+- messages: `gen_ai.system_instructions`, `gen_ai.input.messages`, `gen_ai.output.messages`
+  (`[{role, parts}]`, parts `text`, `reasoning`, `tool_call`, `tool_call_response`, `blob`, `uri`); older
+  indexed attributes `gen_ai.prompt.{i}.role|content`, `gen_ai.completion.{i}.role|content|finish_reason`,
+  `gen_ai.completion.{i}.tool_calls.{j}.name|arguments`; older span events `gen_ai.{system,user,assistant,tool}.message`,
+  `gen_ai.choice`, `gen_ai.content.prompt`/`gen_ai.content.completion`.
+- usage: `gen_ai.usage.input_tokens`/`output_tokens` (`prompt_tokens`/`completion_tokens` in older versions),
+  `gen_ai.usage.cache_read.input_tokens`, `llm.usage.total_tokens`.
+- `gen_ai.response.finish_reasons`, `gen_ai.client.operation.time_to_first_chunk` (seconds),
+  `gen_ai.request.temperature`/`max_tokens`/`top_p`/`top_k`/`frequency_penalty`/`presence_penalty`/
+  `stop_sequences`/`seed`, `gen_ai.tool.definitions`.
+- tools: `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result`.
+
+**OpenInference** (`openinference.span.kind` `LLM`/`TOOL`/`EMBEDDING`/`AGENT`): `llm.model_name`,
+`llm.provider`/`llm.system`, `llm.input_messages.{i}.message.role|content`, `llm.output_messages.{i}.message.*`
+(with `tool_calls.{j}.tool_call.function.name|arguments`), `llm.token_count.prompt|completion|total`,
+`llm.invocation_parameters`, `tool.name`, `input.value`, `output.value`.
+
+The normalized view (`LlmSpan`) uses GenAI names where they exist: kind, operation, provider (`openai`,
+`anthropic`, `bedrock`, `vertex`, `google`, `azure-openai`, `mistral`, …, from `gen_ai.provider.name`,
+`ai.model.provider` or `gen_ai.system`, falling back to the model name), model, response model, input/output/
+total/cached tokens, time to first token, finish reasons, settings, input messages (system first), output
+messages, the tool call of a tool span, and the tool definitions. Token totals of a trace count only spans
+with usage and no descendant with usage, so operations don't double-count their model calls.

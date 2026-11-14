@@ -73,3 +73,10 @@ live in `docs/implementation/`.
 ## Performance
 - Cold-start overhead of the layer must be minimal: the Lambda extension is a small Rust binary (the one exception
   to TypeScript everywhere).
+
+## LLM spans
+- Ivy captures OpenTelemetry spans from libraries such as the Vercel AI SDK and renders LLM calls (messages,
+  tool calls, tokens, time to first token). This replaces 001's "LLM-call instrumentation: not in v1".
+- The layer captures them without an OpenTelemetry SDK and steps aside when the app registers its own tracer
+  provider. LLM attributes are normalized when read (`@ivy/spans`), not at ingest, so stored spans stay as the
+  producer sent them. Implementation: `docs/implementation/llm-spans.md`.

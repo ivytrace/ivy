@@ -22,7 +22,7 @@ The mock (`src/lib/mock/`) is a Vite middleware plugin, enabled only when `VITE_
 (`aws.ts`) keeps state while the dev server runs: two connected accounts with functions in every state, and new
 connections verify 8 s after they're created. `VITE_MOCK_EMPTY=1` starts with no accounts and no trace data (the
 "connect an account" empty state); `VITE_MOCK_NO_TEMPLATE=1` shows the template download fallback. It serves every
-endpoint in `api.md` from deterministic generated data: a week of invocations across four functions,
+endpoint in `api.md` from deterministic generated data: a week of invocations across five functions (one of them, `support-answerTicket`, an AI SDK support bot),
 filters, `since`/`from`/`to`, cursor pagination, error groups, timeseries buckets, and full traces with
 DynamoDB, S3, SQS, SNS, EventBridge, SES, Lambda, Secrets Manager and fetch spans, logs and exceptions.
 `server.test.ts` checks it against the contract.
@@ -89,6 +89,8 @@ lives here.
 | Other AWS | `rpc.system=aws-api` | `rpc.service` icon "aws" · method | |
 | HTTP | CLIENT span with `http.request.method` or `url.full` | method · `url.full` – status | URL, host (`server.address`), port, status. Request/response headers come from `ivy.http.*.headers`. Known hosts (Slack, Shopify, Chargebee, Todoist, CloudFront, legacy S3/SES/EventBridge hostnames) get their own icon |
 
+LLM spans (Vercel AI SDK `ai.*`, GenAI `gen_ai.*`, OpenInference) are described by `describeLlm` in `@ivy/spans/llm.ts`: AI icon, operation · model, tokens in → out, time to first token, and in the details the conversation, response, tool calls, settings and usage (`components/trace/llm-details.tsx`). See `llm-spans.md`.
+
 All AWS spans also show `cloud.region`, `http.response.status_code` and `aws.request_id`.
 `ivy.payload.request/response` are parsed as JSON after stripping the `…[truncated N bytes]` marker. If
 parsing fails (for example on truncated JSON), the raw string is shown. `ivy.payload.truncated` adds a
@@ -115,3 +117,7 @@ parsing fails (for example on truncated JSON), the raw string is shown. `ivy.pay
 - Dark-only by design: one dark palette in `:root`, `color-scheme: dark`, and a dark background in
   `index.html` so there's no white flash on load. There is no theme toggle and there are no `dark:`
   variants. Status colours use the 400 shades (emerald, amber, red) for contrast on the dark background.
+
+## Website demo
+
+The website's trace demo (private `ivy-hosted` repo) is a copy of the trace page and does not show LLM spans yet. To show one it needs the `ai` service icons (`public/images/service-icons{,-mini}/ai.svg`), the `bg-violet-400` bar colour, the LLM row title and note, the conversation/response/tool-call details (`llm-details.tsx`), the header token total and the provider graph node, fed by a fixture like `@ivy/format/fixtures`' `supportBot`.
