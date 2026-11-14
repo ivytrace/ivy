@@ -1,3 +1,4 @@
+import { failureKind } from '@ivy/spans';
 import type { Context } from 'hono';
 import { THROTTLED_ERROR_TYPE, THROTTLED_MESSAGE, throttleSource } from '../../lib/stats/throttles.js';
 import { dataQuery } from '../../lib/tenancy/context.js';
@@ -13,6 +14,7 @@ interface ErrorGroupRow {
   first_seen_ms: number;
   last_seen_ms: number;
   sample_trace_id: string;
+  failure_phase: string;
 }
 
 export async function getErrors(c: Context) {
@@ -26,7 +28,8 @@ export async function getErrors(c: Context) {
        count() AS count,
        toUnixTimestamp64Milli(min(ts)) AS first_seen_ms,
        toUnixTimestamp64Milli(max(ts)) AS last_seen_ms,
-       argMax(trace_id, ts) AS sample_trace_id
+       argMax(trace_id, ts) AS sample_trace_id,
+       argMax(failure_phase, ts) AS failure_phase
      FROM invocations
      WHERE tenant_id = {tenant:String}
        AND ts >= fromUnixTimestamp64Milli({from:Int64}) AND ts < fromUnixTimestamp64Milli({to:Int64})
@@ -55,6 +58,7 @@ export async function getErrors(c: Context) {
     last_seen: isoFromMs(row.last_ms),
     sample_trace_id: null,
     kind: 'throttle' as const,
+    failure_kind: null,
   }));
 
   const errorGroups = rows.map((row) => ({
@@ -67,6 +71,7 @@ export async function getErrors(c: Context) {
     last_seen: isoFromMs(row.last_seen_ms),
     sample_trace_id: row.sample_trace_id,
     kind: 'error' as const,
+    failure_kind: failureKind(row.error_type, row.failure_phase),
   }));
 
   return c.json({ items: [...errorGroups, ...throttleGroups].sort((a, b) => b.count - a.count || b.last_seen.localeCompare(a.last_seen)) });

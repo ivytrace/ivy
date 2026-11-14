@@ -48,7 +48,18 @@ Span data lives in the `ivy` database (one per cell/shard, see `tenancy.md`); th
   attribute keys/values; ngram bloom filters on `http_path` and `error_message`.
 - `invocations` fields: `error_type` = `error.type` or the `exception` event's type, and `error_message` =
   status message or `exception.message`. The `error_fingerprint` is
-  `cityHash64(function, error_type, message with UUIDs / long hex / numbers replaced)`.
+  `cityHash64(function, error_type, message with UUIDs / long hex / numbers replaced)`. For failures the extension
+  reports (`platform-failures.md`) the status message is the first meaningful log line, so an init failure groups as
+  e.g. `Runtime.ImportModuleError` + `Error: Cannot find module 'left-pad'` (module names survive the normalization;
+  digits in them become `<n>`).
+- Platform columns: `failure_phase` (`ivy.failure.phase`: `init`/`invoke`, empty for handler errors), `synthetic`
+  (`ivy.synthetic`: the extension created the span), `init_duration_ms` (`ivy.init_duration_ms`) and
+  `memory_limit_mb` (resource `faas.max_memory`). They were added with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, and
+  `invocations_mv` is dropped and recreated on every schema run so query changes apply (spans inserted in those few
+  milliseconds are not copied).
+- Update spans (`ivy.update = true`, late Lambda report data) land in `otel_traces` only: they have no
+  `ivy.invocation`, so they add no `invocations` row and are not counted as traces. The trace route folds them into
+  the invocation span. Billed duration and max memory are therefore only in the trace view, not in `invocations`.
   Empty strings / `0` mean "absent" and the API maps them to `null`.
 
 ## Query patterns (API)

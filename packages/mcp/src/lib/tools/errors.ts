@@ -13,9 +13,10 @@ export function registerErrorTools(server: McpServer, data: IvyData) {
       description:
         "Distinct errors across your workspaces (or one), grouped by function, error type and normalized message, most " +
         "frequent first. Use it for an overview of what is breaking and how often. Each line: [workspace], count, " +
-        "function, error, first and last seen (UTC), and a sample trace ID to pass to get_trace_summary. Lambda throttles " +
-        "appear as one \"Throttled\" group per function with a count; throttled requests never reach the function, so " +
-        "they have no trace.",
+        "function, the failure label for errors outside the handler (Init failed, Out of memory, Timed out, Crashed), error, " +
+          "first and last seen (UTC), and a sample trace ID to pass to get_trace_summary. Init failures have no trace spans: " +
+          "the sample trace holds only the platform report and the log tail. Lambda throttles appear as one \"Throttled\" " +
+          "group per function with a count; throttled requests never reach the function, so they have no trace.",
       inputSchema: { workspace, function: functionName, since: since("24h"), limit: limit(20) },
       annotations: { title: "List error groups", ...READ_ONLY },
     },

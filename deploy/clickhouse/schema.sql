@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS ivy.invocations
     `error_message` String CODEC(ZSTD(1)),
     `error_fingerprint` String,
     `memory_used_mb` Float32,
+    `memory_limit_mb` UInt32,
+    `failure_phase` LowCardinality(String),
+    `synthetic` Bool,
+    `init_duration_ms` Float32,
     INDEX idx_trace_id trace_id TYPE bloom_filter(0.001) GRANULARITY 1,
     INDEX idx_request_id request_id TYPE bloom_filter(0.001) GRANULARITY 1,
     INDEX idx_http_path http_path TYPE ngrambf_v1(3, 4096, 3, 0) GRANULARITY 1,
@@ -76,7 +80,17 @@ ORDER BY (tenant_id, function, ts)
 TTL toDateTime(ts) + toIntervalDay({{RETENTION_DAYS}})
 SETTINGS ttl_only_drop_parts = 1;
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS ivy.invocations_mv TO ivy.invocations AS
+-- Columns added after the first release; the view below is recreated so it fills them.
+ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `memory_limit_mb` UInt32 AFTER `memory_used_mb`;
+ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `failure_phase` LowCardinality(String) AFTER `memory_limit_mb`;
+ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `synthetic` Bool AFTER `failure_phase`;
+ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `init_duration_ms` Float32 AFTER `synthetic`;
+
+-- Dropped and recreated (rather than IF NOT EXISTS) so a re-run picks up changes to the query.
+-- Spans inserted during the few milliseconds in between are not copied into `invocations`.
+-- Update spans (`ivy.update`, late Lambda report data) never match: they carry no `ivy.invocation`.
+DROP VIEW IF EXISTS ivy.invocations_mv;
+CREATE MATERIALIZED VIEW ivy.invocations_mv TO ivy.invocations AS
 WITH
     arrayFirstIndex(n -> n = 'exception', `Events.Name`) AS ex_idx,
     if(ex_idx > 0, `Events.Attributes`[ex_idx], map()) AS ex,
@@ -107,7 +121,11 @@ SELECT
     err_type AS error_type,
     err_message AS error_message,
     if(is_error, lower(hex(cityHash64(fn, err_type, err_normalized))), '') AS error_fingerprint,
-    toFloat32OrZero(SpanAttributes['ivy.memory_used_mb']) AS memory_used_mb
+    toFloat32OrZero(SpanAttributes['ivy.memory_used_mb']) AS memory_used_mb,
+    toUInt32(toUInt64OrZero(ResourceAttributes['faas.max_memory']) / 1048576) AS memory_limit_mb,
+    SpanAttributes['ivy.failure.phase'] AS failure_phase,
+    SpanAttributes['ivy.synthetic'] = 'true' AS synthetic,
+    toFloat32OrZero(SpanAttributes['ivy.init_duration_ms']) AS init_duration_ms
 FROM ivy.otel_traces
 WHERE SpanAttributes['ivy.invocation'] = 'true';
 

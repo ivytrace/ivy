@@ -126,7 +126,8 @@ function errors(params: URLSearchParams): ErrorGroup[] {
       first_seen: list[list.length - 1].ts,
       last_seen: list[0].ts,
       sample_trace_id: list[0].trace_id,
-      kind: "error",
+      kind: "error" as const,
+      failure_kind: list[0].failure_kind,
     }))
     .concat(throttleGroups(params))
     .sort((a, b) => b.count - a.count);
@@ -145,6 +146,7 @@ function throttleGroups(params: URLSearchParams): ErrorGroup[] {
     last_seen: new Date(Math.max(...list.map((t) => t.minute))).toISOString(),
     sample_trace_id: null,
     kind: "throttle",
+    failure_kind: null,
   }));
 }
 

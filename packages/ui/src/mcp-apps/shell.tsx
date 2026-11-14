@@ -3,11 +3,12 @@ import type { App, McpUiDisplayMode, McpUiHostContext } from "@modelcontextproto
 import { useApp } from "@modelcontextprotocol/ext-apps/react";
 import { Maximize2, Minimize2 } from "lucide-react";
 
-import { ColdStart, InvocationStatus } from "@/components/common/status";
+import { ColdStart, InvocationStatus, MemoryUsage } from "@/components/common/status";
 import { ErrorBlock } from "@/components/trace/error-block";
+import { FailureNote } from "@/components/trace/failure-note";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Tooltipped } from "@/components/ui/tooltipped";
-import { getException } from "@/lib/spans/services";
+import { getException, invocationResources, spanFailureKind } from "@/lib/spans/services";
 import { findRootInvocation } from "@/lib/spans/tree";
 import type { Span, Trace } from "@/lib/spans/types";
 import { formatDuration, formatTimestamp } from "@/lib/utils/format";
@@ -74,6 +75,7 @@ function useViewState(name: string) {
 function Header({ data, invocation, actions }: { data: ViewData; invocation: Span; actions: ReactNode }) {
   const a = invocation.attributes;
   const exception = getException(invocation);
+  const res = invocationResources(invocation);
   return (
     <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
       <div className="min-w-0">
@@ -88,14 +90,18 @@ function Header({ data, invocation, actions }: { data: ViewData; invocation: Spa
             errorType={exception?.type}
             errorMessage={exception?.message}
             httpStatus={a["http.response.status_code"]}
+            failureKind={spanFailureKind(invocation)}
           />
           <span>{formatTimestamp(invocation.start)}</span>
           <span className="flex items-center gap-2 font-semibold text-foreground">
             {formatDuration(invocation.duration_ms)}
             {a["faas.coldstart"] === "true" && <ColdStart />}
           </span>
-          {a["ivy.memory_used_mb"] && <span>{a["ivy.memory_used_mb"]} MB</span>}
+          {res.billedDurationMs !== null && <span>billed {formatDuration(res.billedDurationMs)}</span>}
+          {res.initDurationMs !== null && <span>init {formatDuration(res.initDurationMs)}</span>}
+          {res.memoryUsedMb !== null && <MemoryUsage used={res.memoryUsedMb} limit={res.memoryLimitMb} />}
         </div>
+        <FailureNote invocation={invocation} className="mt-2" />
       </div>
       <div className="flex items-center gap-1">{actions}</div>
     </div>

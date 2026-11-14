@@ -56,6 +56,7 @@ const columns: ColumnDef<Invocation, unknown>[] = [
         errorType={row.original.error_type}
         errorMessage={row.original.error_message}
         httpStatus={row.original.http_status}
+        failureKind={row.original.failure_kind}
       />
     ),
   },
@@ -88,7 +89,7 @@ const columns: ColumnDef<Invocation, unknown>[] = [
     header: "Request ID",
     cell: ({ row }) => (
       <Link to={linkTo(row.original)} className="font-mono text-xs text-muted-foreground hover:text-foreground">
-        {row.original.request_id}
+        {row.original.request_id || <span className="font-sans italic">no request</span>}
       </Link>
     ),
   },

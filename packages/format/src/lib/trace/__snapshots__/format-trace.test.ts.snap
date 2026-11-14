@@ -35,6 +35,29 @@ trace 6af84d409a1b2c3d4e5f60718293a4b5 · request 8f1c2d3e-0a1b-4c5d-8e9f-a0b1c2
    +205ms             log error: Order failed: TypeError: Cannot read properties of undefined (reading 'id')"
 `;
 
+exports[`formatTrace > labels an init failure, says why there is no trace, and shows the log tail 1`] = `
+"reports-export · unknown · cold start · 213ms · ERROR (Init failed)
+trace 6af84d545e1f00d1e2f3a4b5c6d7e8f9 · no request · eu-west-1 · 2026-11-14T12:00:20.000Z · init 213ms · 1 span
+(no trace: the runtime never started the handler (init failed), only the platform report and log tail)
+
+   +0.0ms    213ms  reports-export [invocation] unknown  ERROR
+                      ! Runtime.ImportModuleError: Error: Cannot find module 'left-pad'
+   +180ms             log info: loading config from /var/task/config.json
+   +205ms             log error: Uncaught Exception {"errorType":"Runtime.ImportModuleError","errorMessage":"Error: Cannot find module 'left-pad'\\nRequire stack:\\n- /var/task/index.js\\n- /opt/nodejs/ivy/handler.mjs","stack":["Runtime.ImportModuleError: Error: Cannot find module 'left-pad'","Require stack:","- /var/task/index.js","…"
+`;
+
+exports[`formatTrace > labels an out-of-memory crash with memory used against the limit and billed duration 1`] = `
+"reports-export · Schedule · warm · 2380ms · ERROR (Out of memory)
+trace 6af84d5e0e0e1f1f2a2a3b3b4c4c5d5d · request 0b0e1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d · eu-west-1 · 2026-11-14T12:00:30.000Z · 128 MB used of 128 MB · billed 2381ms · 2 spans
+
+   +0.0ms   2380ms  reports-export [invocation] Schedule  ERROR
+                      ! Runtime.OutOfMemory: FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
+  +12.0ms    640ms    DynamoDB.Scan reports (1000 items returned)  ok
+  +15.0ms             log info: exporting 250000 rows
+  +2370ms             log error: <--- Last few GCs --->
+  +2375ms             log error: FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory"
+`;
+
 exports[`formatTrace > renders a failed API invocation 1`] = `
 "checkout-createOrder · API Gateway POST /orders → 500 · cold start · 212ms · ERROR
 trace 6af84d409a1b2c3d4e5f60718293a4b5 · request 8f1c2d3e-0a1b-4c5d-8e9f-a0b1c2d3e4f5 · eu-west-1 · 2026-11-14T12:00:00.000Z · 96 MB used · 4 spans
