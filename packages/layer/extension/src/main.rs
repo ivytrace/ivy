@@ -128,8 +128,28 @@ fn handle_connection(mut stream: TcpStream, store: &SpanStore) {
     let _ = http::write_response(&mut stream, status, &body);
 }
 
-fn start_server(port: u16, store: Arc<SpanStore>) -> std::io::Result<()> {
-    let listener = TcpListener::bind(("127.0.0.1", port))?;
+/// Binds the span intake on 127.0.0.1. Called before `register`: Lambda starts the runtime's init as
+/// soon as every extension has registered, and the tracer's hello must find the port open.
+fn bind_intake(port: u16) -> std::io::Result<TcpListener> {
+    TcpListener::bind(("127.0.0.1", port))
+}
+
+/// Binds the intake (when `intake_port` is set), then registers with up to 3 tries.
+#[allow(clippy::type_complexity)]
+fn bind_and_register(api: &str, name: &str, events: &[&str], intake_port: Option<u16>) -> (Option<std::io::Result<TcpListener>>, Result<(String, Option<String>), String>) {
+    let intake = intake_port.map(bind_intake);
+    let mut registered = register(api, name, events);
+    for _ in 0..2 {
+        if registered.is_ok() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+        registered = register(api, name, events);
+    }
+    (intake, registered)
+}
+
+fn serve_intake(listener: TcpListener, store: Arc<SpanStore>) -> std::io::Result<()> {
     thread::Builder::new().name("intake".into()).spawn(move || {
         for conn in listener.incoming() {
             let Ok(stream) = conn else { continue };
@@ -204,14 +224,11 @@ fn main() {
     };
 
     let events: &[&str] = if config.enabled { &["INVOKE", "SHUTDOWN"] } else { &[] };
-    let mut registered = register(&api, &name, events);
-    for _ in 0..2 {
-        if registered.is_ok() {
-            break;
-        }
-        thread::sleep(Duration::from_millis(10));
-        registered = register(&api, &name, events);
-    }
+    let store = Arc::new(SpanStore::default());
+    // Test-only: simulates a listener that opens late (the old register-then-bind order).
+    let intake_delay = std::env::var("IVY_TEST_INTAKE_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok()).filter(|ms| *ms > 0);
+    let intake_port = (config.enabled && intake_delay.is_none()).then_some(config.extension_port);
+    let (intake, registered) = bind_and_register(&api, &name, events, intake_port);
     let (id, account_id) = match registered {
         Ok(r) => r,
         Err(e) => {
@@ -229,17 +246,33 @@ fn main() {
         }
     }
 
-    let store = Arc::new(SpanStore::default());
-    if let Err(e) = start_server(config.extension_port, store.clone()) {
+    let served = match (intake, intake_delay) {
+        (Some(bound), _) => bound.and_then(|l| serve_intake(l, store.clone())),
+        (None, Some(ms)) => {
+            let (port, s) = (config.extension_port, store.clone());
+            thread::Builder::new().spawn(move || {
+                thread::sleep(Duration::from_millis(ms));
+                if let Err(e) = bind_intake(port).and_then(|l| serve_intake(l, s)) {
+                    log(&format!("could not listen on 127.0.0.1:{port}: {e}"));
+                }
+            }).map(|_| ())
+        }
+        (None, None) => Ok(()),
+    };
+    if let Err(e) = served {
         log(&format!("could not listen on 127.0.0.1:{}: {e}", config.extension_port));
     }
+    let mut telemetry_on = false;
     if config.telemetry {
         let started = Instant::now();
         let subscribed = start_telemetry_server(config.telemetry_port, store.clone())
             .map_err(|e| format!("could not listen on port {}: {e}", config.telemetry_port))
             .and_then(|_| subscribe_telemetry(&api, &id, config.telemetry_port));
         match subscribed {
-            Ok(()) => debug(&format!("subscribed to telemetry in {} µs", started.elapsed().as_micros())),
+            Ok(()) => {
+                telemetry_on = true;
+                debug(&format!("subscribed to telemetry in {} µs", started.elapsed().as_micros()))
+            }
             Err(e) => debug(&format!("telemetry unavailable ({} µs): {e}", started.elapsed().as_micros())),
         }
     }
@@ -262,7 +295,8 @@ fn main() {
     );
     // The tracer announces itself without blocking init, so its hello can land just after the first
     // INVOKE. With the exec wrapper configured a tracer is expected: give it a moment to say hello.
-    let mut expect_hello = std::env::var("AWS_LAMBDA_EXEC_WRAPPER").is_ok_and(|w| w.ends_with("/ivy-wrapper"));
+    let tracer_expected = std::env::var("AWS_LAMBDA_EXEC_WRAPPER").is_ok_and(|w| w.ends_with("/ivy-wrapper"));
+    let mut expect_hello = tracer_expected;
     let mut queue = ExportQueue::new(exporter, config.max_queue_spans, Box::new(move || started.elapsed().as_millis() as u64), Box::new(log));
 
     loop {
@@ -295,7 +329,10 @@ fn main() {
             }
         }
         expect_hello = false;
-        if let Some(request_id) = event.request_id.as_deref().filter(|_| store.is_attached()) {
+        // With the wrapper a tracer is expected even if its hello is late or was lost: its spans count as a
+        // hello. With telemetry the wait ends when the runtime is done, so a missing tracer costs little.
+        let wait_for_spans = store.is_attached() || (tracer_expected && telemetry_on);
+        if let Some(request_id) = event.request_id.as_deref().filter(|_| wait_for_spans) {
             let wait_ms = (event.deadline_ms - epoch_ms() + WAIT_GRACE_MS).max(0) as u64;
             if !store.wait_for(request_id, Duration::from_millis(wait_ms)) {
                 debug(&format!("no final spans for {request_id}"));
@@ -310,5 +347,31 @@ fn main() {
         if queue.size() > 0 {
             queue.flush(config.flush_budget_ms, false);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_intake_listens_before_register_is_sent() {
+        let api = TcpListener::bind("127.0.0.1:0").unwrap();
+        let api_addr = api.local_addr().unwrap().to_string();
+        let intake_port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let fake_api = thread::spawn(move || {
+            let (mut stream, _) = api.accept().unwrap();
+            let msg = http::read_message(&mut BufReader::new(stream.try_clone().unwrap()), false, 1 << 20).unwrap();
+            assert_eq!(msg.route(), ("POST", "/2020-01-01/extension/register"));
+            // What the runtime's init would do as soon as registration completes: say hello.
+            let reachable = TcpStream::connect(("127.0.0.1", intake_port)).is_ok();
+            let resp = "HTTP/1.1 200 OK\r\nLambda-Extension-Identifier: ext-1\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
+            stream.write_all(resp.as_bytes()).unwrap();
+            reachable
+        });
+        let (intake, registered) = bind_and_register(&api_addr, "ivy-extension", &["INVOKE"], Some(intake_port));
+        assert_eq!(registered.unwrap().0, "ext-1");
+        assert!(intake.unwrap().is_ok());
+        assert!(fake_api.join().unwrap(), "intake port was not open when register was sent");
     }
 }

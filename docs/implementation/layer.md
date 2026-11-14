@@ -37,8 +37,21 @@ calls only exist there). Exporting is done by the extension:
   first `INVOKE`; when `AWS_LAMBDA_EXEC_WRAPPER` points at `ivy-wrapper` the extension expects a
   tracer and waits up to 500 ms for its hello at the first `INVOKE` (in parallel with the
   handler, so it delays nothing in practice). Without the wrapper the extension never blocks.
-- If the hello fails (extension missing), the tracer falls back to exporting directly with the
-  same queue, fire-and-forget after the response.
+- **Startup order.** The extension binds its intake on 127.0.0.1 *before* it calls `register`.
+  Lambda starts the runtime's init as soon as every extension has registered, so binding afterwards
+  let a fast tracer's hello reach a closed port. That race hit real cold starts: the tracer then
+  switched to exporting directly from the runtime, which Lambda freezes right after the response, so
+  nothing was delivered, and the extension, without a hello, did not wait for spans either. Binding
+  first costs nothing measurable.
+- **When the hello fails anyway.** If the exec wrapper is active and `/opt/extensions/ivy-extension`
+  exists, the tracer never switches to direct export: it repeats the hello once at the start of the
+  first invocation and always hands spans to the intake, retrying the connection briefly (50/150/300 ms).
+  A batch that still cannot be delivered is reported with one `[ivy]` line, even without `IVY_DEBUG`.
+  On the extension side a `/spans` batch counts as a hello, and with the wrapper configured and the
+  Telemetry API available it waits for each invocation's spans even when no hello came (the wait ends
+  when the platform reports the runtime done). Direct export is only used without the extension.
+  The e2e case `late-intake` opens the intake 400 ms after registering (test-only
+  `IVY_TEST_INTAKE_DELAY_MS`) and checks that spans still go through the extension.
 
 Why an external extension rather than only in-process flushing: an in-process flush racing the
 freeze would either delay the response or be frozen mid-request, and only external extensions

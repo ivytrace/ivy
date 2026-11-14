@@ -36,11 +36,70 @@ export function helloExtension(port: number, timeoutMs = 300): Promise<boolean> 
   });
 }
 
-export async function sendToExtension(port: number, batch: SpanBatch, timeoutMs = 1000): Promise<boolean> {
-  try {
-    const res = await post(`${base(port)}/spans`, JSON.stringify(batch), { timeoutMs, keepAlive: false });
-    return res.status === 200;
-  } catch {
-    return false;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Hands a batch to the extension's intake. Connection errors are retried briefly (the intake may
+ * open a moment after init started); a non-200 answer is not.
+ */
+export async function sendToExtension(port: number, batch: SpanBatch, timeoutMs = 1000, retryDelaysMs = [50, 150, 300]): Promise<boolean> {
+  const body = JSON.stringify(batch);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await post(`${base(port)}/spans`, body, { timeoutMs, keepAlive: false });
+      return res.status === 200;
+    } catch {
+      if (attempt >= retryDelaysMs.length) return false;
+      await sleep(retryDelaysMs[attempt]);
+    }
+  }
+}
+
+/** True when the layer's exec wrapper is active and the extension is installed next to it. */
+export function extensionInstalled(
+  env: NodeJS.ProcessEnv = process.env,
+  exists = (p: string) => process.getBuiltinModule('node:fs').existsSync(p),
+): boolean {
+  return !!env.AWS_LAMBDA_EXEC_WRAPPER?.endsWith('/ivy-wrapper') && exists('/opt/extensions/ivy-extension');
+}
+
+export interface ExtensionLinkOptions {
+  port: number;
+  /** The extension is installed: never fall back to exporting directly, even if the hello fails. */
+  expected: boolean;
+  log?: (msg: string) => void;
+  hello?: (port: number) => Promise<boolean>;
+}
+
+/**
+ * Decides where spans go. When the extension is installed spans always go to its intake, and a hello
+ * that failed at init (the intake not open yet) is repeated at the first invocation. Without the
+ * extension, a failed hello means exporting directly.
+ */
+export class ExtensionLink {
+  /** Resolves to true when spans should go to the extension. */
+  readonly viaExtension: Promise<boolean>;
+  private helloOk = false;
+  private retried = false;
+  private hello: (port: number) => Promise<boolean>;
+
+  constructor(private opts: ExtensionLinkOptions) {
+    this.hello = opts.hello ?? helloExtension;
+    this.viaExtension = this.hello(opts.port).then((ok) => {
+      this.helloOk = ok;
+      if (ok) opts.log?.('connected to ivy extension');
+      else opts.log?.(opts.expected ? 'extension not reachable yet, will retry' : 'extension not reachable, exporting directly');
+      return ok || opts.expected;
+    });
+  }
+
+  /** At the start of an invocation: repeats a failed hello once, so the extension waits for this invocation's spans. */
+  onInvocationStart(): void {
+    if (this.helloOk || this.retried || !this.opts.expected) return;
+    this.retried = true;
+    this.hello(this.opts.port).then((ok) => {
+      this.helloOk ||= ok;
+      this.opts.log?.(ok ? 'connected to ivy extension (retry)' : 'extension still not reachable');
+    });
   }
 }

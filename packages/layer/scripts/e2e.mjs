@@ -149,6 +149,9 @@ try {
   const aiV7 = startContainer('ai-v7', 9109, aiDir('v7'), 'index.handler');
   const importError = startContainer('importerror', 9110, 'failures', 'missing.handler');
   const oom = startContainer('oom', 9111, 'failures', 'oom.handler', { NODE_OPTIONS: '--max-old-space-size=32' });
+  // The extension's intake opens 400 ms after it registered (test-only switch): the tracer's hello at init
+  // fails, as in the production startup race, and spans must still reach the extension.
+  const lateIntake = startContainer('late-intake', 9112, 'cjs', 'index.handler', { IVY_TEST_INTAKE_DELAY_MS: '400' });
   const baseline = startContainer('baseline', 9106, 'cjs', 'index.handler', { AWS_LAMBDA_EXEC_WRAPPER: '', IVY_ENDPOINT: '' }, { layer: false });
 
   console.log('invoking…');
@@ -166,6 +169,7 @@ try {
   };
   results.importError = await invoke(importError, {});
   results.oom = await invoke(oom, {});
+  results.lateIntake = await invoke(lateIntake, apiGwV2);
   for (const [k, r] of Object.entries(results)) console.log(`  ${k.padEnd(9)} ${String(r.ms).padStart(5)}ms  ${r.body.slice(0, 110)}`);
 
   check(JSON.parse(results.warm.body).statusCode === 200, 'handler result passed through unchanged');
@@ -252,6 +256,11 @@ try {
     check(
       !!bundledDdb && bundledDdb.name === 'DynamoDB.GetItem' && attr(bundledDdb, 'rpc.service') === 'DynamoDB' && attr(bundledDdb, 'aws.dynamodb.table_names')?.[0] === 'bundled-table' && attr(bundledDdb, 'aws.request_id') === 'FAKE-REQ-1',
       'bundled SDK: AWS span derived from the signed HTTP request',
+    );
+    const lateLog = logs.get('late-intake').join('');
+    check(
+      rootsBy('late-intake').length === 1 && /extension not reachable yet/.test(lateLog) && !/exporting directly/.test(lateLog),
+      'intake opened late: spans still went through the extension (no direct export)',
     );
     const timeoutRoot = rootsBy('timeout')[0];
     check(!!timeoutRoot && attr(timeoutRoot, 'error.type') === 'Timeout', 'timeout recorded with error.type=Timeout');

@@ -1,5 +1,5 @@
 import { loadConfig } from './lib/config/config.js';
-import { helloExtension, sendToExtension } from './lib/extension/client.js';
+import { ExtensionLink, extensionInstalled, sendToExtension } from './lib/extension/client.js';
 import { ExportQueue } from './lib/export/queue.js';
 import { instrumentAwsSdk } from './lib/instrumentation/aws-sdk.js';
 import { instrumentConsole } from './lib/instrumentation/console.js';
@@ -37,10 +37,7 @@ async function setup(): Promise<Function> {
 }
 
 function createTracer(): Tracer {
-  const viaExtension = helloExtension(config.extensionPort).then((ok) => {
-    log(ok ? 'connected to ivy extension' : 'extension not reachable, exporting directly');
-    return ok;
-  });
+  const link = new ExtensionLink({ port: config.extensionPort, expected: extensionInstalled(), log });
   let queue: ExportQueue | undefined;
   const exportDirectly = (batch: SpanBatch) => {
     queue ??= new ExportQueue({
@@ -54,16 +51,20 @@ function createTracer(): Tracer {
     if (batch.final) queue.flush(config.flushBudgetMs).catch(() => {});
   };
   const sink = (batch: SpanBatch) => {
-    viaExtension.then((ok) => {
+    link.viaExtension.then((ok) => {
       if (!ok) return exportDirectly(batch);
       sendToExtension(config.extensionPort, batch).then((sent) => {
-        if (!sent) log(`could not hand spans for ${batch.requestId} to the extension`);
+        if (!sent) originalWarn(`[ivy] could not hand spans for ${batch.requestId} to the Ivy extension`);
       });
     });
   };
 
   const tracer = new Tracer(config, sink, log);
-  tracer.onInvocationStart = instrumentHttp(tracer);
+  const checkHttps = instrumentHttp(tracer);
+  tracer.onInvocationStart = () => {
+    link.onInvocationStart();
+    checkHttps();
+  };
   instrumentFetch(tracer);
   instrumentAwsSdk(tracer);
   if (config.captureLogs) instrumentConsole(tracer);
