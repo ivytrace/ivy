@@ -6,6 +6,18 @@ Successor to `includable/trace-stack`.
 
 **Status: early v1, under active development.**
 
+## Development
+
+```sh
+pnpm install
+pnpm dev        # ClickHouse + collector in Docker, API + dashboard with hot reload
+                # dashboard: http://localhost:5173, API: :3000, OTLP: :4318
+pnpm --filter loadgen start -- --count 5000 --backfill 24   # sample data
+pnpm dev:mock   # dashboard only, with fixture data (no Docker)
+pnpm up         # full production-like stack in Docker (http://localhost:3000)
+pnpm down       # stop containers (data is kept in volumes)
+```
+
 ## Layout
 
 ```
