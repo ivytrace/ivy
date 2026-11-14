@@ -5,7 +5,6 @@ import { AlertTriangle, CreditCard, Loader2, OctagonX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { billingSessionUrl, type BillingAction } from "@/lib/api/billing";
 import type { Usage } from "@/lib/api/types";
-import { USAGE_PATH } from "@/lib/links/links";
 import { barPercent, usageState, type UsageLevel } from "@/lib/usage/state";
 import { cn } from "@/lib/utils/cn";
 
@@ -35,8 +34,9 @@ export function UsageBar({ usage }: { usage: Usage }) {
   );
 }
 
-/** The quota message shown dashboard-wide (and on the usage page) at 80% and at 100%. */
-export function QuotaNotice({ usage, compact = false }: { usage: Usage; compact?: boolean }) {
+/** The quota message at 80% and 100%: app-wide (compact, with `link` to the usage page) and on the usage page. */
+export function QuotaNotice({ usage, link }: { usage: Usage; link?: string }) {
+  const compact = !!link;
   const { banner, ratio } = usageState(usage);
   if (!banner) return null;
   const quota = formatCount(usage.limits.monthly_trace_quota ?? 0);
@@ -56,8 +56,8 @@ export function QuotaNotice({ usage, compact = false }: { usage: Usage; compact?
         {blocked
           ? `Monthly trace quota reached (${quota}). New traces are rejected until the month ends.`
           : `${Math.floor((ratio ?? 0) * 100)}% of this month's ${quota} traces used.`}{" "}
-        {compact && (
-          <Link to={USAGE_PATH} className="underline underline-offset-2 hover:text-foreground">
+        {link && (
+          <Link to={link} className="underline underline-offset-2 hover:text-foreground">
             {blocked ? "Upgrade" : "See usage"}
           </Link>
         )}
@@ -67,11 +67,10 @@ export function QuotaNotice({ usage, compact = false }: { usage: Usage; compact?
 }
 
 /** "Upgrade" (Stripe Checkout) or "Manage billing" (Customer Portal) through the hosted billing service. */
-export function BillingButton({ billingUrl, usage }: { billingUrl: string; usage: Usage }) {
+export function BillingButton({ billingUrl, usage, action }: { billingUrl: string; usage: Usage; action: BillingAction }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const paid = usage.limits.source === "workspace" && usage.limits.over_quota === "allow";
-  const action: BillingAction = paid ? "portal" : "checkout";
+  const paid = action === "portal";
 
   const go = async () => {
     setBusy(true);

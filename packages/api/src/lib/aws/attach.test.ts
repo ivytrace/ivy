@@ -18,6 +18,7 @@ function fn(overrides: Partial<LambdaFunction> = {}): LambdaFunction {
     env: { TABLE: 'orders' },
     envError: '',
     revisionId: 'rev-1',
+    lastModified: '',
     tags: {},
     ...overrides,
   };
@@ -75,7 +76,7 @@ describe('planFunction', () => {
     expect(planFunction(fn({ tags: { 'ivy:component': 'collector' } }), desired)).toMatchObject({ state: 'unsupported', update: null });
   });
 
-  it('opts out by tag and by dashboard setting, detaching cleanly', () => {
+  it('opts out by tag, and detaches cleanly when not selected (available) or excluded', () => {
     const traced = fn({ layers: [OTHER(1), LAYER], env: { TABLE: 'x', IVY_REDACT_KEYS: 'secret', ...IVY_ENV } });
     const expected = { layers: [OTHER(1)], env: { TABLE: 'x', IVY_REDACT_KEYS: 'secret' } };
 
@@ -83,10 +84,13 @@ describe('planFunction', () => {
     expect(byTag).toMatchObject({ state: 'opted_out', update: expected });
     expect(byTag.reason).toContain('ivy:trace=false');
 
-    const byDashboard = planFunction(traced, { ...desired, enabled: false });
-    expect(byDashboard).toMatchObject({ state: 'opted_out', reason: 'Turned off in the dashboard', update: expected });
+    const excluded = planFunction(traced, { ...desired, enabled: false, offState: 'opted_out', offReason: 'Excluded in the dashboard' });
+    expect(excluded).toMatchObject({ state: 'opted_out', reason: 'Excluded in the dashboard', update: expected });
 
-    expect(planFunction(fn(), { ...desired, enabled: false })).toEqual({ state: 'opted_out', reason: 'Turned off in the dashboard', update: null });
+    const unmatched = planFunction(traced, { ...desired, enabled: false, offState: 'available', offReason: 'Not selected for tracing' });
+    expect(unmatched).toMatchObject({ state: 'available', update: expected });
+
+    expect(planFunction(fn(), { ...desired, enabled: false, offState: 'available' })).toEqual({ state: 'available', reason: 'Not selected for tracing', update: null });
   });
 
   it('keeps a foreign exec wrapper when detaching', () => {
@@ -116,10 +120,11 @@ describe('fromConfiguration', () => {
         Layers: [{ Arn: LAYER }],
         Environment: { Variables: { A: '1' } },
         RevisionId: 'r',
+        LastModified: '2026-11-10T09:12:44.000+0000',
       },
       { team: 'x' },
     );
-    expect(f).toMatchObject({ name: 'a', layers: [LAYER], env: { A: '1' }, revisionId: 'r', tags: { team: 'x' }, packageType: 'Zip' });
+    expect(f).toMatchObject({ name: 'a', layers: [LAYER], env: { A: '1' }, revisionId: 'r', lastModified: '2026-11-10T09:12:44.000+0000', tags: { team: 'x' }, packageType: 'Zip' });
     expect(fromConfiguration({ FunctionName: 'b' }).env).toEqual({});
     expect(fromConfiguration({ FunctionName: 'c', Environment: { Error: { ErrorCode: 'KMSAccessDenied' } } }).env).toBeNull();
   });

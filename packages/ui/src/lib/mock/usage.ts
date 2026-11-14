@@ -17,13 +17,13 @@ const FIXTURES: Record<MockUsage, { traces: number; limits: WorkspaceLimits }> =
   unlimited: { traces: 1_204_331, limits: UNLIMITED },
 };
 
-export function mockUsage(kind: MockUsage): Usage {
+export function mockUsage(kind: MockUsage, workspace = "ten_mock"): Usage {
   const { traces, limits } = FIXTURES[kind] ?? FIXTURES.free;
   const now = new Date(NOW);
   const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
   const end = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
   return {
-    workspace: "ten_mock",
+    workspace,
     month: new Date(start).toISOString().slice(0, 7),
     period: { start: new Date(start).toISOString(), end: new Date(end).toISOString() },
     traces,

@@ -22,21 +22,23 @@ Environment variables (set in your shell or a `deploy/.env` file):
 | `IVY_OIDC_AUDIENCE` | the client ID | expected `aud` of access tokens (the API's resource identifier) |
 | `IVY_OIDC_SCOPES` | `openid email profile offline_access` | scopes the UI asks for |
 | `IVY_OIDC_ALLOW_AGENTS` | `true` | also accept tokens of agents registered under the client (`agt_<client>_…`) |
-| `IVY_SINGLE_TENANT` | `1` | every signed-in user works in the `default` tenant; `0` gives each new user a tenant of their own (hosted) |
-| `IVY_INGEST_API_KEY` | `dev-ingest-key` | key of the `default` tenant, created on startup |
+| `IVY_SINGLE_TENANT` | `1` | every signed-in user works in the `default` workspace; `0` (with OIDC) turns on multiple workspaces, members and invitations (hosted; `docs/implementation/workspaces-projects.md`) |
+| `IVY_SMTP_URL`, `IVY_EMAIL_FROM` | | send invitation emails over SMTP (e.g. `smtps://USER:PASS@email-smtp.eu-west-1.amazonaws.com:465`, `Ivy <noreply@ivytrace.dev>`); unset, the UI shows the invite link to copy |
+| `IVY_INGEST_API_KEY` | `dev-ingest-key` | key of the `default` workspace's default project, created on startup |
 | `IVY_COLLECTOR_TOKEN` | `dev-collector-token` | shared secret between the router and the internal collector; set your own |
-| `IVY_SECRET_KEY` | | encrypts per-tenant auto-trace keys; needed for auto-trace of tenants other than `default` |
+| `IVY_SECRET_KEY` | | encrypts the per-project auto-trace keys; needed for auto-trace into any project other than the default workspace's default project |
 | `IVY_SHARDS` | | shard map for several cells (`tenancy.md`); one shard by default |
 | `IVY_INGEST_TRUST_PROXY`, `IVY_INGEST_MAX_BODY_BYTES` | off, 10 MiB | router: client IP from `X-Forwarded-For`; body limit |
 | `IVY_RETENTION_DAYS` | `30` | applied when the ClickHouse volume is first created |
 | `IVY_CLICKHOUSE_USER` / `IVY_CLICKHOUSE_PASSWORD` | `ivy` / `ivy` | |
 | `IVY_INGEST_PUBLIC_URL` | | ingest router URL that Lambda functions can reach; needed for auto-trace (`docs/implementation/auto-trace.md`) |
 | `IVY_AWS_PRINCIPAL_ARN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION` | | Ivy's AWS identity for assuming the roles in connected accounts |
-| `IVY_CFN_TEMPLATE_URL`, `IVY_PUBLIC_URL`, `IVY_AWS_DEFAULT_REGION`, `IVY_AWS_SYNC_INTERVAL_SECONDS` | | optional auto-trace settings |
+| `IVY_PUBLIC_URL`, `IVY_AWS_DEFAULT_REGION`, `IVY_AWS_SYNC_INTERVAL_SECONDS` | | optional auto-trace settings |
+| `IVY_HOOKS_DIR` | `/etc/ivy/hooks` | executable hooks, e.g. `publish-cfn-template` for one-click CloudFormation links (`docs/implementation/hooks.md`; examples in `deploy/hooks.example/`) |
 | `IVY_MCP_RESOURCE` | `$IVY_PUBLIC_URL/mcp` | canonical URL of the MCP endpoint, the `aud` of MCP tokens when OIDC is on (`docs/implementation/mcp.md`) |
 | `IVY_INTERNAL_API_TOKEN` | | enables the internal admin API (`/internal/*`: workspace limits, usage, members) for an operator's billing service; ≥ 32 characters (`docs/implementation/limits.md`) |
 | `IVY_BILLING_URL` | | billing service base URL; the dashboard's Usage page then shows Upgrade / Manage billing |
-| `IVY_QUOTA_REFRESH_SECONDS`, `IVY_QUOTA_RETRY_AFTER_SECONDS`, `IVY_UPGRADE_URL` | 60, 300, `$IVY_PUBLIC_URL/settings/usage` | router: monthly trace quotas |
+| `IVY_QUOTA_REFRESH_SECONDS`, `IVY_QUOTA_RETRY_AFTER_SECONDS`, `IVY_UPGRADE_URL` | 60, 300, `$IVY_PUBLIC_URL/w/<slug>/settings/usage` | router: monthly trace quotas |
 | `IVY_BUILD_UI` | `auto` | `false` builds an API-only image |
 | `IVY_API_PORT`, `IVY_OTLP_HTTP_PORT`, `IVY_CLICKHOUSE_HTTP_PORT` | 3000, 4318, 8123 | host ports |
 
@@ -65,19 +67,23 @@ curl -i -X POST localhost:4318/v1/traces -H 'content-type: application/json' -d 
 curl -i -X POST localhost:4318/v1/traces -H 'content-type: application/json' -H 'x-api-key: nope' -d '{}'         # 401
 ```
 
-## Tenants and keys
+## Workspaces, projects and keys
 
-The `default` tenant and its key (`IVY_INGEST_API_KEY`) are created on startup. More tenants:
+The `default` workspace, its `default` project and that project's key (`IVY_INGEST_API_KEY`) are created on
+startup. Projects and their ingest keys are managed in the dashboard (Settings → Projects) or the API. From the
+command line:
 
 ```sh
 docker compose -f deploy/docker-compose.yml exec api node tenants.mjs create "Acme"   # prints its key once
 docker compose -f deploy/docker-compose.yml exec api node tenants.mjs list
 docker compose -f deploy/docker-compose.yml exec api node tenants.mjs keys <tenant>
+docker compose -f deploy/docker-compose.yml exec api node tenants.mjs projects <tenant>
+docker compose -f deploy/docker-compose.yml exec api node tenants.mjs create-key <tenant> [name] --project <slug>
 docker compose -f deploy/docker-compose.yml exec api node tenants.mjs revoke-key <tenant> <key id>
 ```
 
-(From a checkout: `pnpm --filter @ivy/api tenants …`.) Until there is user login, the dashboard shows the
-`default` tenant. Per-tenant ingest counts: `docker compose -f deploy/docker-compose.yml exec ingest wget -qO-
+(From a checkout: `pnpm --filter @ivy/api tenants …`.) With auth off or `IVY_SINGLE_TENANT=1` the dashboard shows
+only the `default` workspace. Per-tenant ingest counts: `docker compose -f deploy/docker-compose.yml exec ingest wget -qO-
 http://127.0.0.1:4320/stats`.
 
 ## Limits
@@ -100,8 +106,18 @@ Over the quota, ingest answers 429 with `Retry-After`. The dashboard shows usage
 The schema is idempotent; apply it again after pulling changes (`pnpm dev` does this on every start):
 
 ```sh
-docker compose -f deploy/docker-compose.yml exec clickhouse /docker-entrypoint-initdb.d/init.sh
+pnpm db:migrate   # = docker compose -f deploy/docker-compose.yml exec -T clickhouse /docker-entrypoint-initdb.d/init.sh
 ```
+
+**Volumes from before workspaces and projects** can't be updated in place (pre-release): `init.sh` stops with an
+error, and a one-off reset is needed. It **deletes all data**, then recreates the schema and restarts the API and
+ingest router, which recreate the `default` workspace, its project and the `IVY_INGEST_API_KEY` key:
+
+```sh
+pnpm db:reset
+```
+
+See `docs/implementation/storage.md`.
 
 ## Query ClickHouse
 

@@ -1,11 +1,10 @@
 import type { ClickHouseClient } from '@clickhouse/client';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../../app.js';
 import { setClientsForTests } from '../../lib/clickhouse/client.js';
-import { setMemberListerForTests } from '../../lib/internal/members.js';
 import { memoryLimitsStore, setLimitsStore } from '../../lib/limits/store.js';
 import { clearUsageCacheForTests } from '../../lib/limits/usage.js';
-import { clickhouseTenancyStore, memoryTenancyStore, setTenancyStore } from '../../lib/tenancy/store.js';
+import { tenancyStore, type TenantRecord } from '../../lib/tenancy/store.js';
+import { appFor, resetTenancyForTests, testWorkspace } from '../../lib/tenancy/testing.js';
 
 const TOKEN = 'internal-token-0123456789abcdefghijklmnop';
 
@@ -14,30 +13,27 @@ const fake = {
   query: async () => ({ json: async () => trafficRows }),
 } as unknown as ClickHouseClient;
 
-const app = createApp({ uiDir: '/nonexistent', tenants: { resolve: async () => ({ id: 'ten_a', shardId: 'shard-1' }) } });
+let acme: TenantRecord;
+let beta: TenantRecord;
+let app: Awaited<ReturnType<typeof appFor>>;
 
 beforeEach(async () => {
-  const tenants = memoryTenancyStore();
-  await tenants.saveTenant({ id: 'ten_a', name: 'Acme', shard_id: 'shard-1', created_at: 1 });
-  await tenants.saveTenant({ id: 'ten_b', name: 'Beta', shard_id: 'shard-1', created_at: 2 });
-  setTenancyStore(tenants);
+  await resetTenancyForTests();
+  acme = await testWorkspace('Acme', 'acme');
+  beta = await testWorkspace('Beta', 'beta');
+  await tenancyStore().saveMember({ tenant_id: acme.id, sub: 'idn_owner', email: 'owner@acme.example', role: 'owner', created_at: 1 });
+  await tenancyStore().saveMember({ tenant_id: acme.id, sub: 'idn_dev', email: '', role: 'member', created_at: 2 });
   setLimitsStore(memoryLimitsStore());
-  setClientsForTests({ shard: fake, control: fake });
-  setMemberListerForTests(async (id) =>
-    id === 'ten_a' ? [{ sub: 'idn_owner', email: 'owner@acme.test', role: 'owner' }, { sub: 'idn_dev', email: '', role: 'member' }] : [],
-  );
+  setClientsForTests({ shard: fake });
   trafficRows = [];
   clearUsageCacheForTests();
   vi.stubEnv('IVY_INTERNAL_API_TOKEN', TOKEN);
+  app = await appFor(acme, 'member');
 });
 
 afterEach(() => vi.unstubAllEnvs());
 
-afterAll(() => {
-  setTenancyStore(clickhouseTenancyStore);
-  setClientsForTests(undefined);
-  setMemberListerForTests(undefined);
-});
+afterAll(() => setClientsForTests(undefined));
 
 const call = (method: string, path: string, body?: unknown, token: string | null = TOKEN) =>
   app.request(path, {
@@ -65,72 +61,74 @@ describe('internal API auth', () => {
     const wrong = await call('GET', '/internal/workspaces', undefined, TOKEN.slice(0, -1) + 'X');
     expect(wrong.status).toBe(401);
     expect(wrong.headers.get('www-authenticate')).toBe('Bearer');
-    expect((await call('PUT', '/internal/workspaces/ten_a/limits', { plan: 'x' }, 'nope')).status).toBe(401);
+    expect((await call('PUT', `/internal/workspaces/${acme.id}/limits`, { plan: 'x' }, 'nope')).status).toBe(401);
   });
 
-  it('is not reachable with a user session: /api auth does not apply, and /api has no internal routes', async () => {
+  it('is not reachable under /api', async () => {
     expect((await call('GET', '/api/internal/workspaces', undefined, null)).status).toBe(404);
   });
 });
 
 describe('internal API', () => {
   it('limits CRUD: unset by default, PUT, GET, DELETE', async () => {
-    const before = await (await call('GET', '/internal/workspaces/ten_a')).json();
-    expect(before).toMatchObject({ workspace: 'ten_a', name: 'Acme', traces: 0, blocked: false, limits: { source: 'unset', monthly_trace_quota: null } });
+    const before = await (await call('GET', `/internal/workspaces/${acme.id}`)).json();
+    expect(before).toMatchObject({ workspace: acme.id, name: 'Acme', traces: 0, blocked: false, limits: { source: 'unset', monthly_trace_quota: null } });
 
-    const put = await call('PUT', '/internal/workspaces/ten_a/limits', { plan: 'Free', monthly_trace_quota: 100_000, over_quota: 'block' });
+    const put = await call('PUT', `/internal/workspaces/${acme.id}/limits`, { plan: 'Free', monthly_trace_quota: 100_000, over_quota: 'block' });
     expect(put.status).toBe(200);
-    expect(await put.json()).toMatchObject({ workspace: 'ten_a', limits: { plan: 'Free', monthly_trace_quota: 100_000, over_quota: 'block', source: 'workspace' } });
+    expect(await put.json()).toMatchObject({ workspace: acme.id, limits: { plan: 'Free', monthly_trace_quota: 100_000, over_quota: 'block', source: 'workspace' } });
 
     trafficRows = [{ traces: 100_000 }];
-    clearUsageCacheForTests();
-    const after = await (await call('GET', '/internal/workspaces/ten_a')).json();
+    const after = await (await call('GET', `/internal/workspaces/${acme.id}`)).json();
     expect(after).toMatchObject({ traces: 100_000, blocked: true, limits: { plan: 'Free' } });
 
-    const del = await call('DELETE', '/internal/workspaces/ten_a/limits');
+    const del = await call('DELETE', `/internal/workspaces/${acme.id}/limits`);
     expect(await del.json()).toMatchObject({ limits: { source: 'unset' } });
   });
 
   it('validates limits and unknown workspaces', async () => {
-    expect((await call('PUT', '/internal/workspaces/ten_a/limits', { over_quota: 'drop' })).status).toBe(400);
-    expect((await call('PUT', '/internal/workspaces/ten_a/limits')).status).toBe(400);
+    expect((await call('PUT', `/internal/workspaces/${acme.id}/limits`, { over_quota: 'drop' })).status).toBe(400);
+    expect((await call('PUT', `/internal/workspaces/${acme.id}/limits`)).status).toBe(400);
     expect((await call('PUT', '/internal/workspaces/ten_nope/limits', { plan: 'x' })).status).toBe(404);
     expect((await call('GET', '/internal/workspaces/ten_nope')).status).toBe(404);
-    expect((await call('GET', '/internal/workspaces/ten_a?month=2026-13')).status).toBe(400);
+    expect((await call('GET', `/internal/workspaces/${acme.id}?month=2026-13`)).status).toBe(400);
   });
 
   it('lists every workspace with its month usage, or only those without limits', async () => {
-    await call('PUT', '/internal/workspaces/ten_b/limits', { plan: 'Pro', monthly_trace_quota: 100_000, over_quota: 'allow' });
-    trafficRows = [{ tenant_id: 'ten_b', traces: 250_000 }];
+    await call('PUT', `/internal/workspaces/${beta.id}/limits`, { plan: 'Pro', monthly_trace_quota: 100_000, over_quota: 'allow' });
+    trafficRows = [{ tenant_id: beta.id, traces: 250_000 }];
     const list = await (await call('GET', '/internal/workspaces?month=2026-10')).json();
     expect(list.month).toBe('2026-10');
-    expect(list.items).toEqual([
-      expect.objectContaining({ workspace: 'ten_a', name: 'Acme', traces: 0, limits: expect.objectContaining({ source: 'unset' }) }),
-      expect.objectContaining({ workspace: 'ten_b', traces: 250_000, blocked: false, limits: expect.objectContaining({ plan: 'Pro' }) }),
-    ]);
+    expect(list.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ workspace: acme.id, name: 'Acme', traces: 0, limits: expect.objectContaining({ source: 'unset' }) }),
+        expect.objectContaining({ workspace: beta.id, traces: 250_000, blocked: false, limits: expect.objectContaining({ plan: 'Pro' }) }),
+      ]),
+    );
     const unset = await (await call('GET', '/internal/workspaces?limits=unset')).json();
-    expect(unset.items.map((i: { workspace: string }) => i.workspace)).toEqual(['ten_a']);
+    expect(unset.items.map((i: { workspace: string }) => i.workspace).sort()).toEqual([acme.id, 'default'].sort());
   });
 
-  it('lists members with their roles', async () => {
-    const res = await (await call('GET', '/internal/workspaces/ten_a/members')).json();
+  it('lists members with their roles, from the workspace store', async () => {
+    const res = await (await call('GET', `/internal/workspaces/${acme.id}/members`)).json();
     expect(res).toEqual({
-      workspace: 'ten_a',
+      workspace: acme.id,
       items: [
-        { sub: 'idn_owner', email: 'owner@acme.test', role: 'owner' },
+        { sub: 'idn_owner', email: 'owner@acme.example', role: 'owner' },
         { sub: 'idn_dev', email: '', role: 'member' },
       ],
     });
   });
 });
 
-describe('GET /api/usage and /api/config', () => {
-  it("returns the caller's workspace usage", async () => {
-    await call('PUT', '/internal/workspaces/ten_a/limits', { plan: 'Free', monthly_trace_quota: 100, over_quota: 'block' });
+describe('workspace usage and /api/config', () => {
+  it('GET /api/w/:workspace/usage: any member, all projects, with the limits', async () => {
+    await call('PUT', `/internal/workspaces/${acme.id}/limits`, { plan: 'Free', monthly_trace_quota: 100, over_quota: 'block' });
     trafficRows = [{ traces: 80 }];
-    const res = await app.request('/api/usage');
+    const res = await app.request('/api/w/acme/usage');
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ workspace: 'ten_a', traces: 80, blocked: false, limits: { plan: 'Free', monthly_trace_quota: 100 } });
+    expect(await res.json()).toMatchObject({ workspace: acme.id, traces: 80, blocked: false, limits: { plan: 'Free', monthly_trace_quota: 100 } });
+    expect((await app.request('/api/w/beta/usage')).status).toBe(404);
   });
 
   it('exposes the billing URL only when IVY_BILLING_URL is set', async () => {

@@ -5,6 +5,8 @@ export interface QuotaSnapshot {
   limits: EffectiveLimits;
   /** Traces this month according to ClickHouse at refresh time (0 when the limits can't block). */
   used: number;
+  /** Where this workspace upgrades (its usage page), for the 429 message. */
+  upgradeUrl?: string;
 }
 
 export interface QuotaGateOptions {
@@ -14,7 +16,7 @@ export interface QuotaGateOptions {
   refreshMs?: number;
   /** Longest Retry-After sent while over quota, so an upgrade takes effect soon after. */
   recheckSeconds?: number;
-  /** Where to upgrade, for the 429 message. */
+  /** Where to upgrade, for the 429 message, when the snapshot has no workspace-specific link. */
   upgradeUrl?: string;
   log?: (msg: string) => void;
   now?: () => number;
@@ -65,12 +67,12 @@ export class QuotaGate {
     } else if (now - entry.refreshedAt >= this.refreshMs) {
       void this.refresh(tenantId, shardId, month);
     }
-    const { limits, used } = entry.snapshot;
+    const { limits, used, upgradeUrl } = entry.snapshot;
     if (!overQuota(limits, used + entry.local)) return null;
     const untilNextMonth = Math.ceil((monthBounds(month).end - now) / 1000);
     return {
       retryAfter: Math.max(1, Math.min(this.recheckSeconds, untilNextMonth)),
-      message: quotaMessage(limits, this.opts.upgradeUrl),
+      message: quotaMessage(limits, upgradeUrl ?? this.opts.upgradeUrl),
     };
   }
 

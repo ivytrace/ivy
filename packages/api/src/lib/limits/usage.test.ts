@@ -1,7 +1,7 @@
 import type { ClickHouseClient } from '@clickhouse/client';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { setClientsForTests } from '../clickhouse/client.js';
-import { TENANT_SETTING } from '../clickhouse/scoped.js';
+import { PROJECT_SETTING, TENANT_SETTING } from '../clickhouse/scoped.js';
 import { clearUsageCacheForTests, countMonthlyTraces, countMonthlyTracesAllTenants, currentMonthTraces } from './usage.js';
 
 interface Captured {
@@ -32,13 +32,15 @@ const tenant = { id: 'ten_a', shardId: 'shard-1' };
 const NOW = Date.UTC(2026, 10, 14, 12, 30, 15);
 
 describe('monthly trace count', () => {
-  it('reads whole hours from the rollup and the partial hours from invocations, for the tenant', async () => {
+  it('reads whole hours from the rollup and the partial hours from invocations, for the tenant across all its projects', async () => {
     expect(await countMonthlyTraces(tenant, '2026-11', NOW)).toBe(42);
     const [q] = captured;
     expect(q.query).toMatch(/FROM invocations_hourly/);
     expect(q.query).toMatch(/FROM invocations\s/);
     expect(q.query.match(/\{tenant:String\}/g)).toHaveLength(2);
     expect(q.clickhouse_settings?.[TENANT_SETTING]).toBe('ten_a');
+    expect(q.clickhouse_settings?.[PROJECT_SETTING]).toBeUndefined();
+    expect(q.query_params.project).toBeUndefined();
     expect(q.query_params).toMatchObject({
       tenant: 'ten_a',
       from: Date.UTC(2026, 10, 1),

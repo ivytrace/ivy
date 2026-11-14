@@ -37,7 +37,7 @@ describe("MCP Apps tools", () => {
     ]) {
       const tool = tools.find((t) => t.name === name)!;
       expect(tool._meta).toMatchObject({ ui: { resourceUri: uri } });
-      expect(Object.keys(tool.inputSchema.properties ?? {})).toEqual(["workspace", "trace_id"]);
+      expect(Object.keys(tool.inputSchema.properties ?? {})).toEqual(["workspace", "project", "trace_id"]);
       expect(tool.annotations?.readOnlyHint).toBe(true);
     }
   });

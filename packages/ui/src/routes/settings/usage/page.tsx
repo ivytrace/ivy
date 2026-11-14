@@ -4,14 +4,17 @@ import { CheckCircle2 } from "lucide-react";
 
 import { ErrorState, LoadingState } from "@/components/common/states";
 import { BillingButton, formatCount, QuotaNotice, UsageBar } from "@/components/usage/usage-parts";
-import { useConfig, useUsage } from "@/lib/api/hooks";
+import { useConfig, useUsage, useWorkspaceInfo } from "@/lib/api/hooks";
 import type { Usage } from "@/lib/api/types";
-import { usageState } from "@/lib/usage/state";
+import { useWorkspace } from "@/lib/links/use-scope";
+import { billingAction, usageState } from "@/lib/usage/state";
 import { format } from "date-fns";
 
 export default function UsagePage() {
-  const usage = useUsage();
+  const workspace = useWorkspace();
+  const usage = useUsage(workspace);
   const { data: config } = useConfig();
+  const role = useWorkspaceInfo(workspace).data?.role;
   const [params] = useSearchParams();
   const checkout = params.get("checkout");
 
@@ -27,7 +30,8 @@ export default function UsagePage() {
       <div className="mb-6">
         <h2 className="text-xl font-semibold">Usage</h2>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Ivy counts one trace per Lambda invocation. Usage resets on the first day of each month (UTC).
+          Ivy counts one trace per Lambda invocation, across all of this workspace's projects. Usage resets on the first
+          day of each month (UTC).
         </p>
       </div>
 
@@ -43,13 +47,14 @@ export default function UsagePage() {
       ) : !usage.data ? (
         <LoadingState className="rounded-md border" />
       ) : (
-        <UsageCard usage={usage.data} billingUrl={config?.billing?.url} />
+        <UsageCard usage={usage.data} billingUrl={config?.billing?.url} role={role} />
       )}
     </div>
   );
 }
 
-function UsageCard({ usage, billingUrl }: { usage: Usage; billingUrl?: string }) {
+function UsageCard({ usage, billingUrl, role }: { usage: Usage; billingUrl?: string; role?: "owner" | "member" }) {
+  const action = billingAction(usage, role);
   const state = usageState(usage);
   const quota = usage.limits.monthly_trace_quota;
   const plan = usage.limits.plan || (quota === null ? "Unlimited" : "Custom");
@@ -64,7 +69,12 @@ function UsageCard({ usage, billingUrl }: { usage: Usage; billingUrl?: string })
             <div className="text-xs uppercase tracking-wide text-muted-foreground">Plan</div>
             <div className="mt-1 text-lg font-semibold">{plan}</div>
           </div>
-          {billingUrl && <BillingButton billingUrl={billingUrl} usage={usage} />}
+          {billingUrl &&
+            (action ? (
+              <BillingButton billingUrl={billingUrl} usage={usage} action={action} />
+            ) : role === "member" ? (
+              <p className="max-w-56 text-right text-xs text-muted-foreground">Only workspace owners can change billing.</p>
+            ) : null)}
         </div>
 
         <div className="mt-6">

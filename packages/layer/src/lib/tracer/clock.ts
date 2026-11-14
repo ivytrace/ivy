@@ -1,5 +1,3 @@
-import { performance } from 'node:perf_hooks';
-
 let anchorDate = Date.now();
 let anchorPerf = performance.now();
 

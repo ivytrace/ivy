@@ -1,5 +1,5 @@
 import { shardClient } from '../clickhouse/client.js';
-import { crossTenantQuery, tenantQuery } from '../clickhouse/scoped.js';
+import { crossTenantQuery, scopedQuery } from '../clickhouse/scoped.js';
 import { shardConfigs } from '../tenancy/shards.js';
 import { splitOnHours, type TimeRange } from '../utils/time-range.js';
 
@@ -54,12 +54,12 @@ function countSql(range: TimeRange, perTenant: boolean): { sql: string; params: 
   return { sql, params: { from: range.from, to: range.to, h1, h2 } };
 }
 
-/** Exact trace count of one tenant in a month, up to `now`. */
+/** Exact trace count of one tenant (all its projects: usage is per workspace) in a month, up to `now`. */
 export async function countMonthlyTraces(tenant: { id: string; shardId: string }, month: Month, now = Date.now()): Promise<number> {
   const range = monthRange(month, now);
   if (range.from >= range.to) return 0;
   const { sql, params } = countSql(range, false);
-  const rows = await tenantQuery<{ traces: number }>(shardClient(tenant.shardId), tenant.id, sql, params);
+  const rows = await scopedQuery<{ traces: number }>(shardClient(tenant.shardId), { tenant: tenant.id, allProjects: true }, sql, params);
   return Number(rows[0]?.traces ?? 0);
 }
 

@@ -1,12 +1,13 @@
-import http from 'node:http';
-import https from 'node:https';
-import { gzipSync } from 'node:zlib';
+import { unwrapped } from '../utils/original.js';
 
-// Captured at import time, before instrumentation patches these modules.
-const httpRequest = http.request;
-const httpsRequest = https.request;
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 2 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 2 });
+// Builtins are loaded on first use: https/tls and zlib cost several ms, and this path only runs
+// after a response (export to the extension, or directly when it is missing).
+let agents: { http: import('node:http').Agent; https: import('node:https').Agent } | undefined;
+const getAgents = () =>
+  (agents ??= {
+    http: new (process.getBuiltinModule('node:http').Agent)({ keepAlive: true, maxSockets: 2 }),
+    https: new (process.getBuiltinModule('node:https').Agent)({ keepAlive: true, maxSockets: 2 }),
+  });
 
 export interface PostResult {
   status: number;
@@ -38,14 +39,14 @@ export function post(url: string, body: string, opts: PostOptions): Promise<Post
     let payload: Buffer = Buffer.from(body, 'utf8');
     const headers: Record<string, string | number> = { 'content-type': 'application/json', ...opts.headers };
     if (opts.gzip && payload.length > 1024) {
-      payload = gzipSync(payload);
+      payload = process.getBuiltinModule('node:zlib').gzipSync(payload);
       headers['content-encoding'] = 'gzip';
     }
     headers['content-length'] = payload.length;
     const u = new URL(url);
     const isHttps = u.protocol === 'https:';
-    const request = isHttps ? httpsRequest : httpRequest;
-    const agent = opts.keepAlive === false ? false : isHttps ? httpsAgent : httpAgent;
+    const request = unwrapped(process.getBuiltinModule(isHttps ? 'node:https' : 'node:http').request);
+    const agent = opts.keepAlive === false ? false : isHttps ? getAgents().https : getAgents().http;
     const req = request(u, { method: 'POST', headers, agent }, (res) => {
       const chunks: Buffer[] = [];
       res.on('data', (c: Buffer) => chunks.push(c));

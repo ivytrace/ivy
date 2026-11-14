@@ -1,8 +1,9 @@
-import { hashKey } from '../tenancy/ids.js';
+import { defaultProjectId, hashKey } from '../tenancy/ids.js';
 import type { KeyMatch } from '../tenancy/store.js';
 
 export interface ResolvedKey {
   tenantId: string;
+  projectId: string;
   shardId: string;
   keyId: string;
 }
@@ -16,7 +17,18 @@ export interface KeyCacheOptions {
 }
 
 /**
- * API key → tenant, cached by key hash. Valid keys for `ttlMs`, unknown keys for `negativeTtlMs`
+ * The key's tenant, shard and project. A key of an archived project is rejected like a revoked one.
+ * Keys from before projects (`project_id` '') belong to the default project, which may not have a
+ * row yet right after the upgrade; any other missing project rejects the key.
+ */
+function resolvedKey(match: KeyMatch): ResolvedKey | null {
+  const projectId = match.key.project_id || defaultProjectId(match.tenant.id);
+  if (match.project ? match.project.archived : projectId !== defaultProjectId(match.tenant.id)) return null;
+  return { tenantId: match.tenant.id, projectId, shardId: match.tenant.shard_id, keyId: match.key.id };
+}
+
+/**
+ * API key → tenant and project, cached by key hash. Valid keys for `ttlMs`, unknown keys for `negativeTtlMs`
  * (so a flood of bad keys doesn't reach the control database). A revoked key or a tenant move
  * takes effect within `ttlMs`. Concurrent lookups of one key share a request.
  */
@@ -55,7 +67,7 @@ export class KeyCache {
 
   private async load(hash: string): Promise<ResolvedKey | null> {
     const match = await this.opts.lookup(hash);
-    const value = match ? { tenantId: match.tenant.id, shardId: match.tenant.shard_id, keyId: match.key.id } : null;
+    const value = match ? resolvedKey(match) : null;
     if (this.entries.size >= this.maxEntries) {
       // Drop the oldest tenth (Map iteration is insertion order).
       let drop = Math.ceil(this.maxEntries / 10);

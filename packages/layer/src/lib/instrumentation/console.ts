@@ -1,4 +1,3 @@
-import { format } from 'node:util';
 import type { Tracer } from '../tracer/tracer.js';
 
 const SEVERITY: Record<string, string> = {
@@ -11,6 +10,7 @@ const SEVERITY: Record<string, string> = {
 };
 
 export function instrumentConsole(tracer: Tracer): void {
+  const { format } = process.getBuiltinModule('node:util');
   for (const [method, severity] of Object.entries(SEVERITY)) {
     const original = (console as any)[method];
     if (typeof original !== 'function') continue;

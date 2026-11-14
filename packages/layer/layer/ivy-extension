@@ -1,0 +1,7 @@
+#!/bin/sh
+# Starts the extension binary for this architecture. $HOSTTYPE (set by bash, which is /bin/sh on
+# Lambda's Amazon Linux images) avoids forking uname; the argument is the name Lambda registers.
+case "${HOSTTYPE:-$(uname -m)}" in
+  aarch64 | arm64) exec /opt/ivy/bin/ivy-extension-arm64 ivy-extension ;;
+  *) exec /opt/ivy/bin/ivy-extension-x86_64 ivy-extension ;;
+esac

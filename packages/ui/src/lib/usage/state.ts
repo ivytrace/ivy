@@ -29,3 +29,12 @@ export function usageState(usage: Usage): UsageState {
 
 /** Width of the progress bar, 0–100. */
 export const barPercent = (ratio: number | null) => (ratio === null ? 0 : Math.min(100, Math.max(0, ratio * 100)));
+
+/**
+ * Which billing button a workspace member sees: owners get Upgrade (checkout) or, on a paid plan (limits that
+ * don't block), Manage billing (portal); members get none (the billing service would refuse them anyway).
+ */
+export function billingAction(usage: Usage, role: "owner" | "member" | undefined): "checkout" | "portal" | null {
+  if (role !== "owner") return null;
+  return usage.limits.source === "workspace" && usage.limits.over_quota === "allow" ? "portal" : "checkout";
+}

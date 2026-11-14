@@ -4,8 +4,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { IvyData, Workspace } from "../data/types.js";
 import { failureNote, findFirst } from "../workspaces/fan-out.js";
-import { locateTrace, selectWorkspaces, ToolInputError } from "../workspaces/scope.js";
-import { failure, guarded, label, maxTokens, READ_ONLY, text, traceId, workspace } from "./common.js";
+import { locateTrace, selectWorkspaces, ToolInputError, scoped } from "../workspaces/scope.js";
+import { failure, guarded, label, maxTokens, READ_ONLY, text, traceId, project, workspace } from "./common.js";
 
 /** Request IDs and baselines are looked up over this range; traces by ID need no range. */
 const LOOKBACK = "7d";
@@ -53,6 +53,7 @@ export function registerTraceTools(server: McpServer, data: IvyData) {
         "source). Repeated identical calls are folded into one `×N` line.",
       inputSchema: {
         workspace,
+        project,
         trace_id: traceId.optional(),
         request_id: z.string().min(1).optional().describe("AWS request ID of the invocation; used when trace_id is not given."),
         detail: z
@@ -71,12 +72,12 @@ export function registerTraceTools(server: McpServer, data: IvyData) {
         let id = args.trace_id;
         let scope = args.workspace;
         if (!id && args.request_id) {
-          const found = await traceIdForRequest(data, scope, args.request_id);
+          const found = await traceIdForRequest(scoped(data, args), scope, args.request_id);
           id = found.id;
           scope = found.workspace.id;
         }
         if (!id) return failure("Pass trace_id or request_id.");
-        const found = await findTrace(data, scope, id);
+        const found = await findTrace(scoped(data, args), scope, id);
         return text(`${label(found.workspace)}\n${formatTrace(found.trace, { detail: args.detail, maxTokens: args.max_tokens })}${found.note}`);
       }),
   );
@@ -93,6 +94,7 @@ export function registerTraceTools(server: McpServer, data: IvyData) {
         "(differing payload fields listed below it), `+`/`-` calls made by only one side.",
       inputSchema: {
         workspace,
+        project,
         trace_id: traceId.describe("The invocation to explain, usually the failing one."),
         baseline_trace_id: traceId.optional().describe("The invocation to compare against. Default: the latest successful run of the same function."),
         max_tokens: maxTokens,
@@ -101,17 +103,17 @@ export function registerTraceTools(server: McpServer, data: IvyData) {
     },
     (args) =>
       guarded(async () => {
-        const target = await findTrace(data, args.workspace, args.trace_id);
+        const target = await findTrace(scoped(data, args), args.workspace, args.trace_id);
         let baseline: FoundTrace;
         let preface = "";
         if (args.baseline_trace_id) {
-          baseline = await findTrace(data, args.workspace, args.baseline_trace_id);
+          baseline = await findTrace(scoped(data, args), args.workspace, args.baseline_trace_id);
         } else {
           const fn = rootInvocation(target.trace.spans)?.name;
           if (!fn) return failure("The trace has no Ivy invocation span, so there is no function to pick a baseline from. Pass baseline_trace_id.");
-          const [ok] = await data.invocations(target.workspace, { function: fn, status: "ok", since: LOOKBACK, limit: 1 });
+          const [ok] = await scoped(data, args).invocations(target.workspace, { function: fn, status: "ok", since: LOOKBACK, limit: 1 });
           if (!ok) return failure(`No successful invocation of ${fn} in ${target.workspace.slug} in the last ${LOOKBACK}. Pass baseline_trace_id.`);
-          baseline = await findTrace(data, target.workspace.id, ok.trace_id);
+          baseline = await findTrace(scoped(data, args), target.workspace.id, ok.trace_id);
           preface = `B is the latest successful invocation of ${fn}.\n`;
         }
         const where =
