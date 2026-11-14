@@ -37,6 +37,7 @@ in `ivy_control`. Every table has the tenant first in `ORDER BY`; the span table
 | `otel_traces` | MergeTree, daily partitions | `(TenantId, ProjectId, toStartOfHour(Timestamp), TraceId)` | all spans; trace lookups |
 | `invocations` (MV `invocations_mv`) | MergeTree, daily partitions | `(tenant_id, project_id, function, ts)` | one row per root span with `ivy.invocation = 'true'` |
 | `invocations_hourly` (MV `invocations_hourly_mv`) | AggregatingMergeTree | `(tenant_id, project_id, function, region, hour)` | counts, errors, cold starts, duration sum, last invoked, `quantilesTDigest(0.5,0.95,0.99)` state |
+| `function_throttles` | ReplacingMergeTree(updated_at), monthly partitions | `(tenant_id, project_id, function, region, minute)` | Lambda throttles per function and minute, polled from CloudWatch (`auto-trace.md`, "Throttles"); read with `FINAL`; the project is the function's assignment when it was polled |
 
 The MVs copy the project through (`ProjectId AS project_id`, `GROUP BY tenant_id, project_id, …`). Project-scoped
 queries (the common case) read one `(tenant, project)` range of the primary key. Workspace-wide queries (function
@@ -44,9 +45,9 @@ overview and errors across all projects) read the tenant's range and group by `p
 
 - `otel_traces` is ordered for trace lookups, not per-service scans. Per-function queries go through
   `invocations`. A trace lookup is a range scan over about 3 hour buckets, plus a binary search on TraceId.
-- Retention: `TTL … + toIntervalDay(IVY_RETENTION_DAYS)` (default 30) on all three tables,
+- Retention: `TTL … + toIntervalDay(IVY_RETENTION_DAYS)` (default 30) on all span tables and `function_throttles`,
   `ttl_only_drop_parts = 1` so whole daily partitions are dropped.
-- Row policies `ivy_tenant` on the three tables limit reads to the tenant in the `SQL_ivy_tenant` setting when
+- Row policies `ivy_tenant` on the span tables and `function_throttles` limit reads to the tenant in the `SQL_ivy_tenant` setting when
   a query sets it (the API always does), and `ivy_project` to the project in `SQL_ivy_project` (set by every
   project-scoped query; workspace-wide queries leave it unset). See `tenancy.md` for why they pass everything
   when the setting isn't set.
@@ -57,7 +58,18 @@ overview and errors across all projects) read the tenant's range and group by `p
   TraceId bloom filter.
 - `invocations` fields: `error_type` = `error.type` or the `exception` event's type, and `error_message` =
   status message or `exception.message`. The `error_fingerprint` is
-  `cityHash64(function, error_type, message with UUIDs / long hex / numbers replaced)`.
+  `cityHash64(function, error_type, message with UUIDs / long hex / numbers replaced)`. For failures the extension
+  reports (`platform-failures.md`) the status message is the first meaningful log line, so an init failure groups as
+  e.g. `Runtime.ImportModuleError` + `Error: Cannot find module 'left-pad'` (module names survive the normalization;
+  digits in them become `<n>`).
+- Platform columns: `failure_phase` (`ivy.failure.phase`: `init`/`invoke`, empty for handler errors), `synthetic`
+  (`ivy.synthetic`: the extension created the span), `init_duration_ms` (`ivy.init_duration_ms`) and
+  `memory_limit_mb` (resource `faas.max_memory`). They were added with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, and
+  `invocations_mv` is dropped and recreated on every schema run so query changes apply (spans inserted in those few
+  milliseconds are not copied).
+- Update spans (`ivy.update = true`, late Lambda report data) land in `otel_traces` only: they have no
+  `ivy.invocation`, so they add no `invocations` row and are not counted as traces. The trace route folds them into
+  the invocation span. Billed duration and max memory are therefore only in the trace view, not in `invocations`.
   Empty strings / `0` mean "absent" and the API maps them to `null`.
 
 ## Query patterns (API)

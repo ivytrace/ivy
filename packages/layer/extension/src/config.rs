@@ -10,6 +10,24 @@ pub struct Config {
     pub export_timeout_ms: u64,
     pub flush_budget_ms: u64,
     pub max_queue_spans: usize,
+    pub telemetry: bool,
+    pub telemetry_port: u16,
+    pub report_updates: bool,
+    pub redact_keys: Vec<String>,
+}
+
+pub const DEFAULT_REDACT_KEYS: &str =
+    "password,secret,token,authorization,cookie,apikey,api_key,accesskey,secretaccesskey,sessiontoken,creditcard,cardnumber,cvv";
+
+/// Same normalization as the tracer: lowercased, `-` and `_` removed.
+fn redact_keys(value: Option<&String>) -> Vec<String> {
+    value
+        .map(String::as_str)
+        .unwrap_or(DEFAULT_REDACT_KEYS)
+        .split(',')
+        .map(|k| k.trim().to_ascii_lowercase().replace(['-', '_'], ""))
+        .filter(|k| !k.is_empty())
+        .collect()
 }
 
 /// Like JS `parseInt(value, 10)`: leading digits, anything else falls back.
@@ -53,6 +71,10 @@ impl Config {
             export_timeout_ms: int(env.get("IVY_EXPORT_TIMEOUT_MS"), 1000),
             flush_budget_ms: int(env.get("IVY_FLUSH_BUDGET_MS"), 2000),
             max_queue_spans: int(env.get("IVY_MAX_QUEUE_SPANS"), 2000) as usize,
+            telemetry: bool(env.get("IVY_PLATFORM_TELEMETRY"), true),
+            telemetry_port: u16::try_from(int(env.get("IVY_TELEMETRY_PORT"), 9791)).unwrap_or(9791),
+            report_updates: bool(env.get("IVY_REPORT_METRICS"), true),
+            redact_keys: redact_keys(env.get("IVY_REDACT_KEYS")),
         }
     }
 }
@@ -72,6 +94,12 @@ mod tests {
         assert_eq!(c.traces_url.as_deref(), Some("https://ingest.example.com/v1/traces"));
         assert_eq!(c.extension_port, 9790);
         assert_eq!(c.max_queue_spans, 2000);
+        assert!(c.telemetry && c.report_updates);
+        assert_eq!(c.telemetry_port, 9791);
+        assert!(c.redact_keys.contains(&"apikey".to_string()) && c.redact_keys.contains(&"secretaccesskey".to_string()));
+        let c = Config::from_map(&env(&[("IVY_PLATFORM_TELEMETRY", "false"), ("IVY_REDACT_KEYS", "X-Session_Id, pin")]));
+        assert!(!c.telemetry);
+        assert_eq!(c.redact_keys, ["xsessionid", "pin"]);
         assert_eq!(traces_url("http://x/v1/traces"), "http://x/v1/traces");
     }
 

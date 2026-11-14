@@ -21,7 +21,15 @@ export interface AwsAccount {
   created_at: number;
   verified_at: number;
   last_sync_at: number;
+  /** Poll CloudWatch for Lambda throttles (billed to the customer's account). On by default. */
+  throttle_metrics: boolean;
+  throttle_status: ThrottleStatus;
+  /** End (epoch ms, minute-aligned) of the last throttle window read; the next poll re-reads a few minutes before it. */
+  throttles_polled_to: number;
 }
+
+/** '' = not polled yet; 'missing_permission' = the stack predates cloudwatch:GetMetricData. */
+export type ThrottleStatus = '' | 'ok' | 'missing_permission' | 'error';
 
 /**
  * `available`: supported but not selected for tracing (no tag, manual choice or rule). `opted_out`:

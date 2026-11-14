@@ -1,3 +1,5 @@
+import type { FailureKind } from "./failures.js";
+
 /** Response shapes of the list endpoints (docs/implementation/api.md), shared by the formatters and the MCP. */
 
 export interface Invocation {
@@ -17,6 +19,15 @@ export interface Invocation {
   error_type: string | null;
   error_message: string | null;
   memory_used_mb: number | null;
+  /** Memory limit of the function (from the `faas.max_memory` resource attribute). */
+  memory_limit_mb: number | null;
+  /** `init` or `invoke` for failures outside the handler, reported by the extension (Telemetry API). */
+  failure_phase: "init" | "invoke" | null;
+  /** Label-friendly kind of a failure outside the handler (`failureLabel`); null for handler errors. */
+  failure_kind: FailureKind | null;
+  /** The extension created this invocation span itself: the tracer reported nothing (init failure, crash). */
+  synthetic: boolean;
+  init_duration_ms: number | null;
 }
 
 export interface ErrorGroup {
@@ -27,7 +38,11 @@ export interface ErrorGroup {
   count: number;
   first_seen: string;
   last_seen: string;
-  sample_trace_id: string;
+  /** null for the synthetic Throttled group: throttled requests never reach the function. */
+  sample_trace_id: string | null;
+  /** "throttle": one synthetic group per function counting Lambda throttles (error_type "Throttled"). */
+  kind?: "error" | "throttle";
+  failure_kind: FailureKind | null;
 }
 
 export interface FunctionSummary {
@@ -41,5 +56,7 @@ export interface FunctionSummary {
   p50_ms: number;
   p95_ms: number;
   p99_ms: number;
-  last_invoked: string;
+  last_invoked: string | null;
+  /** Invocations Lambda rejected (CloudWatch Throttles); they never reached the function. */
+  throttles?: number;
 }

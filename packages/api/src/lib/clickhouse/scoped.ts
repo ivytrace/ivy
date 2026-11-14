@@ -5,6 +5,7 @@ export const TENANT_SCOPED_TABLES = [
   'otel_traces',
   'invocations',
   'invocations_hourly',
+  'function_throttles',
   'aws_accounts',
   'aws_functions',
   'aws_function_settings',
@@ -17,7 +18,7 @@ export const TENANT_SCOPED_TABLES = [
 ];
 
 /** Span tables, keyed (tenant, project, …): reads also need a project filter, or an explicit "all projects". */
-export const PROJECT_SCOPED_TABLES = ['otel_traces', 'invocations', 'invocations_hourly'];
+export const PROJECT_SCOPED_TABLES = ['otel_traces', 'invocations', 'invocations_hourly', 'function_throttles'];
 
 /** Settings read by the ClickHouse row policies on the data tables (deploy/clickhouse/schema.sql). */
 export const TENANT_SETTING = 'SQL_ivy_tenant';

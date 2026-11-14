@@ -118,7 +118,11 @@ Paths below are relative to `/w/:workspace/:project`.
   Uses cursor pagination (a stack of `next_cursor`s for Previous/Next). With `function` set, the function's
   charts are shown, as on trace-stack's per-function page.
 - `/traces/:traceId?invocation=<span_id>`: the trace-stack layout. The header has status, duration, cold start,
-  memory and AWS console links. The service graph is on the left, with tabs on the right: Overview (error +
+  billed duration, init duration, memory used against the limit (red when the limit was reached) and AWS console
+  links. Failures outside the handler get a `FailureBadge` ("Init failed", "Out of memory", "Timed out", "Crashed")
+  here, in the invocation list and on the errors page; when the extension had to create the invocation span itself
+  (init failure, crash), a note under the header says there is no (complete) trace and that the Logs tab holds the
+  log tail. The MCP App views' header uses the same components (`InvocationStatus`, `MemoryUsage`, `FailureNote`). The service graph is on the left, with tabs on the right: Overview (error +
   stack, invocation fields, event payload, return value), Timeline (waterfall, where expanding a row shows its
   service-specific details and payloads) and Logs (`log` events). When a trace contains several invocations,
   an "Only this invocation" switch scopes the view (this replaces trace-stack's "Filter current invocation").

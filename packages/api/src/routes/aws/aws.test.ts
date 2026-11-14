@@ -8,6 +8,7 @@ import {
 import { GetResourcesCommand, ResourceGroupsTaggingAPIClient } from '@aws-sdk/client-resource-groups-tagging-api';
 import { AssumeRoleCommand, GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import { mockClient } from 'aws-sdk-client-mock';
+import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -26,6 +27,7 @@ let app: ReturnType<typeof createApp>;
 const lambda = mockClient(LambdaClient);
 const tagging = mockClient(ResourceGroupsTaggingAPIClient);
 const sts = mockClient(STSClient);
+const cloudwatch = mockClient(CloudWatchClient);
 
 const ACCOUNT_ID = '123456789012';
 const LAYER = `arn:aws:lambda:eu-west-1:${ACCOUNT_ID}:layer:ivy-trace-nodejs:1`;
@@ -79,6 +81,8 @@ beforeEach(async () => {
   lambda.reset();
   tagging.reset();
   sts.reset();
+  cloudwatch.reset();
+  cloudwatch.on(GetMetricDataCommand).resolves({ MetricDataResults: [] });
   resetAwsClientsForTests();
   resetLayerCacheForTests();
   setLayerZipForTests({ bytes: new Uint8Array([1]), sha256: 'hash' });
@@ -326,6 +330,24 @@ describe('AWS account routes', () => {
     expect((await req(`${W}/accounts`)).items).toEqual([]);
     expect((await req(`${W}/functions`)).items).toEqual([]);
     expect((await app.request(`${W}/accounts/${a.id}`)).status).toBe(404);
+  });
+
+  it('turns throttle polling off and on, and reports a missing permission', async () => {
+    const a = await connect();
+    expect(a).toMatchObject({ throttle_metrics: true, throttle_status: null });
+    // Only traced functions are polled: a rule traces everything into the default project.
+    await req(`${W}/rules`, json({ matcher: { name: '*' } }));
+    cloudwatch.on(GetMetricDataCommand).rejects(Object.assign(new Error('not authorized to perform: cloudwatch:GetMetricData'), { name: 'AccessDenied' }));
+    await app.request(`${W}/accounts/${a.id}/verify`, { method: 'POST' });
+    await settle(a.id);
+    const after = await (await app.request(`${W}/accounts/${a.id}`)).json();
+    expect(after).toMatchObject({ status: 'connected', throttle_status: 'missing_permission' });
+
+    const off = await (await app.request(`${W}/accounts/${a.id}`, { ...json({ throttle_metrics: false }), method: 'PATCH' })).json();
+    expect(off.throttle_metrics).toBe(false);
+    await settle(a.id);
+    const bad = await app.request(`${W}/accounts/${a.id}`, { ...json({ throttle_metrics: 'no' }), method: 'PATCH' });
+    expect(bad.status).toBe(400);
   });
 
   it('accepts EventBridge events only with the connection secret', async () => {

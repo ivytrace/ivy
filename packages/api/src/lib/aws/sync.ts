@@ -10,6 +10,7 @@ import { ingestConfig, type IngestConfig } from './config.js';
 import { applyUpdate, ensureLayer, getFunction, layerZip, listFunctionTags, listFunctions } from './lambda.js';
 import { AWS_REGIONS, isRegionDisabledError } from './regions.js';
 import { awsStore } from './store.js';
+import { pollAccountThrottles, throttlePollDue, type ThrottlePollResult } from './throttles.js';
 import type { AwsAccount, FunctionSetting, FunctionStatus } from './types.js';
 
 const FUNCTION_CONCURRENCY = 4;
@@ -189,9 +190,25 @@ export async function syncAccount(account: AwsAccount, options: SyncOptions = {}
     }
   });
 
+  let throttles: ThrottlePollResult | null = null;
+  if (throttlePollDue(account)) {
+    try {
+      throttles = await pollAccountThrottles(account, accountRegions(account), await store.listFunctions(account.tenant_id, account.account_id));
+    } catch (err) {
+      throttles = { throttle_status: 'error', throttles_polled_to: account.throttles_polled_to || 0, error: message(err) };
+    }
+    if (throttles.error) console.warn(`aws throttles ${account.tenant_id}/${account.id}: ${throttles.error}`);
+  }
+
   const latest = await store.getAccount(account.tenant_id, account.id);
   if (!latest) return;
-  await store.saveAccount({ ...latest, status: 'connected', error: errors.sort().join('\n'), last_sync_at: Date.now() });
+  await store.saveAccount({
+    ...latest,
+    ...(throttles && { throttle_status: throttles.throttle_status, throttles_polled_to: throttles.throttles_polled_to }),
+    status: 'connected',
+    error: errors.sort().join('\n'),
+    last_sync_at: Date.now(),
+  });
 }
 
 /** Applies the current assignment to a single function right away (after a manual choice in the dashboard). */

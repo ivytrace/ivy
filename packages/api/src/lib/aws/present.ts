@@ -50,6 +50,8 @@ export function presentAccount(account: AwsAccount, quick: QuickCreate, basePath
     last_sync_at: isoOrNull(account.last_sync_at),
     reviewed_at: isoOrNull(account.reviewed_at),
     syncing: isSyncing(account),
+    throttle_metrics: account.throttle_metrics !== false,
+    throttle_status: account.throttle_status || null,
     counts: { ...allCounts, total: Object.values(allCounts).reduce((a, b) => a + b, 0), new: counts?.newAvailable ?? 0 },
     quick_create_url: quick.url,
     quick_create_error: quick.error,

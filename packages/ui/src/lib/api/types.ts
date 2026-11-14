@@ -1,4 +1,5 @@
 export type { Span, SpanEvent, Trace } from "../spans/types.ts";
+import type { FailureKind } from "@ivy/spans";
 
 export interface AuthSettings {
   enabled: true;
@@ -123,7 +124,10 @@ export interface FunctionSummary extends ProjectRef {
   p50_ms: number;
   p95_ms: number;
   p99_ms: number;
-  last_invoked: string;
+  /** null when the function was only throttled in the range. */
+  last_invoked: string | null;
+  /** Requests Lambda rejected (CloudWatch Throttles); they never reached the function. */
+  throttles: number;
 }
 
 export interface Invocation {
@@ -143,6 +147,11 @@ export interface Invocation {
   error_type: string | null;
   error_message: string | null;
   memory_used_mb: number | null;
+  memory_limit_mb: number | null;
+  failure_phase: "init" | "invoke" | null;
+  failure_kind: FailureKind | null;
+  synthetic: boolean;
+  init_duration_ms: number | null;
 }
 
 export interface ErrorGroup extends ProjectRef {
@@ -153,7 +162,10 @@ export interface ErrorGroup extends ProjectRef {
   count: number;
   first_seen: string;
   last_seen: string;
-  sample_trace_id: string;
+  /** null for the synthetic Throttled group (no trace). */
+  sample_trace_id: string | null;
+  kind: "error" | "throttle";
+  failure_kind: FailureKind | null;
 }
 
 export interface TimeseriesPoint {
@@ -161,6 +173,7 @@ export interface TimeseriesPoint {
   invocations: number;
   errors: number;
   p95_ms: number;
+  throttles: number;
 }
 
 export interface ListResponse<T> {
@@ -212,6 +225,8 @@ export interface AwsAccount {
   last_sync_at: string | null;
   reviewed_at: string | null;
   syncing: boolean;
+  throttle_metrics: boolean;
+  throttle_status: "ok" | "missing_permission" | "error" | null;
   counts: Record<TraceState | "total" | "new", number>;
   quick_create_url: string | null;
   /** Why there is no quick-create link although the server supports them. */

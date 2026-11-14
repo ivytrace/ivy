@@ -18,6 +18,15 @@ const object = (properties: Record<string, unknown>, required = Object.keys(prop
   required,
 });
 
+const failureKind = {
+  type: ['string', 'null'],
+  enum: ['init_failed', 'out_of_memory', 'timed_out', 'crashed', null],
+  description:
+    'Failure outside the handler, reported by the Ivy extension from the Lambda Telemetry API (labels: Init failed, ' +
+    'Out of memory, Timed out, Crashed). Null for successful invocations and ordinary handler errors.',
+} as const;
+
+
 const list = (name: string) => object({ items: { type: 'array', items: ref(name) } });
 const projectFields = {
   project_id: { type: 'string', description: 'Workspace-wide routes only.' },
@@ -106,7 +115,8 @@ export const schemas = {
   FunctionSummary: object(
     {
       name: str, region: str, ...projectFields, invocations: int, errors: int, error_rate: num, cold_starts: int,
-      avg_ms: num, p50_ms: num, p95_ms: num, p99_ms: num, last_invoked: time,
+      avg_ms: num, p50_ms: num, p95_ms: num, p99_ms: num, last_invoked: { ...ntime, description: 'null for a function that was only throttled in the range.' },
+      throttles: { type: 'integer', description: 'Invocations Lambda rejected (CloudWatch `Throttles`); they never reached the function. 0 when throttle polling is off.' },
     },
     ['name', 'region', 'invocations', 'errors', 'error_rate', 'cold_starts', 'avg_ms', 'p50_ms', 'p95_ms', 'p99_ms', 'last_invoked'],
   ),
@@ -117,6 +127,14 @@ export const schemas = {
     trigger: { type: 'string', examples: ['aws:apigatewayv2', 'aws:sqs'] },
     http_method: nstr, http_path: nstr, http_status: { type: ['integer', 'null'] },
     error_type: nstr, error_message: nstr, memory_used_mb: { type: ['number', 'null'] },
+    memory_limit_mb: { type: ['integer', 'null'] },
+    failure_phase: { type: ['string', 'null'], enum: ['init', 'invoke', null] },
+    failure_kind: failureKind,
+    synthetic: {
+      type: 'boolean',
+      description: 'The extension created the invocation span itself because the tracer reported nothing (init failure, crash): the trace has no child spans.',
+    },
+    init_duration_ms: { type: ['number', 'null'], description: 'Set on cold starts.' },
   }),
   InvocationList: object({
     items: { type: 'array', items: ref('Invocation') },
@@ -131,7 +149,13 @@ export const schemas = {
     service: str, start: time, end: time, duration_ms: num,
     status_code: { type: 'string', enum: ['OK', 'ERROR', 'UNSET'] },
     status_message: str,
-    attributes: { ...strMap, description: 'Span attributes as stored (strings); JSON-valued ones (`ivy.payload.*`, headers, arrays) are JSON strings. See span-conventions.md.' },
+    attributes: {
+      ...strMap,
+      description:
+        'Span attributes as stored (strings); JSON-valued ones (`ivy.payload.*`, headers, arrays) are JSON strings. See ' +
+        'span-conventions.md. Late Lambda report data (`ivy.billed_duration_ms`, `ivy.memory_max_used_mb`, ' +
+        '`ivy.memory_size_mb`) is merged into the invocation span; update spans are never listed themselves.',
+    },
     resource: strMap,
     events: { type: 'array', items: ref('SpanEvent') },
   }),
@@ -139,12 +163,15 @@ export const schemas = {
   ErrorGroup: object(
     {
       fingerprint: str, function: str, ...projectFields, error_type: str, error_message: str, count: int,
-      first_seen: time, last_seen: time, sample_trace_id: str,
+      first_seen: time, last_seen: time,
+      sample_trace_id: { ...nstr, description: 'null for the synthetic `Throttled` group: throttled requests never reach the function, so there is no trace.' },
+      kind: { type: 'string', enum: ['error', 'throttle'], description: '`throttle`: one synthetic group per function counting throttles (error_type `Throttled`).' },
+      failure_kind: failureKind,
     },
     ['fingerprint', 'function', 'error_type', 'error_message', 'count', 'first_seen', 'last_seen', 'sample_trace_id'],
   ),
   ErrorGroupList: list('ErrorGroup'),
-  TimeseriesPoint: object({ ts: time, invocations: int, errors: int, p95_ms: num }),
+  TimeseriesPoint: object({ ts: time, invocations: int, errors: int, p95_ms: num, throttles: int }),
   Timeseries: list('TimeseriesPoint'),
 
   AwsSetup: object({
@@ -158,6 +185,11 @@ export const schemas = {
     status: { type: 'string', enum: ['pending', 'connected', 'error'] },
     error: { ...nstr, description: 'On a connected account: per-region sync errors, one per line.' },
     created_at: time, verified_at: ntime, last_sync_at: ntime, reviewed_at: ntime, syncing: bool,
+    throttle_metrics: { type: 'boolean', description: 'Poll CloudWatch for Lambda throttles (GetMetricData, billed to this AWS account).' },
+    throttle_status: {
+      type: ['string', 'null'], enum: ['ok', 'missing_permission', 'error', null],
+      description: '`missing_permission`: the stack predates `cloudwatch:GetMetricData`; update the stack with the current template.',
+    },
     counts: object({ ...Object.fromEntries(TRACE_STATES.map((s) => [s, int])), total: int, new: int }),
     quick_create_url: { ...nstr, description: 'Only with the publish-cfn-template hook; carries no parameters or secrets.' },
     quick_create_error: { ...nstr, description: 'Why there is no quick-create link although the hook exists.' },
@@ -172,11 +204,12 @@ export const schemas = {
       all_regions: bool,
       stack_region: str,
       default_project: { type: 'string', description: 'Project the UI preselects (slug or ID); never causes tracing by itself.' },
+      throttle_metrics: { type: 'boolean', default: true },
     },
     ['account_id', 'regions'],
   ),
   AwsAccountUpdate: object(
-    { name: str, regions: strs, all_regions: bool, default_project: nstr, reviewed: { type: 'boolean', description: '`true` marks the function list as seen.' } },
+    { name: str, regions: strs, all_regions: bool, default_project: nstr, throttle_metrics: bool, reviewed: { type: 'boolean', description: '`true` marks the function list as seen.' } },
     [],
   ),
   AwsVerifyResult: object({ verified: bool, account: ref('AwsAccount') }),

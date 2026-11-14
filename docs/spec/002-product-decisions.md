@@ -63,6 +63,12 @@ live in `docs/implementation/`.
   At the end it offers to add the Ivy agent skill, an `AGENTS.md` pointer and the MCP server config to the repo.
 - Lambda spans are sent per invocation; no batching across invocations (it would delay traces while debugging).
 
+## Failures outside the handler
+- Ivy shows failures outside the handler (init errors, crashes, OOM, timeouts) and throttles; it never ships full
+  function logs. Only a failure adds data (its last log lines, at most 50 lines / 8 KB); a healthy invocation gets
+  a few attributes and no extra invocation. Throttle polling uses CloudWatch in the customer's account, is on by
+  default and can be switched off per account (see `docs/implementation/platform-failures.md`).
+
 ## Hooks
 - The backend runs optional executables from a hooks directory, git-hooks style: notification hooks
   (`on-<noun>-<past-tense>`, async, result ignored) and provider hooks (`<verb>-<noun>`, return a result, with a

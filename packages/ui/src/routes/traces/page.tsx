@@ -3,9 +3,10 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { ExternalLink, ScrollText } from "lucide-react";
 
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
-import { ColdStart, InvocationStatus } from "@/components/common/status";
+import { ColdStart, InvocationStatus, MemoryUsage } from "@/components/common/status";
 import { PayloadPreview } from "@/components/stats/payload-preview";
 import { ErrorBlock } from "@/components/trace/error-block";
+import { FailureNote } from "@/components/trace/failure-note";
 import { Logs } from "@/components/trace/logs";
 import { SpanFields } from "@/components/trace/span-details";
 import { TraceGraph } from "@/components/trace/trace-graph";
@@ -27,8 +28,10 @@ import {
   formatTokens,
   getException,
   getLogs,
+  invocationResources,
   isInvocationSpan,
   llmUsage,
+  spanFailureKind,
   type LlmUsage,
 } from "@/lib/spans/services";
 import { buildWaterfall, filterInvocation, findRootInvocation } from "@/lib/spans/tree";
@@ -68,6 +71,7 @@ function ConsoleLinks({ invocation }: { invocation: Span }) {
 function Summary({ invocation, traceId, usage }: { invocation: Span; traceId: string; usage?: LlmUsage }) {
   const a = invocation.attributes;
   const exception = getException(invocation);
+  const res = invocationResources(invocation);
   const tokens = usage && usage.calls > 0;
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -78,6 +82,7 @@ function Summary({ invocation, traceId, usage }: { invocation: Span; traceId: st
             errorType={exception?.type}
             errorMessage={exception?.message}
             httpStatus={a["http.response.status_code"]}
+            failureKind={spanFailureKind(invocation)}
           />
         </span>
         <dt className="hidden md:block">Start time</dt>
@@ -87,10 +92,24 @@ function Summary({ invocation, traceId, usage }: { invocation: Span; traceId: st
           {formatDuration(invocation.duration_ms)}
           {a["faas.coldstart"] === "true" && <ColdStart />}
         </dd>
-        {a["ivy.memory_used_mb"] && (
+        {res.billedDurationMs !== null && (
+          <>
+            <dt className="hidden md:block">Billed</dt>
+            <dd className="mr-4 hidden font-semibold text-foreground md:block">{formatDuration(res.billedDurationMs)}</dd>
+          </>
+        )}
+        {res.initDurationMs !== null && (
+          <>
+            <dt className="hidden md:block">Init</dt>
+            <dd className="mr-4 hidden font-semibold text-foreground md:block">{formatDuration(res.initDurationMs)}</dd>
+          </>
+        )}
+        {res.memoryUsedMb !== null && (
           <>
             <dt className="hidden md:block">Memory</dt>
-            <dd className="mr-4 hidden font-semibold text-foreground md:block">{a["ivy.memory_used_mb"]} MB</dd>
+            <dd className="mr-4 hidden font-semibold text-foreground md:block">
+              <MemoryUsage used={res.memoryUsedMb} limit={res.memoryLimitMb} />
+            </dd>
           </>
         )}
         {tokens && (
@@ -197,9 +216,10 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
           <Link to={invocationsLink(scope, { function: invocation.name })}>← {invocation.name}</Link>
         </Button>
         <h1 className="truncate text-2xl font-bold">
-          {invocation.attributes["faas.invocation_id"] ?? invocation.name}
+          {invocation.attributes["faas.invocation_id"] || invocation.name}
         </h1>
         <Summary invocation={invocation} traceId={traceId} usage={usage} />
+        <FailureNote invocation={invocation} className="mt-3 max-w-3xl" />
       </div>
 
       <div className="h-full flex-1 overflow-hidden md:flex">

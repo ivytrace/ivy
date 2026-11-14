@@ -97,6 +97,13 @@ export function buildTemplate(params: TemplateParams): Record<string, unknown> {
                     Action: ['lambda:PublishLayerVersion', 'lambda:GetLayerVersion'],
                     Resource: [sub(layerArn), sub(`${layerArn}:*`)],
                   },
+                  {
+                    // Lambda throttles (AWS/Lambda Throttles); GetMetricData has no resource-level permissions.
+                    Sid: 'ThrottleMetrics',
+                    Effect: 'Allow',
+                    Action: ['cloudwatch:GetMetricData'],
+                    Resource: '*',
+                  },
                 ],
               },
             },

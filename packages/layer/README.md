@@ -88,6 +88,9 @@ extension idles.
 | `IVY_FLUSH_BUDGET_MS` | `2000` | max time the extension spends exporting after each invocation |
 | `IVY_MAX_QUEUE_SPANS` | `2000` | spans buffered while the endpoint is unreachable |
 | `IVY_EXTENSION_PORT` | `9790` | localhost port between the function and the extension |
+| `IVY_PLATFORM_TELEMETRY` | `true` | subscribe to the Lambda Telemetry API to report init failures, crashes, out of memory and timeouts (see `docs/implementation/platform-failures.md`) |
+| `IVY_TELEMETRY_PORT` | `9791` | port the extension receives Telemetry API events on |
+| `IVY_REPORT_METRICS` | `true` | send billed duration and max memory used (from `platform.report`) as update spans |
 | `IVY_DEBUG` | `false` | log layer diagnostics |
 
 ## LLM calls (Vercel AI SDK)

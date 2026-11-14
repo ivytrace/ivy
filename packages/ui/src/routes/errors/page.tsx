@@ -4,6 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 
 import { DataTable } from "@/components/tables/data-table";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
+import { FailureBadge } from "@/components/common/status";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltipped } from "@/components/ui/tooltipped";
@@ -25,12 +26,26 @@ function columnsFor(scope: Scope): ColumnDef<ErrorGroup, unknown>[] {
   {
     accessorKey: "error_type",
     header: "Error",
-    cell: ({ row }) => (
-      <Link to={traceLink(rowScope(scope, row.original), row.original.sample_trace_id)} className="block max-w-2xl">
-        <span className="font-semibold text-red-400">{row.original.error_type}</span>
-        <span className="mt-0.5 block line-clamp-2 text-muted-foreground">{row.original.error_message}</span>
-      </Link>
-    ),
+    cell: ({ row }) => {
+      const g = row.original;
+      if (g.kind === "throttle") {
+        return (
+          <Link to={invocationsLink(rowScope(scope, g), { function: g.function })} className="block max-w-2xl">
+            <span className="font-semibold text-orange-400">Throttled</span>
+            <span className="mt-0.5 block line-clamp-2 text-muted-foreground">{g.error_message}</span>
+          </Link>
+        );
+      }
+      return (
+        <Link to={traceLink(rowScope(scope, g), g.sample_trace_id ?? "")} className="block max-w-2xl">
+          <span className="flex items-center gap-2">
+            {g.failure_kind && <FailureBadge kind={g.failure_kind} hint={false} />}
+            <span className="font-semibold text-red-400">{g.error_type}</span>
+          </span>
+          <span className="mt-0.5 block line-clamp-2 text-muted-foreground">{g.error_message}</span>
+        </Link>
+      );
+    },
   },
   {
     accessorKey: "function",
@@ -75,24 +90,34 @@ function columnsFor(scope: Scope): ColumnDef<ErrorGroup, unknown>[] {
     header: "",
     enableSorting: false,
     meta: { className: "text-right" },
-    cell: ({ row }) => (
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" size="sm" asChild>
-          <Link to={traceLink(rowScope(scope, row.original), row.original.sample_trace_id)}>Sample trace</Link>
-        </Button>
-        <Button variant="outline" size="sm" asChild>
-          <Link
-            to={invocationsLink(rowScope(scope, row.original), {
-              function: row.original.function,
-              status: "error",
-              q: row.original.error_message.slice(0, 120),
-            })}
-          >
-            Invocations
-          </Link>
-        </Button>
-      </div>
-    ),
+    cell: ({ row }) =>
+      row.original.kind === "throttle" ? (
+        <div className="flex justify-end gap-2">
+          <Tooltipped title="Throttled requests never reach the function, so there is no trace">
+            <span className="self-center px-3 text-xs text-muted-foreground">No trace</span>
+          </Tooltipped>
+          <Button variant="outline" size="sm" asChild>
+            <Link to={invocationsLink(rowScope(scope, row.original), { function: row.original.function })}>Function</Link>
+          </Button>
+        </div>
+      ) : (
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <Link to={traceLink(rowScope(scope, row.original), row.original.sample_trace_id ?? "")}>Sample trace</Link>
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <Link
+              to={invocationsLink(rowScope(scope, row.original), {
+                function: row.original.function,
+                status: "error",
+                q: row.original.error_message.slice(0, 120),
+              })}
+            >
+              Invocations
+            </Link>
+          </Button>
+        </div>
+      ),
   },
   ];
 }
@@ -112,6 +137,7 @@ export default function Errors() {
       <h1 className="text-2xl font-bold">Errors</h1>
       <p className="mb-4 text-sm text-muted-foreground">
         Failed invocations, grouped by function, error type and normalized message{scope.project === ALL_PROJECTS ? ", across all projects" : ""}.
+        Throttled requests are counted per function; they never reached the function, so they have no trace.
       </p>
       <div className="py-4">
         <Select
@@ -139,7 +165,7 @@ export default function Errors() {
         <DataTable
           columns={columns}
           data={data.items}
-          getRowId={(g) => `${g.project_id ?? ""}/${g.fingerprint}`}
+          getRowId={(g) => `${g.project_id ?? ""}/${g.fingerprint}/${g.function}`}
           defaultSorting={[{ id: "count", desc: true }]}
           empty={<EmptyState title="No errors" description="No failed invocations in this time range." />}
         />

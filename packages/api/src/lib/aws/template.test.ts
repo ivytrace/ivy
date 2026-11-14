@@ -36,6 +36,7 @@ describe('CloudFormation template', () => {
     const actions = role.Policies[0].PolicyDocument.Statement.flatMap((s: { Action: string[] }) => s.Action).sort();
     expect(actions).toEqual(
       [
+        'cloudwatch:GetMetricData',
         'lambda:GetFunction',
         'lambda:GetFunctionConfiguration',
         'lambda:GetLayerVersion',

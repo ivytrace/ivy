@@ -1,5 +1,6 @@
 import { BUCKET_SECONDS, pickBucket } from '../stats/buckets.js';
 import { buildRollupSource } from '../stats/rollup-query.js';
+import { throttleSource } from '../stats/throttles.js';
 import { queryScope, scopedDataQuery, type DataScope } from '../tenancy/context.js';
 import { isoFromMs, round } from '../utils/format.js';
 import { badRequest } from '../utils/http-error.js';
@@ -35,6 +36,14 @@ export async function timeseries(scope: DataScope, range: TimeRange, options: { 
     source.params,
   );
 
+  const throttles = throttleSource({ scope: queryScope(scope), range, bucketSeconds: step, functionName: options.function || undefined });
+  const throttleRows = await scopedDataQuery<{ bucket_ms: number; throttles: number }>(
+    scope,
+    `SELECT toUnixTimestamp(bucket) * 1000 AS bucket_ms, sum(throttles) AS throttles FROM (${throttles.sql}) GROUP BY bucket`,
+    throttles.params,
+  );
+  const throttleCounts = new Map(throttleRows.map((row) => [row.bucket_ms, row.throttles]));
+
   const byBucket = new Map(rows.map((row) => [row.bucket_ms, row]));
   const items = [];
   for (let ts = first; ts < range.to; ts += stepMs) {
@@ -44,6 +53,7 @@ export async function timeseries(scope: DataScope, range: TimeRange, options: { 
       invocations: row?.invocations ?? 0,
       errors: row?.errors ?? 0,
       p95_ms: row ? round(row.quantiles[1], 1) : 0,
+      throttles: throttleCounts.get(ts) ?? 0,
     });
   }
   return items;

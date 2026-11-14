@@ -15,10 +15,10 @@ import { useTimeRange } from "@/components/layout/time-range";
 import { useFunctions, useInvocations, useTimeseries } from "@/lib/api/hooks";
 import type { Invocation } from "@/lib/api/types";
 import { PickProject } from "@/components/common/pick-project";
-import { ALL_PROJECTS, invocationsLink, traceLink, type Scope } from "@/lib/links/links";
+import { ALL_PROJECTS, errorsLink, invocationsLink, traceLink, type Scope } from "@/lib/links/links";
 import { useScope } from "@/lib/links/use-scope";
 import { triggerLabel } from "@/lib/spans/services";
-import { formatAgo, formatDuration, formatTimestamp } from "@/lib/utils/format";
+import { formatAgo, formatDuration, formatNumber, formatTimestamp } from "@/lib/utils/format";
 
 const PAGE_SIZE = 50;
 const ALL = "__all";
@@ -58,6 +58,7 @@ function columnsFor(scope: Scope): ColumnDef<Invocation, unknown>[] {
         errorType={row.original.error_type}
         errorMessage={row.original.error_message}
         httpStatus={row.original.http_status}
+        failureKind={row.original.failure_kind}
       />
     ),
   },
@@ -90,7 +91,7 @@ function columnsFor(scope: Scope): ColumnDef<Invocation, unknown>[] {
     header: "Request ID",
     cell: ({ row }) => (
       <Link to={linkTo(row.original)} className="font-mono text-xs text-muted-foreground hover:text-foreground">
-        {row.original.request_id}
+        {row.original.request_id || <span className="font-sans italic">no request</span>}
       </Link>
     ),
   },
@@ -150,6 +151,7 @@ function ProjectInvocations({ scope }: { scope: Scope }) {
   const functions = useFunctions(range);
   const series = useTimeseries(range, { function: fn });
 
+  const throttles = fn ? (functions.data?.items.find((f) => f.name === fn)?.throttles ?? 0) : 0;
   const functionNames = [...new Set([...(functions.data?.items.map((f) => f.name) ?? []), ...(fn ? [fn] : [])])].sort();
 
   return (
@@ -158,6 +160,18 @@ function ProjectInvocations({ scope }: { scope: Scope }) {
       <p className="mb-4 text-sm text-muted-foreground">
         {fn ? "Invocations of this function." : "All traced invocations, newest first."}
       </p>
+      {throttles > 0 && (
+        <p className="text-sm">
+          <span className="font-medium text-orange-400">{formatNumber(throttles)} throttled</span>
+          <span className="text-muted-foreground">
+            {" "}
+            requests in this time range. Lambda rejected them before they reached the function, so they have no traces.{" "}
+          </span>
+          <Link to={errorsLink(scope, fn)} className="text-primary hover:underline">
+            Errors
+          </Link>
+        </p>
+      )}
 
       {fn && (
         <div className="my-5 grid gap-5 md:grid-cols-3">
@@ -168,6 +182,7 @@ function ProjectInvocations({ scope }: { scope: Scope }) {
             error={series.error}
             metric="errors"
             color="var(--chart-2)"
+            stacked={{ metric: "throttles", label: "Throttled", color: "var(--chart-4)" }}
           />
           <TimeseriesChart
             title="p95 duration"

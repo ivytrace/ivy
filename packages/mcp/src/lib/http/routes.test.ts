@@ -1,4 +1,4 @@
-import { checkoutFailed, checkoutOk, errorGroups, invocations, queueFailed } from "@ivy/format/fixtures";
+import { checkoutFailed, checkoutOk, errorGroups, invocations, queueFailed, throttledGroup } from "@ivy/format/fixtures";
 import type { ErrorGroup, Invocation, Trace } from "@ivy/spans";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -26,7 +26,7 @@ const staging: Seed = {
   workspace: { id: "ten_stg", name: "Staging", slug: "staging" },
   invocations: [invocations[1]],
   traces: [queueFailed],
-  errors: [errorGroups[1]],
+  errors: [errorGroups[1], throttledGroup],
 };
 const broken: Seed = { workspace: { id: "ten_x", name: "Broken", slug: "broken" }, invocations: [], traces: [], errors: [], broken: true };
 
@@ -147,8 +147,9 @@ describe("MCP server", () => {
     const result = await call([prod, broken, staging], "list_error_groups");
     expect(result.isError).toBeFalsy();
     expect(textOf(result)).toMatchInlineSnapshot(`
-      "2 error groups (49 failed invocations) in 3 workspaces, last 24h:
+      "3 error groups (49 failed invocations, 31 throttled requests without a trace) in 3 workspaces, last 24h:
       [shop-production] 42× checkout-createOrder · TypeError: Cannot read properties of undefined (reading 'id') · first 2026-11-14T08:12:44Z · last 2026-11-14T12:00:00Z · sample trace 6af84d409a1b2c3d4e5f60718293a4b5
+      [staging] 31× orders-processQueue · Throttled: Lambda rejected these invocations, so they never reached the function and there is no trace · first 2026-11-14T11:40:00Z · last 2026-11-14T11:52:00Z
       [staging] 7× orders-processQueue · ConditionalCheckFailedException: The conditional request failed · first 2026-11-14T10:01:02Z · last 2026-11-14T12:00:05Z · sample trace 6af84d4577aa88bb99cc00dd11ee22ff
 
       Not included (query failed): broken (shard unavailable)"

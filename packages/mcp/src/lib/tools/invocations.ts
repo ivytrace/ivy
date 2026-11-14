@@ -9,7 +9,9 @@ import { failure, functionName, guarded, label, limit, READ_ONLY, since, text, p
 
 const LIST_FORMAT =
   "Each line: [workspace], time (UTC), status, function, duration, `cold` for cold starts, the HTTP route and status " +
-  "or the trigger, the error for failures, and the trace ID to pass to get_trace_summary or compare_invocations.";
+  "or the trigger, the error for failures, and the trace ID to pass to get_trace_summary or compare_invocations. " +
+  "Failures outside the handler carry a label (Init failed, Out of memory, Timed out, Crashed) and say when there is no " +
+  "trace beyond the platform report and the log tail (the runtime never started, or the process died).";
 
 /** Runs the query in every selected workspace, merges newest first and cuts to the combined limit. */
 async function listAcross(data: IvyData, scope: string | undefined, query: InvocationQuery & { limit: number; since: string }, what: string) {
@@ -35,7 +37,8 @@ export function registerInvocationTools(server: McpServer, data: IvyData) {
     {
       title: "Find failing invocations",
       description:
-        "List the most recent failed Lambda invocations across your workspaces (or one), newest first, one line each. " +
+        "List the most recent failed Lambda invocations across your workspaces (or one), newest first, one line each, " +
+        "including failures outside the handler: init errors (e.g. a missing module), out-of-memory and other crashes, timeouts. " +
         "Start here when asked what is failing or why a function errors. Then call get_trace_summary with a trace ID for " +
         `the full trace, or compare_invocations to diff it against a successful run. ${LIST_FORMAT}`,
       inputSchema: { workspace, project, function: functionName, since: since("1h"), limit: limit(20) },

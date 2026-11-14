@@ -1,3 +1,4 @@
+import { mergeUpdateSpans } from '@ivy/spans';
 import { projectFilter } from '../clickhouse/scoped.js';
 import { queryScope, scopedDataQuery, type DataScope } from '../tenancy/context.js';
 import { normalizeKind, normalizeStatus } from '../traces/otel.js';
@@ -52,7 +53,8 @@ export async function getTrace(scope: DataScope, rawTraceId: string) {
 
   return {
     trace_id: traceId,
-    spans: rows.map((row) => {
+    // Update spans (late Lambda report data from the extension) are folded into their invocation span.
+    spans: mergeUpdateSpans(rows.map((row) => {
       const durationMs = row.duration_ns / 1e6;
       return {
         span_id: row.span_id,
@@ -73,6 +75,6 @@ export async function getTrace(scope: DataScope, rawTraceId: string) {
           attributes: row.event_attributes[i],
         })),
       };
-    }),
+    })),
   };
 }

@@ -155,6 +155,8 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
       last_sync_at: new Date(at - 2 * 60_000).toISOString(),
       reviewed_at: new Date(at - DAY).toISOString(),
       template_download_url: "",
+      throttle_metrics: true,
+      throttle_status: "ok",
       created_ms: at - 5 * DAY,
       sync_until: 0,
       ...fields,
@@ -176,6 +178,7 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
           reviewed_at: null,
           error: "ap-southeast-2: User: arn:aws:sts::210987654321:assumed-role/IvyTrace-accstagi/ivy-trace is not authorized to perform: lambda:ListFunctions",
           last_sync_at: new Date(now - 4 * 60_000).toISOString(),
+          throttle_status: "missing_permission",
         },
         now,
       ),
@@ -377,6 +380,8 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
           verified_at: null,
           last_sync_at: null,
           reviewed_at: null,
+          throttle_metrics: body.throttle_metrics !== false,
+          throttle_status: null,
           created_ms: Date.now(),
         },
         Date.now(),
@@ -458,6 +463,7 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
       account.status = "connected";
       account.error = null;
       account.verified_at = new Date().toISOString();
+      account.throttle_status = "ok";
       if (!functions.some((f) => f.account_id === account.account_id)) functions.push(...makeFunctions(account.account_id, NEW_ACCOUNT(account.stack_region), Date.now()));
       startSync(account);
       return { status: 200, body: { verified: true, account: presentAccount(account) } };
@@ -475,6 +481,7 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
       if (typeof body.name === "string" && body.name) account.name = body.name;
       if (body.default_project !== undefined) account.default_project_id = projectBy(body.default_project as string)?.id ?? null;
       if (body.reviewed === true) account.reviewed_at = new Date().toISOString();
+      if (typeof body.throttle_metrics === "boolean") account.throttle_metrics = body.throttle_metrics;
       if (regionsChanged) startSync(account);
       return { status: 200, body: presentAccount(account) };
     }

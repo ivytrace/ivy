@@ -27,7 +27,7 @@ export const syncAwsAccount = (ws: string, id: string) => sendJson<{ started: bo
 export const updateAwsAccount = (
   ws: string,
   id: string,
-  body: Partial<Pick<AwsAccount, "name" | "regions" | "all_regions">> & { default_project?: string | null; reviewed?: boolean },
+  body: Partial<Pick<AwsAccount, "name" | "regions" | "all_regions" | "throttle_metrics">> & { default_project?: string | null; reviewed?: boolean },
 ) => sendJson<AwsAccount>("PATCH", accountUrl(ws, id), body);
 
 export const deleteAwsAccount = (ws: string, id: string, detach: boolean) =>

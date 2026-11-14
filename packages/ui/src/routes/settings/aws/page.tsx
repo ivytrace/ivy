@@ -149,6 +149,9 @@ function AccountCard({
           <div className="text-xs text-muted-foreground">
             {account.last_sync_at ? `Synced ${formatAgo(account.last_sync_at)}` : pending ? "Deploy the stack to finish" : "Not synced yet"}
           </div>
+          {account.throttle_metrics && account.throttle_status === "missing_permission" && (
+            <div className="text-xs text-amber-300">Update the stack to see throttles</div>
+          )}
         </div>
         <div className="min-w-40">
           <span className="inline-flex items-center gap-1.5 text-sm">

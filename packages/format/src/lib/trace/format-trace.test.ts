@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkoutFailed, checkoutOk, plainOtel, queueFailed, supportBot, supportBotGenAi } from "../fixtures/traces.js";
+import { checkoutFailed, checkoutOk, initFailed, oomCrashed, plainOtel, queueFailed, supportBot, supportBotGenAi } from "../fixtures/traces.js";
 import { estimateTokens } from "../text/text.js";
 import { formatTrace } from "./format-trace.js";
 
@@ -18,6 +18,25 @@ describe("formatTrace", () => {
 
   it("renders traces without an Ivy invocation span", () => {
     expect(formatTrace(plainOtel)).toMatchSnapshot();
+  });
+
+  it("labels an init failure, says why there is no trace, and shows the log tail", () => {
+    const text = formatTrace(initFailed);
+    expect(text).toMatchSnapshot();
+    expect(text).toContain("ERROR (Init failed)");
+    expect(text).toContain("no request");
+    expect(text).toContain("the runtime never started the handler");
+    expect(text).toContain("Cannot find module 'left-pad'");
+    expect(text).toContain("init 213ms");
+  });
+
+  it("labels an out-of-memory crash with memory used against the limit and billed duration", () => {
+    const text = formatTrace(oomCrashed);
+    expect(text).toMatchSnapshot();
+    expect(text).toContain("ERROR (Out of memory)");
+    expect(text).toContain("128 MB used of 128 MB");
+    expect(text).toContain("billed 2381ms");
+    expect(text).toContain("JavaScript heap out of memory");
   });
 
   it("summary detail leaves out payloads and info logs", () => {

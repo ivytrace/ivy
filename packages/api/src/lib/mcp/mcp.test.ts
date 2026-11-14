@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ClickHouseClient } from '@clickhouse/client';
-import { checkoutFailed, checkoutOk, errorGroups, invocations } from '@ivy/format/fixtures';
+import { checkoutFailed, checkoutOk, errorGroups, failureInvocations, initFailed, invocations, oomCrashed } from '@ivy/format/fixtures';
 import type { Span, Trace } from '@ivy/spans';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -48,6 +48,32 @@ const spanRows = (trace: Trace) =>
     event_ts_ms: s.events.map((e) => ms(e.ts)), event_names: s.events.map((e) => e.name), event_attributes: s.events.map((e) => e.attributes),
   }));
 
+/** The OOM trace as stored: report data arrives later as an update span with the root's span ID. */
+const REPORT_KEYS = ['ivy.billed_duration_ms', 'ivy.memory_max_used_mb', 'ivy.memory_size_mb'];
+const oomRoot = oomCrashed.spans[0];
+const oomStored: Trace = {
+  trace_id: oomCrashed.trace_id,
+  spans: [
+    { ...oomRoot, attributes: Object.fromEntries(Object.entries(oomRoot.attributes).filter(([k]) => !REPORT_KEYS.includes(k))) },
+    ...oomCrashed.spans.slice(1),
+    {
+      ...oomRoot,
+      status_code: 'UNSET',
+      status_message: '',
+      events: [],
+      attributes: { 'ivy.update': 'true', ...Object.fromEntries(REPORT_KEYS.map((k) => [k, oomRoot.attributes[k]])) },
+    },
+  ],
+};
+const storedTraces = [checkoutFailed, checkoutOk, initFailed, oomStored];
+
+/** invocations rows as the invocations route selects them (absent values as '' / 0). */
+const invocationRow = (i: (typeof invocations)[number]) => ({
+  ...i, ts_ms: ms(i.ts), http_method: i.http_method ?? '', http_path: i.http_path ?? '', http_status: i.http_status ?? 0,
+  error_type: i.error_type ?? '', error_message: i.error_message ?? '', memory_used_mb: i.memory_used_mb ?? 0,
+  memory_limit_mb: i.memory_limit_mb ?? 0, failure_phase: i.failure_phase ?? '', init_duration_ms: i.init_duration_ms ?? 0,
+});
+
 let captured: Captured[] = [];
 const fake = {
   query: async (params: Captured) => {
@@ -55,14 +81,17 @@ const fake = {
     const sql = params.query;
     let rows: unknown[] = [];
     if (sql.includes('FROM otel_traces')) {
-      const trace = [checkoutFailed, checkoutOk].find((t) => t.trace_id === params.query_params.trace_id);
+      const trace = storedTraces.find((t) => t.trace_id === params.query_params.trace_id);
       rows = trace ? spanRows(trace) : [];
     } else if (sql.includes('error_fingerprint')) {
-      rows = errorGroups.map((g) => ({ ...g, first_seen_ms: ms(g.first_seen), last_seen_ms: ms(g.last_seen) }));
+      rows = errorGroups.map((g) => ({
+        ...g, first_seen_ms: ms(g.first_seen), last_seen_ms: ms(g.last_seen), failure_phase: g.failure_kind === 'init_failed' ? 'init' : '',
+      }));
     } else if (sql.includes('FROM invocations')) {
-      rows = invocations
+      rows = [...invocations, ...failureInvocations]
         .filter((i) => !params.query_params.status || i.status === params.query_params.status)
-        .map((i) => ({ ...i, ts_ms: ms(i.ts), http_method: i.http_method ?? '', http_path: i.http_path ?? '', http_status: i.http_status ?? 0, error_type: i.error_type ?? '', error_message: i.error_message ?? '' }));
+        .filter((i) => !params.query_params.function || i.function === params.query_params.function)
+        .map(invocationRow);
     }
     return { json: async () => rows };
   },
@@ -123,6 +152,21 @@ describe('MCP endpoint in the API', () => {
     }
   });
 
+  it('labels failures outside the handler and says when there is no trace', async () => {
+    const client = await connect(appWith());
+    const failing = textOf(await client.callTool({ name: 'find_failing_invocations', arguments: { function: 'reports-export' } }));
+    expect(failing).toContain("Init failed · Runtime.ImportModuleError: Error: Cannot find module 'left-pad' · no request");
+    expect(failing).toContain('no trace: the runtime never started the handler');
+    expect(failing).toContain('Out of memory · Runtime.OutOfMemory');
+
+    const groups = textOf(await client.callTool({ name: 'list_error_groups', arguments: {} }));
+    expect(groups).toContain('3× reports-export · Init failed · Runtime.ImportModuleError');
+
+    const summary = textOf(await client.callTool({ name: 'get_trace_summary', arguments: { trace_id: oomCrashed.trace_id } }));
+    expect(summary).toContain('ERROR (Out of memory)');
+    expect(summary).toContain('128 MB used of 128 MB · billed 2381ms');
+  });
+
   it('turns API validation errors into tool errors', async () => {
     const client = await connect(appWith());
     const result = (await client.callTool({ name: 'search_invocations', arguments: { since: '0m' } })) as CallToolResult;
@@ -156,9 +200,9 @@ describe('MCP endpoint in the API', () => {
 
     const text = textOf(await client.callTool({ name: 'find_failing_invocations', arguments: { since: '24h' } }));
     const lines = text.split('\n');
-    expect(lines[0]).toBe('4 failed invocations in 2 workspaces, last 24h, newest first:');
-    expect(lines.filter((l) => l.startsWith('[prod] '))).toHaveLength(2);
-    expect(lines.filter((l) => l.startsWith('[staging] '))).toHaveLength(2);
+    expect(lines[0]).toBe('8 failed invocations in 2 workspaces, last 24h, newest first:');
+    expect(lines.filter((l) => l.startsWith('[prod] '))).toHaveLength(4);
+    expect(lines.filter((l) => l.startsWith('[staging] '))).toHaveLength(4);
 
     const data = captured.filter((q) => /FROM (otel_traces|invocations)/.test(q.query));
     expect(data.map((q) => q.query_params.tenant).sort()).toEqual(['ten_a', 'ten_b']);
@@ -238,6 +282,16 @@ describe('GET …/traces/:id?format=text', () => {
   it('validates detail and max_tokens', async () => {
     expect((await app.request(`/api/w/acme/p/default/traces/${checkoutFailed.trace_id}?format=text&detail=huge`)).status).toBe(400);
     expect((await app.request(`/api/w/acme/p/default/traces/${checkoutFailed.trace_id}?format=text&max_tokens=-1`)).status).toBe(400);
+  });
+
+  it('merges update spans into the invocation span and leaves them out of the span list', async () => {
+    const res = await app.request(`/api/w/acme/p/default/traces/${oomCrashed.trace_id}`);
+    const { spans } = (await res.json()) as Trace;
+    expect(spans).toHaveLength(oomCrashed.spans.length);
+    expect(spans.filter((s) => s.span_id === oomRoot.span_id)).toHaveLength(1);
+    expect(spans[0].attributes).toMatchObject({ 'ivy.billed_duration_ms': '2381', 'ivy.memory_max_used_mb': '128', 'error.type': 'Runtime.OutOfMemory' });
+    expect(spans[0].attributes['ivy.update']).toBeUndefined();
+    expect(spans[0].status_code).toBe('ERROR');
   });
 
   it('still returns JSON by default', async () => {

@@ -1,5 +1,6 @@
 import { queryScope, scopedDataQuery, type DataScope } from '../tenancy/context.js';
 import { buildRollupSource } from '../stats/rollup-query.js';
+import { throttleSource } from '../stats/throttles.js';
 import { isoFromMs, round } from '../utils/format.js';
 import type { TimeRange } from '../utils/time-range.js';
 import { projectFields, type ProjectNames } from './projects.js';
@@ -38,6 +39,17 @@ export async function functionSummaries(scope: DataScope, range: TimeRange, proj
      ORDER BY invocations DESC, function`,
     source.params,
   );
+  const throttles = throttleSource({ scope: queryScope(scope), range, byProject });
+  const throttleRows = await scopedDataQuery<{ project_id: string; function: string; region: string; throttles: number }>(scope, throttles.sql, throttles.params);
+  const key = (r: { project_id?: string; function: string; region: string }) => `${byProject ? r.project_id : ''}/${r.region}/${r.function}`;
+  const throttleCounts = new Map(throttleRows.map((r) => [key(r), r.throttles]));
+  // Functions that were only throttled in the range still show up, with zero invocations.
+  const seen = new Set(rows.map(key));
+  for (const t of throttleRows) {
+    if (!seen.has(key(t))) {
+      rows.push({ project_id: t.project_id, function: t.function, region: t.region, invocations: 0, errors: 0, cold_starts: 0, duration_sum: 0, last_invoked_ms: 0, quantiles: [0, 0, 0] });
+    }
+  }
   return rows.map((row) => ({
     name: row.function,
     region: row.region,
@@ -50,6 +62,7 @@ export async function functionSummaries(scope: DataScope, range: TimeRange, proj
     p50_ms: round(row.quantiles[0], 1),
     p95_ms: round(row.quantiles[1], 1),
     p99_ms: round(row.quantiles[2], 1),
-    last_invoked: isoFromMs(row.last_invoked_ms),
+    last_invoked: row.last_invoked_ms > 0 ? isoFromMs(row.last_invoked_ms) : null,
+    throttles: throttleCounts.get(key(row)) ?? 0,
   }));
 }

@@ -13,7 +13,10 @@ export function registerErrorTools(server: McpServer, data: IvyData) {
       description:
         "Distinct errors across your workspaces (or one), grouped by function, error type and normalized message, most " +
         "frequent first. Use it for an overview of what is breaking and how often. Each line: [workspace], count, " +
-        "function, error, first and last seen (UTC), and a sample trace ID to pass to get_trace_summary.",
+        "function, the failure label for errors outside the handler (Init failed, Out of memory, Timed out, Crashed), error, " +
+          "first and last seen (UTC), and a sample trace ID to pass to get_trace_summary. Init failures have no trace spans: " +
+          "the sample trace holds only the platform report and the log tail. Lambda throttles appear as one \"Throttled\" " +
+          "group per function with a count; throttled requests never reach the function, so they have no trace.",
       inputSchema: { workspace, project, function: functionName, since: since("24h"), limit: limit(20) },
       annotations: { title: "List error groups", ...READ_ONLY },
     },
@@ -30,8 +33,10 @@ export function registerErrorTools(server: McpServer, data: IvyData) {
           return text(`No errors${args.function ? ` in ${args.function}` : ""} in ${where} in the last ${args.since}.${failureNote(result.failed)}`);
         }
         const shown = groups.slice(0, args.limit);
-        const total = groups.reduce((n, g) => n + g.group.count, 0);
-        const head = `${groups.length} error groups (${total} failed invocations) in ${where}, last ${args.since}${
+        const failed = groups.filter((g) => g.group.kind !== "throttle").reduce((n, g) => n + g.group.count, 0);
+        const throttled = groups.filter((g) => g.group.kind === "throttle").reduce((n, g) => n + g.group.count, 0);
+        const counts = `${failed} failed invocations${throttled ? `, ${throttled} throttled requests without a trace` : ""}`;
+        const head = `${groups.length} error groups (${counts}) in ${where}, last ${args.since}${
           shown.length < groups.length ? `, top ${shown.length}` : ""
         }:`;
         const lines = shown.map((g) => `${label(g.workspace)} ${formatErrorGroups([g.group])}`);

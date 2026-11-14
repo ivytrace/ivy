@@ -3,6 +3,7 @@ import { createAwsMock, type MockOptions } from "./aws.ts";
 import { buildTrace, INVOCATIONS, type MockInvocation } from "./fixtures.ts";
 import { mockUsage, MOCK_BILLING_URL } from "./usage.ts";
 import { newInvitation, newKey, newProject, newWorkspace, seedWorkspaces, slugFrom, slugOk, type MockWorkspace } from "./workspaces.ts";
+import { THROTTLED_MESSAGE, THROTTLES, type MockThrottle } from "./throttles.ts";
 
 export type { MockOptions };
 
@@ -31,6 +32,7 @@ export const PROJECT_OF: Record<string, string> = {
   "auth-getProfile": "billing-api-prod",
   "reports-nightlyExport": "billing-api-staging",
   "support-answerTicket": "support-api-prod",
+  "email-sendReceipt": "billing-api-prod",
 };
 
 /** Seconds after a rule or key is created in an empty workspace until the mock "receives" a first trace. */
@@ -56,17 +58,30 @@ function inRange(pool: Row[], params: URLSearchParams): Row[] {
   });
 }
 
+type ThrottleRow = MockThrottle & { project: string };
+
+function throttlesInRange(pool: ThrottleRow[], params: URLSearchParams): ThrottleRow[] {
+  const [from, to] = range(params);
+  const fn = params.get("function");
+  return pool.filter((t) => t.minute >= from && t.minute < to && (!fn || t.function === fn));
+}
+
 const percentile = (sorted: number[], p: number) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] : 0);
 const round = (n: number) => Math.round(n * 10) / 10;
 const strip = ({ seed: _seed, project: _project, ...rest }: Row): Invocation => rest;
 
-function functions(pool: Row[], params: URLSearchParams, byProject: boolean, ids: Map<string, string>): FunctionSummary[] {
+function functions(pool: Row[], throttles: ThrottleRow[], params: URLSearchParams, byProject: boolean, ids: Map<string, string>): FunctionSummary[] {
   const groups = new Map<string, Row[]>();
   for (const inv of inRange(pool, params)) {
     const key = `${byProject ? inv.project : ""}|${inv.function}`;
     groups.set(key, [...(groups.get(key) ?? []), inv]);
   }
-  return [...groups.values()].map((list) => {
+  const throttled = new Map<string, number>();
+  for (const t of throttlesInRange(throttles, params)) {
+    const key = `${byProject ? t.project : ""}|${t.function}`;
+    throttled.set(key, (throttled.get(key) ?? 0) + t.throttles);
+  }
+  return [...groups.entries()].map(([key, list]) => {
     const durations = list.map((i) => i.duration_ms).sort((a, b) => a - b);
     const errors = list.filter((i) => i.status === "error").length;
     return {
@@ -82,6 +97,7 @@ function functions(pool: Row[], params: URLSearchParams, byProject: boolean, ids
       p95_ms: percentile(durations, 0.95),
       p99_ms: percentile(durations, 0.99),
       last_invoked: list[0].ts,
+      throttles: throttled.get(key) ?? 0,
     };
   });
 }
@@ -99,14 +115,14 @@ function invocations(pool: Row[], params: URLSearchParams): InvocationsResponse 
   return { items: page.map(strip), next_cursor: next };
 }
 
-function errors(pool: Row[], params: URLSearchParams, byProject: boolean, ids: Map<string, string>): ErrorGroup[] {
+function errors(pool: Row[], throttles: ThrottleRow[], params: URLSearchParams, byProject: boolean, ids: Map<string, string>): ErrorGroup[] {
   const groups = new Map<string, Row[]>();
   for (const inv of inRange(pool, params).filter((i) => i.status === "error")) {
     const key = `${byProject ? inv.project : ""}|${inv.function}|${inv.error_type}|${inv.error_message}`;
     groups.set(key, [...(groups.get(key) ?? []), inv]);
   }
   return [...groups.entries()]
-    .map(([key, list]) => ({
+    .map(([key, list]): ErrorGroup => ({
       fingerprint: Math.abs([...key].reduce((h, c) => (Math.imul(31, h) + c.charCodeAt(0)) | 0, 0))
         .toString(16)
         .padStart(8, "0"),
@@ -118,13 +134,37 @@ function errors(pool: Row[], params: URLSearchParams, byProject: boolean, ids: M
       first_seen: list[list.length - 1].ts,
       last_seen: list[0].ts,
       sample_trace_id: list[0].trace_id,
+      kind: "error" as const,
+      failure_kind: list[0].failure_kind,
     }))
+    .concat(throttleGroups(throttles, params, byProject, ids))
     .sort((a, b) => b.count - a.count);
+}
+
+function throttleGroups(pool: ThrottleRow[], params: URLSearchParams, byProject: boolean, ids: Map<string, string>): ErrorGroup[] {
+  const byFn = new Map<string, ThrottleRow[]>();
+  for (const t of throttlesInRange(pool, params)) {
+    const key = `${byProject ? t.project : ""}|${t.region}:${t.function}`;
+    byFn.set(key, [...(byFn.get(key) ?? []), t]);
+  }
+  return [...byFn.values()].map((list) => ({
+    fingerprint: `throttled:${list[0].region}:${list[0].function}`,
+    function: list[0].function,
+    ...(byProject ? { project_id: ids.get(list[0].project) ?? list[0].project, project: list[0].project } : {}),
+    error_type: "Throttled",
+    error_message: THROTTLED_MESSAGE,
+    count: list.reduce((n, t) => n + t.throttles, 0),
+    first_seen: new Date(Math.min(...list.map((t) => t.minute))).toISOString(),
+    last_seen: new Date(Math.max(...list.map((t) => t.minute))).toISOString(),
+    sample_trace_id: null,
+    kind: "throttle",
+    failure_kind: null,
+  }));
 }
 
 const BUCKET_MS: Record<string, number> = { "1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3600_000, "1d": 86_400_000 };
 
-function timeseries(pool: Row[], params: URLSearchParams): TimeseriesPoint[] {
+function timeseries(pool: Row[], throttles: ThrottleRow[], params: URLSearchParams): TimeseriesPoint[] {
   const [from, to] = range(params);
   const span = to - from;
   const bucket = BUCKET_MS[params.get("bucket") ?? ""] ?? (span <= 3600_000 ? 60_000 : span <= 86_400_000 ? 3600_000 : 86_400_000);
@@ -136,10 +176,21 @@ function timeseries(pool: Row[], params: URLSearchParams): TimeseriesPoint[] {
     buckets.set(b, [...(buckets.get(b) ?? []), inv.duration_ms]);
     if (inv.status === "error") errs.set(b, (errs.get(b) ?? 0) + 1);
   }
+  const throttled = new Map<number, number>();
+  for (const t of throttlesInRange(throttles, params)) {
+    const b = Math.floor(t.minute / bucket) * bucket;
+    throttled.set(b, (throttled.get(b) ?? 0) + t.throttles);
+  }
   const out: TimeseriesPoint[] = [];
   for (let b = start; b <= to; b += bucket) {
     const d = (buckets.get(b) ?? []).sort((x, y) => x - y);
-    out.push({ ts: new Date(b).toISOString(), invocations: d.length, errors: errs.get(b) ?? 0, p95_ms: percentile(d, 0.95) });
+    out.push({
+      ts: new Date(b).toISOString(),
+      invocations: d.length,
+      errors: errs.get(b) ?? 0,
+      p95_ms: percentile(d, 0.95),
+      throttles: throttled.get(b) ?? 0,
+    });
   }
   return out;
 }
@@ -175,6 +226,11 @@ export function createMockHandler(options: MockOptions = {}) {
     return project ? rows.filter((r) => r.project === project) : rows;
   };
 
+  const throttlePoolOf = (ws: MockWorkspace, project: string | null): ThrottleRow[] => {
+    const rows = seeded(ws) ? THROTTLES.map((t) => ({ ...t, project: PROJECT_OF[t.function] ?? "checkout-prod" })) : [];
+    return project ? rows.filter((r) => r.project === project) : rows;
+  };
+
   /** Pretends the first invocation of a function in `project` arrives a few seconds from now. */
   const scheduleFirstTrace = (ws: MockWorkspace, project: string) => {
     if (seeded(ws) || (live.get(ws.id)?.length ?? 0) > 0) return;
@@ -191,12 +247,13 @@ export function createMockHandler(options: MockOptions = {}) {
 
   function data(ws: MockWorkspace, project: string | null, rest: string, params: URLSearchParams): MockResponse | null {
     const pool = poolOf(ws, project);
+    const throttles = throttlePoolOf(ws, project);
     const all = project === null;
-    if (rest === "/functions") return json(200, { items: functions(pool, params, all, ids(ws)) });
-    if (rest === "/errors") return json(200, { items: errors(pool, params, all, ids(ws)) });
+    if (rest === "/functions") return json(200, { items: functions(pool, throttles, params, all, ids(ws)) });
+    if (rest === "/errors") return json(200, { items: errors(pool, throttles, params, all, ids(ws)) });
     if (all) return null;
     if (rest === "/invocations") return json(200, invocations(pool, params));
-    if (rest === "/stats/timeseries") return json(200, { items: timeseries(pool, params) });
+    if (rest === "/stats/timeseries") return json(200, { items: timeseries(pool, throttles, params) });
     const trace = rest.match(/^\/traces\/([^/]+)$/);
     if (trace) {
       const inv = pool.find((i) => i.trace_id === trace[1]);

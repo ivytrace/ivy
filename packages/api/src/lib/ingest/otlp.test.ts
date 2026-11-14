@@ -28,6 +28,18 @@ describe('otlp', () => {
     expect(countTraffic(Buffer.from(JSON.stringify(jsonInvocations(2, 5))), 'json')).toEqual({ spans: 7, invocations: 2 });
   });
 
+  it('does not count report update spans (ivy.update) as invocations', () => {
+    const body = jsonInvocations(1);
+    body.resourceSpans[0].scopeSpans[0].spans.push({
+      name: 'inv',
+      attributes: [
+        { key: 'ivy.update', value: { boolValue: true } },
+        { key: 'ivy.billed_duration_ms', value: { intValue: '52' } as never },
+      ],
+    });
+    expect(countTraffic(Buffer.from(JSON.stringify(body)), 'json')).toEqual({ spans: 2, invocations: 1 });
+  });
+
   it('decodes gzip within a size limit', async () => {
     const raw = Buffer.alloc(10_000, 'a');
     expect((await decode(gzipSync(raw), 'gzip', 20_000)).length).toBe(10_000);

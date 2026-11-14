@@ -67,6 +67,10 @@ CREATE TABLE IF NOT EXISTS ivy.invocations
     `error_message` String CODEC(ZSTD(1)),
     `error_fingerprint` String,
     `memory_used_mb` Float32,
+    `memory_limit_mb` UInt32,
+    `failure_phase` LowCardinality(String),
+    `synthetic` Bool,
+    `init_duration_ms` Float32,
     INDEX idx_trace_id trace_id TYPE bloom_filter(0.001) GRANULARITY 1,
     INDEX idx_request_id request_id TYPE bloom_filter(0.001) GRANULARITY 1,
     INDEX idx_http_path http_path TYPE ngrambf_v1(3, 4096, 3, 0) GRANULARITY 1,
@@ -79,7 +83,17 @@ ORDER BY (tenant_id, project_id, function, ts)
 TTL toDateTime(ts) + toIntervalDay({{RETENTION_DAYS}})
 SETTINGS ttl_only_drop_parts = 1;
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS ivy.invocations_mv TO ivy.invocations AS
+-- Columns added after the first release; the view below is recreated so it fills them.
+ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `memory_limit_mb` UInt32 AFTER `memory_used_mb`;
+ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `failure_phase` LowCardinality(String) AFTER `memory_limit_mb`;
+ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `synthetic` Bool AFTER `failure_phase`;
+ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `init_duration_ms` Float32 AFTER `synthetic`;
+
+-- Dropped and recreated (rather than IF NOT EXISTS) so a re-run picks up changes to the query.
+-- Spans inserted during the few milliseconds in between are not copied into `invocations`.
+-- Update spans (`ivy.update`, late Lambda report data) never match: they carry no `ivy.invocation`.
+DROP VIEW IF EXISTS ivy.invocations_mv;
+CREATE MATERIALIZED VIEW ivy.invocations_mv TO ivy.invocations AS
 WITH
     arrayFirstIndex(n -> n = 'exception', `Events.Name`) AS ex_idx,
     if(ex_idx > 0, `Events.Attributes`[ex_idx], map()) AS ex,
@@ -111,7 +125,11 @@ SELECT
     err_type AS error_type,
     err_message AS error_message,
     if(is_error, lower(hex(cityHash64(fn, err_type, err_normalized))), '') AS error_fingerprint,
-    toFloat32OrZero(SpanAttributes['ivy.memory_used_mb']) AS memory_used_mb
+    toFloat32OrZero(SpanAttributes['ivy.memory_used_mb']) AS memory_used_mb,
+    toUInt32(toUInt64OrZero(ResourceAttributes['faas.max_memory']) / 1048576) AS memory_limit_mb,
+    SpanAttributes['ivy.failure.phase'] AS failure_phase,
+    SpanAttributes['ivy.synthetic'] = 'true' AS synthetic,
+    toFloat32OrZero(SpanAttributes['ivy.init_duration_ms']) AS init_duration_ms
 FROM ivy.otel_traces
 WHERE SpanAttributes['ivy.invocation'] = 'true';
 
@@ -150,6 +168,24 @@ SELECT
 FROM ivy.invocations
 GROUP BY tenant_id, project_id, hour, function, region;
 
+-- Lambda throttles per function and minute, polled from CloudWatch by the API's auto-trace sync
+-- (docs/implementation/auto-trace.md, "Throttles"). Re-polling a minute replaces its row.
+CREATE TABLE IF NOT EXISTS ivy.function_throttles
+(
+    `tenant_id` LowCardinality(String),
+    `project_id` LowCardinality(String),
+    `function` LowCardinality(String),
+    `region` LowCardinality(String),
+    `minute` DateTime,
+    `account_id` String,
+    `throttles` UInt32,
+    `updated_at` DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(updated_at)
+PARTITION BY toYYYYMM(minute)
+ORDER BY (tenant_id, project_id, function, region, minute)
+TTL minute + toIntervalDay({{RETENTION_DAYS}});
+
 -- Defence in depth: when a query sets SQL_ivy_tenant (the API does for every query, see
 -- packages/api/src/lib/clickhouse/scoped.ts), only that tenant's rows are visible, even if the
 -- SQL forgot its tenant filter. Without the setting (collector inserts, materialized views,
@@ -161,6 +197,8 @@ CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations_hourly AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
+CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.function_throttles AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
 -- The same for projects: project-scoped API queries also set SQL_ivy_project. Workspace-wide
 -- queries ("all projects") leave it unset and rely on the tenant policy.
 CREATE ROW POLICY OR REPLACE ivy_project ON ivy.otel_traces AS RESTRICTIVE
@@ -168,6 +206,8 @@ CREATE ROW POLICY OR REPLACE ivy_project ON ivy.otel_traces AS RESTRICTIVE
 CREATE ROW POLICY OR REPLACE ivy_project ON ivy.invocations AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_project ON ivy.invocations_hourly AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
+CREATE ROW POLICY OR REPLACE ivy_project ON ivy.function_throttles AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
 
 -- Control plane. Small, mutable tables: every update inserts a full row, ReplacingMergeTree
@@ -285,11 +325,18 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_accounts
     `created_at` DateTime64(3, 'UTC'),
     `verified_at` DateTime64(3, 'UTC'),
     `last_sync_at` DateTime64(3, 'UTC'),
+    `throttle_metrics` Bool DEFAULT true,
+    `throttle_status` LowCardinality(String) DEFAULT '',
+    `throttles_polled_to` DateTime64(3, 'UTC') DEFAULT 0,
     `updated_at` DateTime64(3, 'UTC'),
     `deleted` UInt8
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, id);
+
+ALTER TABLE ivy_control.aws_accounts ADD COLUMN IF NOT EXISTS `throttle_metrics` Bool DEFAULT true AFTER last_sync_at;
+ALTER TABLE ivy_control.aws_accounts ADD COLUMN IF NOT EXISTS `throttle_status` LowCardinality(String) DEFAULT '' AFTER throttle_metrics;
+ALTER TABLE ivy_control.aws_accounts ADD COLUMN IF NOT EXISTS `throttles_polled_to` DateTime64(3, 'UTC') DEFAULT 0 AFTER throttle_status;
 
 CREATE TABLE IF NOT EXISTS ivy_control.aws_functions
 (

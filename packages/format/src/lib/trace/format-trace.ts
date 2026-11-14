@@ -1,8 +1,12 @@
 import {
   describeLlm,
+  failureLabel,
   getException,
+  invocationResources,
   isInvocationSpan,
   llmUsage,
+  missingTraceNote,
+  spanFailureKind,
   type LlmMessage,
   type LlmPart,
   type Span,
@@ -86,26 +90,35 @@ function header(trace: Trace, spans: Span[]): Line[] {
     ];
   }
   const a = root.attributes;
+  const kind = spanFailureKind(root);
+  const res = invocationResources(root);
   const first = [
     root.name,
     triggerText(root),
     a["faas.coldstart"] === "true" ? "cold start" : "warm",
     ms(root.duration_ms),
-    root.status_code === "ERROR" ? "ERROR" : failed ? "ok (with failed calls)" : "ok",
+    root.status_code === "ERROR" ? (kind ? `ERROR (${failureLabel(kind)})` : "ERROR") : failed ? "ok (with failed calls)" : "ok",
   ];
+  const memory =
+    res.memoryUsedMb !== null && `${res.memoryUsedMb} MB used${res.memoryLimitMb !== null ? ` of ${res.memoryLimitMb} MB` : ""}`;
   const second = [
     `trace ${trace.trace_id}`,
-    a["faas.invocation_id"] && `request ${a["faas.invocation_id"]}`,
+    a["faas.invocation_id"] ? `request ${a["faas.invocation_id"]}` : kind === "init_failed" && "no request",
     root.resource["cloud.region"],
     root.start,
-    a["ivy.memory_used_mb"] && `${a["ivy.memory_used_mb"]} MB used`,
+    memory,
+    res.billedDurationMs !== null && `billed ${ms(res.billedDurationMs)}`,
+    res.initDurationMs !== null && `init ${ms(res.initDurationMs)}`,
     plural(spans.length, "span"),
     usage && usage.calls > 0 && `${plural(usage.calls, "LLM call")} ${usage.inputTokens}→${usage.outputTokens} tok`,
   ].filter(Boolean);
-  return [
+  const lines: Line[] = [
     { text: first.join(" · "), keep: true },
     { text: second.join(" · "), keep: true },
   ];
+  const note = missingTraceNote(kind, a["ivy.synthetic"] === "true");
+  if (note) lines.push({ text: `(${note})`, keep: true });
+  return lines;
 }
 
 function errorLines(span: Span, prefix: string, settings: Settings): Line[] {

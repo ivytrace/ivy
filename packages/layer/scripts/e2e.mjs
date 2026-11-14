@@ -4,7 +4,7 @@
 //   pnpm --filter @ivy/layer e2e
 //   IVY_ENDPOINT=http://host.docker.internal:4318 IVY_API_KEY=dev-ingest-key pnpm --filter @ivy/layer e2e
 import { execFileSync, spawn } from 'node:child_process';
-import { cpSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
@@ -17,6 +17,15 @@ const externalEndpoint = process.env.IVY_ENDPOINT;
 const endpoint = externalEndpoint ?? `http://host.docker.internal:${CAPTURE_PORT}`;
 const apiKey = process.env.IVY_API_KEY ?? 'dev-ingest-key';
 
+const runAsync = (cmd, args) =>
+  new Promise((resolve, reject) => {
+    const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    p.stdout.on('data', (d) => (out += d));
+    p.stderr.on('data', (d) => (err += d));
+    p.on('exit', (code) => (code === 0 ? resolve(out) : reject(new Error(`${cmd} exited with ${code}\n${out}\n${err}`))));
+  });
 const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts }).toString().trim();
 
 console.log('building layer…');
@@ -138,6 +147,8 @@ try {
   const bundled = startContainer('bundled', 9107, bundledDir, 'index.handler');
   const aiV6 = startContainer('ai-v6', 9108, aiDir('v6'), 'index.handler');
   const aiV7 = startContainer('ai-v7', 9109, aiDir('v7'), 'index.handler');
+  const importError = startContainer('importerror', 9110, 'failures', 'missing.handler');
+  const oom = startContainer('oom', 9111, 'failures', 'oom.handler', { NODE_OPTIONS: '--max-old-space-size=32' });
   const baseline = startContainer('baseline', 9106, 'cjs', 'index.handler', { AWS_LAMBDA_EXEC_WRAPPER: '', IVY_ENDPOINT: '' }, { layer: false });
 
   console.log('invoking…');
@@ -153,6 +164,8 @@ try {
     aiV6: await invoke(aiV6, apiGwV2),
     aiV7: await invoke(aiV7, apiGwV2),
   };
+  results.importError = await invoke(importError, {});
+  results.oom = await invoke(oom, {});
   for (const [k, r] of Object.entries(results)) console.log(`  ${k.padEnd(9)} ${String(r.ms).padStart(5)}ms  ${r.body.slice(0, 110)}`);
 
   check(JSON.parse(results.warm.body).statusCode === 200, 'handler result passed through unchanged');
@@ -160,6 +173,8 @@ try {
   check(JSON.parse(results.callback.body).ok === true, 'callback-style handler result passed through');
   check(JSON.parse(results.esm.body).ok === true, 'ESM handler result passed through');
   check(['aiV6', 'aiV7'].every((k) => /on its way/.test(JSON.parse(results[k].body).reply ?? '')), 'AI SDK handlers ran unchanged');
+  check(JSON.parse(results.importError.body).errorType === 'Runtime.ImportModuleError', 'init failure reaches the caller unchanged (Runtime.ImportModuleError)');
+  check(/signal: aborted/.test(JSON.parse(results.oom.body).errorMessage ?? ''), 'out of memory crash reaches the caller (Runtime.ExitError)');
 
   const brokenRuns = [];
   for (let i = 0; i < 3; i++) brokenRuns.push(await invoke(broken, apiGwV2));
@@ -271,6 +286,56 @@ try {
       const [stream] = named('chat claude-haiku-4-5');
       check(!!stream && Number(attr(stream, 'gen_ai.client.operation.time_to_first_chunk')) > 0, 'AI SDK 7: streamed chat with time to first chunk');
     }
+    // The emulator has no Telemetry API ("Telemetry.NotSupported"), so failures outside the handler are
+    // checked with a fake telemetry source: the real extension binary in the Lambda image, fed the platform
+    // events Lambda would send plus the log lines the failing handlers above really printed.
+    const containerLog = (name) => logs.get(name).join('').split('\n');
+    const functionLines = (name) =>
+      containerLog(name).filter((l) => l.trim() && !/\(rapid\)|\[ivy-extension\]|\[ivy\]|^(START|END|REPORT) RequestId/.test(l));
+    const fixtures = { importError: functionLines('importerror').slice(0, 5), oom: functionLines('oom').slice(0, 60) };
+    const fakeDir = join(root, 'dist/e2e-telemetry');
+    mkdirSync(fakeDir, { recursive: true });
+    writeFileSync(join(fakeDir, 'fixtures.json'), JSON.stringify(fixtures));
+    // Async: the capture server runs in this process, so a blocking exec would stall the exports.
+    const fake = (...args) =>
+      runAsync('docker', ['run', '--rm', '--entrypoint', '/var/lang/bin/node', '--add-host=host.docker.internal:host-gateway',
+        '-e', `IVY_ENDPOINT=${endpoint}`, '-e', `IVY_API_KEY=${apiKey}`, '-e', 'IVY_DEBUG=1',
+        '-v', `${opt}:/opt:ro`, '-v', `${join(root, 'scripts')}:/scripts:ro`, '-v', `${fakeDir}:/fixtures:ro`, IMAGE, '/scripts/fake-telemetry.mjs', ...args]);
+    await fake('/fixtures/fixtures.json');
+    const telemetrySpans = () => capture.spans().filter((s) => s.resource.attributes.some((a) => a.key === 'faas.name' && a.value.stringValue === 'ivy-e2e-telemetry'));
+    await capture.waitFor(() => telemetrySpans().filter((s) => attr(s, 'ivy.update')).length >= 3, 10000);
+    const tRoots = telemetrySpans().filter((s) => attr(s, 'ivy.invocation'));
+    const logText = (s) => s.events.filter((e) => e.name === 'log').map((e) => e.attributes.find((a) => a.key === 'log.message')?.value.stringValue).join('\n');
+    const initRoot = tRoots.find((s) => attr(s, 'ivy.failure.phase') === 'init');
+    check(
+      !!initRoot && attr(initRoot, 'ivy.synthetic') === true && attr(initRoot, 'error.type') === 'Runtime.ImportModuleError' && initRoot.status.code === 2 &&
+        initRoot.status.message === "Error: Cannot find module 'left-pad'" && /Uncaught Exception/.test(logText(initRoot)) && attr(initRoot, 'ivy.init_duration_ms') === 71.2,
+      'init failure: synthetic invocation span with error type, module name and log tail',
+    );
+    const oomRoots = tRoots.filter((s) => attr(s, 'faas.invocation_id') === 'oom-1');
+    const oomRoot = oomRoots[0];
+    check(
+      oomRoots.length === 1 && oomRoot.spanId === 'c0ffee0000000001' && attr(oomRoot, 'error.type') === 'Runtime.OutOfMemory' && attr(oomRoot, 'ivy.failure.phase') === 'invoke' &&
+        /JavaScript heap out of memory/.test(oomRoot.status.message) && /FATAL ERROR/.test(logText(oomRoot)) && telemetrySpans().some((s) => s.spanId === 'c0ffee0000000002'),
+      'out of memory: the tracer\'s partial root completed (no duplicate), heap message and log tail, child kept',
+    );
+    const oomUpdate = telemetrySpans().find((s) => s.spanId === 'c0ffee0000000001' && attr(s, 'ivy.update'));
+    check(!!oomUpdate && attr(oomUpdate, 'ivy.memory_max_used_mb') === '128', 'out of memory: report sent at shutdown as an update span');
+    const ok = tRoots.filter((s) => /^ok-/.test(attr(s, 'faas.invocation_id')));
+    const okUpdates = telemetrySpans().filter((s) => attr(s, 'ivy.update') && /^ok-/.test(attr(s, 'faas.invocation_id')));
+    check(
+      ok.length === 2 && ok.every((s) => s.status.code === 0 && s.events.length === 0) && attr(ok.find((s) => attr(s, 'faas.invocation_id') === 'ok-1'), 'ivy.init_duration_ms') === 150.25,
+      'healthy invocations: one span each, no log events, init duration on the cold start',
+    );
+    check(
+      okUpdates.length === 2 && okUpdates.every((u) => ok.some((r) => r.spanId === u.spanId && r.traceId === u.traceId) && !attr(u, 'ivy.invocation')) &&
+        attr(okUpdates.find((u) => attr(u, 'faas.invocation_id') === 'ok-2'), 'ivy.billed_duration_ms') === '6',
+      'healthy invocations: report metrics arrive later as update spans keyed by span ID',
+    );
+    const updateBytes = okUpdates.map((u) => JSON.stringify((({ resource, receivedAt, ...span }) => span)(u)).length);
+    console.log(`  update span size: ${updateBytes.join(', ')} bytes of JSON`);
+    const cold = JSON.parse((await fake('--coldstart', '15')).split('\n').find((l) => l.startsWith('{"coldStart"')));
+    console.log(`  extension spawn → first /next (median of 15): telemetry off ${cold.coldStart.telemetryOffMs.toFixed(2)}ms, on ${cold.coldStart.telemetryOnMs.toFixed(2)}ms`);
 
     const latest = (fn) => Math.min(...rootsBy(fn).map((s) => s.receivedAt));
     console.log(`\n  spans for first cjs invocation arrived ${latest('cjs') - results.cold.finishedAt}ms after the response`);
