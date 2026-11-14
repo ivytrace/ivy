@@ -1,6 +1,6 @@
 import { createContext, createElement, useContext, type ReactNode } from "react";
 import { useLocation } from "react-router";
-import { ALL_PROJECTS, parseScope, type Scope } from "./links";
+import { ALL_PROJECTS, parseScope, readLastScope, type Scope } from "./links";
 
 type RouteScope = { workspace: string; project: string | null };
 
@@ -27,4 +27,14 @@ export function useWorkspace(): string {
 export function useScope(): Scope {
   const scope = useRouteScope();
   return { workspace: scope?.workspace ?? "default", project: scope?.project ?? ALL_PROJECTS };
+}
+
+/**
+ * The scope the header and ⌘K link into: the URL's, and on settings pages the workspace's last-used
+ * project, else All projects. Null outside a workspace.
+ */
+export function useNavScope(): Scope | null {
+  const route = useRouteScope();
+  if (!route) return null;
+  return { workspace: route.workspace, project: route.project ?? readLastScope(route.workspace)?.project ?? ALL_PROJECTS };
 }

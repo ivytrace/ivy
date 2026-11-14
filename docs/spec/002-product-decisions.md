@@ -43,6 +43,9 @@ live in `docs/implementation/`.
 - **"All projects"** is a scope of its own: Functions (with its charts), Invocations and Errors work across every
   project of the workspace, each row labelled with its project and linking into it. It is the first entry of the
   project switcher and can be the remembered last choice. A single trace always lives in one project.
+- **All projects is the default selection.** Without a remembered last-used project for a workspace (first visit, a new
+  workspace, cleared storage), Ivy opens that workspace's All projects; a remembered project still wins. Skipping the
+  quick-start wizard lands on All projects; finishing it after the first trace arrived lands on that trace's project.
 
 ## Authentication
 - Dashboard, API and MCP: **either no auth or OIDC**, never passwords or basic auth, not even temporarily.
@@ -96,6 +99,9 @@ live in `docs/implementation/`.
 ## Dashboard
 - First visit: a quick-start wizard (workspace, project, connect AWS and pick functions, wait for the first trace).
 - Keyboard shortcuts and a ⌘K command menu across the app.
+- The dashboard works on phones: below tablet width the header is a compact bar (logo, project switcher, search, menu)
+  with a full-height menu sheet for pages, workspace and project, time range and account; Invocations and Errors show
+  card rows, other tables scroll inside their box, and nothing scrolls the page sideways. Desktop is unchanged.
 - A "Live" toggle on the Invocations page (`?live=1`) shows new invocations as they arrive and updates running ones in
   place; it pauses on a hidden tab, while scrolled down or paging, and after 15 minutes idle.
 

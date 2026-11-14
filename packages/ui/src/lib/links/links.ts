@@ -90,40 +90,52 @@ interface Pickable {
 /**
  * The scope to open when the URL doesn't say: the last-used workspace (if the user still has it,
  * else the first), and in it the last-used project (if it still exists and isn't archived), else
- * the default project, else the first active one.
+ * All projects.
  */
 export function pickWorkspace<W extends Pickable>(workspaces: W[], last: Partial<Scope> | null): W | null {
   return workspaces.find((w) => w.slug === last?.workspace) ?? workspaces[0] ?? null;
 }
 
-export function pickProject<P extends Pickable & { archived: boolean; default: boolean }>(
-  projects: P[],
-  workspace: string,
-  last: Partial<Scope> | null,
-): string {
-  const active = projects.filter((p) => !p.archived);
+export function pickProject<P extends Pickable & { archived: boolean }>(projects: P[], workspace: string, last: Partial<Scope> | null): string {
   if (last?.workspace === workspace && last.project) {
-    if (last.project === ALL_PROJECTS || active.some((p) => p.slug === last.project)) return last.project;
+    if (last.project === ALL_PROJECTS || projects.some((p) => !p.archived && p.slug === last.project)) return last.project;
   }
-  return (active.find((p) => p.default) ?? active[0])?.slug ?? ALL_PROJECTS;
+  return ALL_PROJECTS;
 }
 
 const LAST_KEY = "ivy.lastScope";
 
-export function readLastScope(): Partial<Scope> | null {
+interface StoredScope extends Partial<Scope> {
+  /** The last project per workspace, so switching back to a workspace reopens its project. */
+  projects?: Record<string, string>;
+}
+
+function readStored(): StoredScope | null {
   try {
     const raw = localStorage.getItem(LAST_KEY);
-    return raw ? (JSON.parse(raw) as Partial<Scope>) : null;
+    return raw ? (JSON.parse(raw) as StoredScope) : null;
   } catch {
     return null;
   }
 }
 
+/** The last-used workspace and its project; with `workspace`, that workspace's remembered project. */
+export function readLastScope(workspace?: string): Partial<Scope> | null {
+  const stored = readStored();
+  if (!stored) return null;
+  const ws = workspace ?? stored.workspace;
+  if (!ws) return null;
+  const project = stored.projects?.[ws] ?? (stored.workspace === ws ? stored.project : undefined);
+  return project ? { workspace: ws, project } : { workspace: ws };
+}
+
 export function writeLastScope(scope: Partial<Scope>) {
   try {
-    const prev = readLastScope();
-    const next = { ...(prev?.workspace === scope.workspace ? prev : {}), ...scope };
-    localStorage.setItem(LAST_KEY, JSON.stringify(next));
+    const prev = readStored();
+    const projects = { ...prev?.projects };
+    if (scope.workspace && scope.project) projects[scope.workspace] = scope.project;
+    const project = scope.workspace ? projects[scope.workspace] : undefined;
+    localStorage.setItem(LAST_KEY, JSON.stringify({ workspace: scope.workspace, project, projects }));
   } catch {
     // storage unavailable: nothing to remember
   }

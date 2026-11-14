@@ -12,6 +12,7 @@ import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils/cn";
+import { useIsDesktop } from "@/lib/utils/media";
 
 export function DataTable<TData>({
   columns,
@@ -22,6 +23,7 @@ export function DataTable<TData>({
   getRowId,
   rowClassName,
   renderExpanded,
+  renderCard,
 }: {
   columns: ColumnDef<TData, unknown>[];
   data: TData[];
@@ -32,7 +34,10 @@ export function DataTable<TData>({
   rowClassName?: (row: TData) => string | undefined;
   /** Rows it returns content for can expand (`row.toggleExpanded()` in a cell); shown in a full-width row below. */
   renderExpanded?: (row: TData) => ReactNode | null;
+  /** Below `md`, rows render as these cards instead of table rows. */
+  renderCard?: (row: TData) => ReactNode;
 }) {
+  const desktop = useIsDesktop();
   const [sorting, setSorting] = useState<SortingState>(defaultSorting);
   const [expanded, setExpanded] = useState<ExpandedState>({});
   const table = useReactTable({
@@ -47,6 +52,21 @@ export function DataTable<TData>({
     getSortedRowModel: manualSorting ? undefined : getSortedRowModel(),
     enableSorting: !manualSorting,
   });
+
+  if (renderCard && !desktop) {
+    const rows = table.getRowModel().rows;
+    return (
+      <div className="divide-y rounded-md border">
+        {rows.length
+          ? rows.map((row) => (
+              <div key={row.id} className={rowClassName?.(row.original)}>
+                {renderCard(row.original)}
+              </div>
+            ))
+          : empty}
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-md border">

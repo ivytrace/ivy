@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { Elapsed, spanProgress, useNow } from "@/components/common/in-progress";
@@ -50,13 +50,17 @@ export function Waterfall({
   return (
     <div className="rounded-md border text-sm">
       <div className="flex border-b text-xs text-muted-foreground">
-        <div className="w-[48%] shrink-0 px-4 py-2">Span</div>
-        <div className="relative flex-1 py-2 pr-20">
+        <div className="w-[40%] shrink-0 px-3 py-2 sm:w-[48%] sm:px-4">Span</div>
+        <div className="relative flex-1 py-2 pr-14 sm:pr-20">
           <div className="relative h-4">
             {TICKS.map((t) => (
               <span
                 key={t}
-                className={cn("absolute whitespace-nowrap", t === 1 ? "-translate-x-full" : t > 0 && "-translate-x-1/2")}
+                className={cn(
+                  "absolute whitespace-nowrap",
+                  t === 1 ? "-translate-x-full" : t > 0 && "-translate-x-1/2",
+                  (t === 0.25 || t === 0.75) && "hidden sm:inline",
+                )}
                 style={{ left: `${t * 100}%` }}
               >
                 {formatDuration(totalMs * t)}
@@ -81,8 +85,8 @@ export function Waterfall({
                 className={cn("flex w-full items-center text-left hover:bg-muted/40", open && "bg-muted/30")}
               >
                 <div
-                  className="flex w-[48%] shrink-0 items-center gap-2 py-2 pr-3"
-                  style={{ paddingLeft: `${12 + row.depth * 16}px` }}
+                  className="flex w-[40%] shrink-0 items-center gap-1.5 py-2 pl-[calc(6px+var(--depth)*8px)] pr-2 sm:w-[48%] sm:gap-2 sm:pl-[calc(12px+var(--depth)*16px)] sm:pr-3"
+                  style={{ "--depth": row.depth } as CSSProperties}
                 >
                   <ChevronRight
                     className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
@@ -93,7 +97,7 @@ export function Waterfall({
                   </span>
                   {d.collapsed && <CollapsedBadge collapsed={d.collapsed} className="ml-0 shrink-0" />}
                 </div>
-                <div className="relative flex h-9 flex-1 items-center pr-20">
+                <div className="relative flex h-9 flex-1 items-center pr-14 sm:pr-20">
                   <div className="relative h-full w-full">
                     {TICKS.slice(1, -1).map((t) => (
                       <span key={t} className="absolute inset-y-0 w-px bg-border/60" style={{ left: `${t * 100}%` }} />
@@ -109,13 +113,16 @@ export function Waterfall({
                       style={{ left: `${row.offsetPct}%`, width: `${row.widthPct}%`, ...(d.collapsed && COLLAPSED_BAR) }}
                     />
                   </div>
-                  <span className="absolute right-3 text-xs tabular-nums text-muted-foreground">
+                  <span className="absolute right-2 text-xs tabular-nums sm:right-3 text-muted-foreground">
                     {progress ? <Elapsed progress={progress} /> : formatDuration(row.span.duration_ms)}
                   </span>
                 </div>
               </button>
               {open && (
-                <div className="border-t bg-muted/10 px-4 py-4 md:px-8" style={{ paddingLeft: `${28 + row.depth * 16}px` }}>
+                <div
+                  className="border-t bg-muted/10 py-4 pl-[calc(12px+var(--depth)*8px)] pr-3 sm:pl-[calc(28px+var(--depth)*16px)] sm:pr-4 md:pr-8"
+                  style={{ "--depth": row.depth } as CSSProperties}
+                >
                   {details(row.span)}
                 </div>
               )}

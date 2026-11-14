@@ -140,6 +140,11 @@ all (and no invitations).
 `on-workspace-created` fires. The UI's first-run wizard then names the workspace and the first project and connects
 AWS or hands out an ingest key (`ui.md`).
 
+**Which project opens.** The dashboard remembers the last-used project per workspace in the browser. Without one
+(first visit, a new workspace, cleared storage), it opens the workspace's **All projects**, not the default project:
+for a workspace with one project that is the same data, and for several it avoids hiding the others behind a project
+that only exists to receive keys without a project. The default project is an ingest and auto-trace concept.
+
 **Create a workspace.** `POST /api/workspaces { name, slug? }`: a free slug from the name, the default project, the
 caller as owner, `on-workspace-created`.
 

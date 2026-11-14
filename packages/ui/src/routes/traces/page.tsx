@@ -120,7 +120,7 @@ function Summary({ invocation, traceId, usage }: { invocation: Span; traceId: st
           </>
         )}
         {tokens && (
-          <>
+          <div className="flex items-center gap-2">
             <dt>Tokens</dt>
             <dd className="mr-4 font-semibold text-foreground">
               <Tooltipped title={`${usage.calls} LLM ${usage.calls === 1 ? "call" : "calls"}: input → output tokens`}>
@@ -129,7 +129,7 @@ function Summary({ invocation, traceId, usage }: { invocation: Span; traceId: st
                 </span>
               </Tooltipped>
             </dd>
-          </>
+          </div>
         )}
         <dt className="hidden lg:block">Trace</dt>
         <dd className="mr-4 hidden font-mono text-xs font-semibold text-foreground lg:block">{traceId}</dd>
@@ -218,7 +218,7 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
 
   return (
     <>
-      <div className="border-b px-6 py-5 md:px-8">
+      <div className="min-w-0 border-b px-4 py-5 sm:px-6 md:px-8">
         <Button variant="link" className="h-auto px-0" asChild>
           <Link to={invocationsLink(scope, { function: invocation.name })}>← {invocation.name}</Link>
         </Button>
@@ -235,7 +235,7 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
           <TraceGraph spans={visibleSpans} onSelect={focusNode} />
         </div>
 
-        <div className="flex-1 p-6 md:h-full md:overflow-auto md:px-10 md:py-8">
+        <div className="min-w-0 flex-1 p-4 sm:p-6 md:h-full md:overflow-auto md:px-10 md:py-8">
           <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
               <TabsList>

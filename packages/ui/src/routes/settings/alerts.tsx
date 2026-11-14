@@ -30,8 +30,8 @@ export default function AlertsSettings() {
   if (!projects.data) return <LoadingState className="rounded-md border" />;
   const active = projects.data.items.filter((p) => !p.archived);
   if (!project) {
-    const last = readLastScope();
-    const pick = active.find((p) => last?.workspace === workspace && p.slug === last.project) ?? active.find((p) => p.default) ?? active[0];
+    const last = readLastScope(workspace);
+    const pick = active.find((p) => p.slug === last?.project) ?? active.find((p) => p.default) ?? active[0];
     return pick ? <Navigate to={alertsLink(workspace, pick.slug)} replace /> : null;
   }
 

@@ -15,7 +15,7 @@ import { useAwsAccount, useAwsAccountFunctions, useInvocations, useMultiWorkspac
 import type { CreatedKey } from "@/lib/api/types";
 import { createKey, firstProject, refreshWorkspace, updateWorkspace } from "@/lib/api/workspaces";
 import { useAuth } from "@/lib/auth/provider";
-import { pageLink, traceLink } from "@/lib/links/links";
+import { ALL_PROJECTS, pageLink, traceLink } from "@/lib/links/links";
 import { ScopeProvider } from "@/lib/links/use-scope";
 import { cn } from "@/lib/utils/cn";
 import { firstStep, markWelcomeSeen, suggestWorkspaceName, WELCOME_STEPS, welcomeLink, type WelcomeState, type WelcomeStep } from "@/lib/welcome/welcome";
@@ -55,9 +55,10 @@ function Wizard({ step, state }: { step: WelcomeStep; state: WelcomeState }) {
   const steps = WELCOME_STEPS.filter((s) => s !== "workspace" || namesWorkspace);
   const project = state.project ?? projects.data?.items.find((p) => p.default)?.slug ?? projects.data?.items[0]?.slug;
   const go = (next: WelcomeStep, patch: Partial<WelcomeState> = {}) => navigate(welcomeLink(next, { ...state, ...patch }));
-  const finish = (ws = state.ws, p = project) => {
-    markWelcomeSeen(ws);
-    navigate(p ? pageLink({ workspace: ws, project: p }, "functions") : `/w/${ws}`, { replace: true });
+  // Skipping lands on All projects; after the first trace arrived, on the project that received it.
+  const finish = (p: string = ALL_PROJECTS) => {
+    markWelcomeSeen(state.ws);
+    navigate(pageLink({ workspace: state.ws, project: p }, "functions"), { replace: true });
   };
 
   if (step === "workspace" && info.data && !namesWorkspace) return <Navigate to={welcomeLink("project", state)} replace />;
@@ -94,7 +95,7 @@ function Wizard({ step, state }: { step: WelcomeStep; state: WelcomeState }) {
         {step === "workspace" && <WorkspaceStep state={state} onDone={(ws) => go("project", { ws })} />}
         {step === "project" && <ProjectStep state={state} onDone={(p) => go("aws", { project: p })} />}
         {step === "aws" && project && <AwsStep state={{ ...state, project }} go={go} />}
-        {step === "listen" && project && <ListenStep workspace={state.ws} project={project} onDone={() => finish(state.ws, project)} />}
+        {step === "listen" && project && <ListenStep workspace={state.ws} project={project} onDone={() => finish(project)} />}
         {(step === "aws" || step === "listen") && !project && <LoadingState />}
       </main>
     </div>
