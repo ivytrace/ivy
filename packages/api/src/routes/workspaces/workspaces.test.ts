@@ -155,7 +155,7 @@ describe('invitations', () => {
     expect(unverified.status).toBe(403);
     expect(unverified.body.error).toContain('hasn’t verified'.replace('’', "'"));
 
-    // An access token without email claims (like Includable's): the userinfo endpoint decides.
+    // An access token without email claims (some providers issue these): the userinfo endpoint decides.
     const bare = { sub: 'idn_erin' };
     const noInfo = await call(bare, 'POST', `/api/invitations/${token}/accept`, undefined, { userinfo: { sub: 'idn_erin', email: 'erin@example.com', email_verified: false } });
     expect(noInfo.status).toBe(403);

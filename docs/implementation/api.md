@@ -312,12 +312,12 @@ Removes the layer from all functions first unless `detach=false` (or the account
 ### Function objects
 
 ```json
-{ "account_id": "123456789012", "region": "eu-west-1", "name": "examplary-api-prod-createOrder",
+{ "account_id": "123456789012", "region": "eu-west-1", "name": "checkout-prod-createOrder",
   "arn": "arn:aws:lambda:…", "runtime": "nodejs22.x",
-  "stack": "examplary-api-prod" | null, "tags": { "aws:cloudformation:stack-name": "examplary-api-prod", "team": "core" },
+  "stack": "checkout-prod" | null, "tags": { "aws:cloudformation:stack-name": "checkout-prod", "team": "core" },
   "last_modified": "2026-11-10T09:12:44.000+0000" | null,
   "state": "traced", "reason": "…" | null,
-  "project_id": "prj_…" | null, "project": "examplary-api-prod" | null,
+  "project_id": "prj_…" | null, "project": "checkout-prod" | null,
   "source": "tag" | "manual" | "rule" | null, "rule_id": "rul_…" | null,
   "manual": { "mode": "trace" | "exclude", "project_id": "prj_…" | null, "project": "…" | null } | null,
   "new": false, "first_seen_at": "…", "updated_at": "…" }
@@ -333,10 +333,10 @@ Every known function, flat. Query: `account` (12-digit ID), `project` (slug or I
 ### `GET /api/w/:workspace/aws/accounts/:id/functions` (grouped by stack)
 ```json
 { "groups": [ {
-  "stack": "examplary-api-prod", "region": "eu-west-1",
+  "stack": "checkout-prod", "region": "eu-west-1",
   "counts": { "total": 8, "traced": 8, "available": 0, "new": 0 },
-  "rule": { "id": "rul_…", "project_id": "prj_…", "project": "examplary-api-prod", "enabled": true } | null,
-  "suggested_project": "examplary-api-prod",
+  "rule": { "id": "rul_…", "project_id": "prj_…", "project": "checkout-prod", "enabled": true } | null,
+  "suggested_project": "checkout-prod",
   "functions": [ <function> ]
 }, {
   "stack": null, "region": null,
@@ -376,16 +376,16 @@ default project.
 
 Matcher: every non-empty field must match.
 ```json
-{ "account_id"?: "123456789012", "region"?: "eu-west-1", "stack"?: "examplary-api-*", "name"?: "orders-*", "tag"?: "team=core" }
+{ "account_id"?: "123456789012", "region"?: "eu-west-1", "stack"?: "checkout-*", "name"?: "orders-*", "tag"?: "team=core" }
 ```
 `stack` and `name` are globs (`*` any run of characters, `?` one character; no wildcard = exact; `orders-*` is a
 prefix match). `tag` is `key=value` (the value may be a glob) or `key` (present). At least one field is required;
 `{ "name": "*" }` matches every function.
 
 - `GET /api/w/:workspace/aws/rules` →
-  `{ "items": [ { "id": "rul_…", "position": 0, "matcher": { "account_id": null, "region": null, "stack": "examplary-api-prod", "name": null, "tag": null }, "project_id": "prj_…", "project": "examplary-api-prod", "enabled": true, "created_at": "…" } ] }`
+  `{ "items": [ { "id": "rul_…", "position": 0, "matcher": { "account_id": null, "region": null, "stack": "checkout-prod", "name": null, "tag": null }, "project_id": "prj_…", "project": "checkout-prod", "enabled": true, "created_at": "…" } ] }`
 - `POST /api/w/:workspace/aws/rules`, body
-  `{ "matcher": { "stack": "examplary-api-prod" }, "project"?: "examplary-api-prod", "new_project"?: { "name": "Examplary API (prod)", "slug"?: "examplary-api-prod" }, "enabled"?: true, "position"?: 0 }`
+  `{ "matcher": { "stack": "checkout-prod" }, "project"?: "checkout-prod", "new_project"?: { "name": "Checkout (prod)", "slug"?: "checkout-prod" }, "enabled"?: true, "position"?: 0 }`
   → 201 `{ "rule": <rule>, "project": <project> }`. Give `project` (slug or ID; default: the workspace default
   project) or `new_project` (creates the project first). Appended last unless `position` is given. Starts a sync of
   every connected account, so matching functions are traced within seconds.
@@ -396,12 +396,12 @@ prefix match). `tag` is `key=value` (the value may be a glob) or `key` (present)
 ### `POST /api/w/:workspace/aws/rules/dry-run`
 Which functions a matcher selects, and what adding it as a rule (last) would do. Nothing is stored. Used by the UI's
 live preview and by agents before creating a rule.
-Body `{ "matcher": { "stack": "examplary-api-prod" }, "project"?: "examplary-api-prod" }` (an unknown `project` is
+Body `{ "matcher": { "stack": "checkout-prod" }, "project"?: "checkout-prod" }` (an unknown `project` is
 allowed here and treated as a new project).
 ```json
 { "count": 8,
   "summary": { "trace": 7, "unchanged": 0, "excluded": 1, "other": 0, "unsupported": 0 },
-  "items": [ { "function": <function>, "outcome": "trace" | "unchanged" | "excluded" | "other" | "unsupported", "project": "examplary-api-prod" | null } ] }
+  "items": [ { "function": <function>, "outcome": "trace" | "unchanged" | "excluded" | "other" | "unsupported", "project": "checkout-prod" | null } ] }
 ```
 `trace`: would start tracing (or move) into the project; `unchanged`: already traced there; `excluded`: a tag or
 manual choice keeps it untraced; `other`: a tag, manual choice or earlier rule sends it elsewhere; `unsupported`:

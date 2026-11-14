@@ -54,8 +54,8 @@ project. `ivy:project` alone doesn't trace. Archived projects are skipped (a rul
 A **rule** is a matcher plus a project plus `enabled`. Every non-empty matcher field must match: `account_id` and
 `region` exactly, `stack` (the CloudFormation stack name) and `name` (the function name) as globs (`*`, `?`;
 `orders-*` is a prefix match), `tag` as `key=value` (value may be a glob) or `key`. **Stacks are the main way to pick
-functions**: a stack is usually one app in one environment, which is one project (`examplary-api-prod` →
-project `examplary-api-prod`). Serverless Framework, SAM, CDK and SST all set the stack tag. A stack rule is just a
+functions**: a stack is usually one app in one environment, which is one project (`checkout-prod` →
+project `checkout-prod`). Serverless Framework, SAM, CDK and SST all set the stack tag. A stack rule is just a
 rule whose matcher has only `stack` (the account page shows it on the stack's group).
 
 The account's `default_project_id` is only the project the UI preselects; it never causes tracing.

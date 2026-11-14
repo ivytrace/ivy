@@ -102,7 +102,7 @@ workspace and calls `POST /api/invitations/:token/accept`. Ivy accepts only when
 - the signed-in user's email equals the invited email, case-insensitively;
 - the identity provider says that email is verified (`email_verified`). Both come from the access token when it has
   `email` and `email_verified`, otherwise from the provider's userinfo endpoint called with the same access token
-  (Includable Auth's access tokens carry no email).
+  (some providers' access tokens carry no email).
 
 Otherwise it answers 403 with a message saying which (wrong account, or verify your email first), shown as is in the
 UI. Success marks the invitation accepted (single use) and adds the membership; `on-member-joined` fires. Two

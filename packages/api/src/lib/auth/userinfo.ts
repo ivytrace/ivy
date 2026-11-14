@@ -23,7 +23,7 @@ async function userinfoEndpoint(issuer: string): Promise<string | null> {
 /**
  * The caller's email and whether the identity provider has verified it. Taken from the access
  * token when it has both `email` and `email_verified`; otherwise from the provider's userinfo
- * endpoint, called with the same access token (Includable Auth's access tokens carry no email).
+ * endpoint, called with the same access token (some providers' access tokens carry no email).
  */
 export async function verifiedEmail(user: AuthUser, accessToken: string | null): Promise<VerifiedEmail> {
   if (user.email && user.emailVerified !== undefined) return { email: user.email, verified: user.emailVerified };
