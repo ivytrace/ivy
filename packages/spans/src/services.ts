@@ -1,4 +1,4 @@
-import { describeLlm, llmNote, type LlmSpan } from "./llm.js";
+import { describeLlm, formatTokens, llmNote, type LlmSpan } from "./llm.js";
 import type { Span } from "./types.js";
 
 export type ServiceIcon =
@@ -437,20 +437,29 @@ function describeHttp(span: Span) {
 function describeLlmSpan(span: Span, l: LlmSpan) {
   const internal = l.kind === "tool" || l.kind === "step";
   const label = l.providerLabel ?? "LLM";
+  const tokens =
+    l.inputTokens !== undefined || l.outputTokens !== undefined
+      ? `${formatTokens(l.inputTokens ?? 0)} in → ${formatTokens(l.outputTokens ?? 0)} out` +
+        (l.totalTokens !== undefined ? ` (${formatTokens(l.totalTokens)} total)` : "")
+      : undefined;
   const fields = [
-    ...field("Provider", l.providerLabel),
     ...field("Model", l.model),
     ...field("Response model", l.responseModel),
+    ...field("Tokens", tokens),
+    ...field("Cached input", l.cachedInputTokens !== undefined ? formatTokens(l.cachedInputTokens) : undefined),
+    ...field("Time to first token", l.ttftMs !== undefined ? `${Math.round(l.ttftMs)} ms` : undefined),
+    ...field("Finish reason", l.finishReason),
     ...field("Function ID", l.functionId),
     ...field("Tool", l.tool?.name),
     ...field("Tool call ID", l.tool?.id),
   ];
+  const note = llmNote(l);
   return {
     icon: "ai" as ServiceIcon,
     serviceLabel: internal ? "AI" : label,
     operation: l.operation,
     target: l.kind === "tool" ? l.tool?.name : l.kind === "step" ? undefined : l.model,
-    note: llmNote(l),
+    note: internal ? note : [note, l.providerLabel].filter(Boolean).join(" · ") || undefined,
     graphLabel: internal ? span.name : label,
     groupingKey: internal ? ["llm-internal", span.name].join("|") : ["llm", l.provider ?? l.model ?? "unknown"].join("|"),
     fields,

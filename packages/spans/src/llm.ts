@@ -290,7 +290,7 @@ function classify(span: Span): { kind: LlmKind; operation: string; source: "ai" 
   const opId = a["ai.operationId"] ?? (span.name.startsWith("ai.") ? span.name : undefined);
   if (opId) {
     if (opId === "ai.toolCall") return { kind: "tool", operation: "tool", source: "ai" };
-    if (/\.do(Generate|Stream)$/.test(opId)) return { kind: "call", operation: opId.split(".")[1], source: "ai" };
+    if (/\.do(Generate|Stream)$/.test(opId)) return { kind: "call", operation: opId.split(".")[2], source: "ai" };
     if (/\.doEmbed$/.test(opId)) return { kind: "embedding", operation: opId.split(".")[1], source: "ai" };
     if (AI_SDK_OPERATIONS.test(opId)) {
       const op = opId.slice(3);

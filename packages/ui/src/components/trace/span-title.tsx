@@ -1,7 +1,7 @@
 import type { SpanDescription } from "@/lib/spans/services";
 
 export function SpanTitle({ description, count = 1 }: { description: SpanDescription; count?: number }) {
-  const { operation, target, note, isInvocation } = description;
+  const { operation, target, note, isInvocation, llm } = description;
   return (
     <>
       {count > 1 && <span className="text-muted-foreground">({count}) </span>}
@@ -14,7 +14,7 @@ export function SpanTitle({ description, count = 1 }: { description: SpanDescrip
           <span className="font-medium">{operation}</span>
           {target && (
             <>
-              {" "}
+              {llm ? <span className="text-muted-foreground"> · </span> : " "}
               <code className="text-foreground/90">{target}</code>
             </>
           )}

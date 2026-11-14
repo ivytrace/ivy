@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./fixtures": "./src/lib/fixtures/traces.ts"
+    "./fixtures": "./src/lib/fixtures/traces.ts",
+    "./ai-fixtures": "./src/lib/fixtures/ai-traces.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

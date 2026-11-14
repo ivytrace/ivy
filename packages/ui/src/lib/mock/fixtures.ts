@@ -1,4 +1,7 @@
 import type { Invocation, Span, SpanEvent } from "../api/types.ts";
+import { RATE_LIMIT, SUPPORT_TIMELINE_MS, supportEvent, supportResponse, supportSpans, type AiSpanSpec } from "./ai.ts";
+
+const SUPPORT_FUNCTION = "support-answerTicket";
 
 function rng(seed: number) {
   let s = seed >>> 0 || 1;
@@ -60,7 +63,18 @@ export const FUNCTIONS: FunctionDef[] = [
     weight: 1,
     errorRate: 0.1,
   },
+  {
+    name: SUPPORT_FUNCTION,
+    region: "eu-west-1",
+    trigger: "aws:apigatewayv2",
+    kind: "SERVER",
+    http: { method: "POST", path: "/support/messages", route: "/support/messages" },
+    weight: 2,
+    errorRate: 0.06,
+  },
 ];
+
+const supportTimeline = (failed: boolean) => (failed ? 880 : SUPPORT_TIMELINE_MS);
 
 export interface MockInvocation extends Invocation {
   seed: number;
@@ -81,7 +95,9 @@ function buildInvocations(): MockInvocation[] {
     const r = rng(seed);
     const isError = r() < fn.errorRate;
     const coldStart = r() < 0.06;
-    const duration = Math.round((40 + r() * 250 + (coldStart ? 400 : 0) + (isError ? 120 : 0)) * 10) / 10;
+    const base = 40 + r() * 250 + (coldStart ? 400 : 0) + (isError ? 120 : 0);
+    // LLM calls take seconds: the support bot's spans are laid out on a fixed timeline, stretched a little.
+    const duration = Math.round((fn.name === SUPPORT_FUNCTION ? supportTimeline(isError) * (0.85 + base / 1000) : base) * 10) / 10;
     const traceId = Math.floor(t / 1000).toString(16).padStart(8, "0") + hex(r, 24);
     const error = isError ? errorFor(fn) : null;
     out.push({
@@ -120,6 +136,8 @@ function errorFor(fn: FunctionDef): { type: string; message: string } {
       };
     case "reports-nightlyExport":
       return { type: "Timeout", message: "Task timed out after 30.00 seconds" };
+    case SUPPORT_FUNCTION:
+      return RATE_LIMIT;
     default:
       return { type: "UnauthorizedError", message: "jwt expired" };
   }
@@ -496,6 +514,7 @@ function logsFor(inv: MockInvocation, startMs: number): SpanEvent[] {
     logs.push(log(33, "info", "Creating payment intent for cus_Q1w2e3 (4999 EUR)"));
     if (inv.status === "error") logs.push(log(160, "warn", "Stripe returned 402 card_declined"));
   }
+  if (inv.function === SUPPORT_FUNCTION) logs.push(log(4, "info", "Answering ticket for cus_ada"));
   if (inv.status === "error") logs.push(log(inv.duration_ms - 2, "error", `${inv.error_type}: ${inv.error_message}`));
   else logs.push(log(inv.duration_ms - 1, "info", "Done"));
   return logs;
@@ -513,6 +532,7 @@ const STACKS: Record<string, string> = {
 };
 
 function triggerEvent(inv: MockInvocation): unknown {
+  if (inv.function === SUPPORT_FUNCTION) return supportEvent();
   switch (inv.trigger) {
     case "aws:apigatewayv2":
       return {
@@ -600,7 +620,9 @@ export function buildTrace(inv: MockInvocation): Span[] {
       "ivy.payload.request": JSON.stringify(triggerEvent(inv)),
       "ivy.payload.response": failed
         ? ""
-        : JSON.stringify(fn.http ? { statusCode: 200, body: JSON.stringify({ ok: true }) } : null),
+        : JSON.stringify(
+            fn.name === SUPPORT_FUNCTION ? supportResponse() : fn.http ? { statusCode: 200, body: JSON.stringify({ ok: true }) } : null,
+          ),
       "ivy.memory_used_mb": String(inv.memory_used_mb),
       ...(failed ? { "error.type": inv.error_type ?? "Error" } : {}),
     },
@@ -609,6 +631,33 @@ export function buildTrace(inv: MockInvocation): Span[] {
   };
 
   const spans: Span[] = [root];
+  if (fn.name === SUPPORT_FUNCTION) {
+    const scale = inv.duration_ms / supportTimeline(failed);
+    const ttft = Math.round((240 + r() * 260) * 10) / 10;
+    const add = (spec: AiSpanSpec, parent: string) => {
+      const id = hex(r, 16);
+      const s = startMs + spec.offset * scale;
+      const duration = Math.round(spec.duration * scale * 10) / 10;
+      spans.push({
+        span_id: id,
+        parent_span_id: parent,
+        name: spec.name,
+        kind: spec.kind ?? "CLIENT",
+        service: inv.function,
+        start: iso(s),
+        end: iso(s + duration),
+        duration_ms: duration,
+        status_code: spec.status ?? "UNSET",
+        status_message: spec.statusMessage ?? "",
+        attributes: spec.attributes,
+        resource,
+        events: (spec.events ?? []).map((e) => ({ ts: iso(startMs + e.offset * scale), name: e.name, attributes: e.attributes })),
+      });
+      for (const child of spec.children ?? []) add(child, id);
+    };
+    for (const spec of supportSpans(failed, ttft)) add(spec, inv.span_id);
+    return spans.sort((a, b) => a.start.localeCompare(b.start));
+  }
   const scale = inv.duration_ms / 300;
   for (const spec of childrenFor(inv, r)) {
     const s = startMs + spec.offset * Math.min(scale, 1.5);

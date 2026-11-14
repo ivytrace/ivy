@@ -7,7 +7,7 @@
  */
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { McpUiDisplayMode } from "@modelcontextprotocol/ext-apps";
-import { checkoutFailed, queueFailed } from "@ivy/format/fixtures";
+import { checkoutFailed, queueFailed, supportBot, supportBotGenAi } from "@ivy/format/fixtures";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -24,8 +24,10 @@ async function mcp(): Promise<Client> {
   return (client = c);
 }
 
-function fixtureResult(tool: string): CallToolResult {
-  const trace = tool === "render_graph" ? queueFailed : checkoutFailed;
+const FIXTURES: Record<string, typeof checkoutFailed> = { support: supportBot, "support-genai": supportBotGenAi };
+
+function fixtureResult(tool: string, fixture: string): CallToolResult {
+  const trace = FIXTURES[fixture] ?? (tool === "render_graph" ? queueFailed : checkoutFailed);
   return {
     content: [{ type: "text", text: "(fixture) text fallback not computed in the test host" }],
     structuredContent: { workspace: { id: "default", slug: "default", name: "Default" }, trace: { ...trace, omitted_spans: 0 } },
@@ -61,7 +63,7 @@ async function run() {
     status(`resource ${uri}: ${(html.length / 1024).toFixed(0)} KB, mimeType ${resource.contents[0]?.mimeType}`);
     source = { srcdoc: html };
   } else {
-    result = fixtureResult(tool);
+    result = fixtureResult(tool, $<HTMLSelectElement>("[name=fixture]").value);
     source = { src: `/mcp-apps/${tool === "render_graph" ? "graph" : "waterfall"}.html` };
     status("fixture trace, view from the dev server");
   }
@@ -103,5 +105,6 @@ async function run() {
 $("#run").addEventListener("click", () => void run().catch((err) => status(`error: ${err instanceof Error ? err.message : err}`)));
 if (params.get("trace")) $<HTMLInputElement>("[name=trace]").value = params.get("trace")!;
 if (params.get("tool")) $<HTMLSelectElement>("[name=tool]").value = params.get("tool")!;
+if (params.get("fixture")) $<HTMLSelectElement>("[name=fixture]").value = params.get("fixture")!;
 if (params.get("dark") === "1") $<HTMLInputElement>("[name=dark]").checked = true;
 if (params.has("run")) void run().catch((err) => status(`error: ${err instanceof Error ? err.message : err}`));

@@ -47,7 +47,7 @@ describe("describeLlm", () => {
     const l = describeLlm(doGenerate)!;
     expect(l).toMatchObject({
       kind: "call",
-      operation: "generateText",
+      operation: "doGenerate",
       provider: "openai",
       providerLabel: "OpenAI",
       model: "gpt-4o-mini",
@@ -76,7 +76,7 @@ describe("describeLlm", () => {
     expect(tool).toMatchObject({ kind: "tool", tool: { name: "getOrder", arguments: { orderId: "ord_1" }, result: { status: "shipped" } } });
 
     const stream = describeLlm(span("ai.streamText.doStream", { "ai.operationId": "ai.streamText.doStream", "ai.model.provider": "openai.responses", "ai.response.msToFirstChunk": "318.4" }))!;
-    expect(stream).toMatchObject({ kind: "call", operation: "streamText", streaming: true, ttftMs: 318.4 });
+    expect(stream).toMatchObject({ kind: "call", operation: "doStream", streaming: true, ttftMs: 318.4 });
   });
 
   it("reads GenAI semantic-convention spans (AI SDK 7, OpenAI/Anthropic instrumentations)", () => {
@@ -188,7 +188,7 @@ describe("LLM spans in traces", () => {
   });
 
   it("describes LLM spans for rows: AI icon, operation, model, token note", () => {
-    expect(describeSpan(call1)).toMatchObject({ icon: "ai", serviceLabel: "OpenAI", operation: "generateText", target: "gpt-4o-mini", note: "812 → 24 tokens" });
+    expect(describeSpan(call1)).toMatchObject({ icon: "ai", serviceLabel: "OpenAI", operation: "doGenerate", target: "gpt-4o-mini", note: "812 → 24 tokens · OpenAI" });
     expect(describeSpan(tool)).toMatchObject({ icon: "ai", operation: "tool", target: "getOrder" });
   });
 

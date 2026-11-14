@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils/cn";
 import { formatDuration } from "@/lib/utils/format";
 
 const BAR_COLORS: Partial<Record<Icon, string>> = {
+  ai: "bg-violet-400",
   function: "bg-orange-400",
   lambda: "bg-orange-400",
   dynamodb: "bg-fuchsia-400",

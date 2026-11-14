@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMockHandler, handleMockRequest } from "./server";
 import type { AwsAccount, AwsFunction, ErrorGroup, FunctionSummary, InvocationsResponse, Trace, VerifyResponse } from "../api/types";
-import { describeSpan, getLogs } from "../spans/services";
+import { describeSpan, getLogs, llmUsage } from "../spans/services";
 
 const get = <T>(path: string) => {
   const res = handleMockRequest(new URL(path, "http://mock"));
@@ -39,6 +39,17 @@ describe("mock API", () => {
     const ok = get<InvocationsResponse>("/api/invocations?since=7d&status=ok&function=checkout-createOrder").body.items[0];
     const okIcons = get<Trace>(`/api/traces/${ok.trace_id}`).body.spans.map((s) => describeSpan(s).icon);
     expect(okIcons).toEqual(expect.arrayContaining(["dynamodb", "s3", "sqs", "sns", "external"]));
+  });
+
+  it("serves an AI SDK trace: generateText with a tool call, then streamText", () => {
+    const inv = get<InvocationsResponse>("/api/invocations?since=7d&status=ok&function=support-answerTicket").body.items[0];
+    const spans = get<Trace>(`/api/traces/${inv.trace_id}`).body.spans;
+    const names = spans.map((s) => s.name);
+    expect(names).toEqual(expect.arrayContaining(["ai.generateText", "ai.generateText.doGenerate", "ai.toolCall", "ai.streamText.doStream", "DynamoDB.GetItem"]));
+    expect(llmUsage(spans)).toMatchObject({ calls: 3, inputTokens: 1877, outputTokens: 103 });
+    const tool = spans.find((s) => s.name === "ai.toolCall")!;
+    expect(spans.find((s) => s.name === "DynamoDB.GetItem")!.parent_span_id).toBe(tool.span_id);
+    expect(describeSpan(spans.find((s) => s.name === "ai.streamText.doStream")!).llm?.ttftMs).toBeGreaterThan(200);
   });
 
   it("returns 404 for unknown traces", () => {
