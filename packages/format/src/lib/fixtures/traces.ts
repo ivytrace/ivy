@@ -341,6 +341,73 @@ export const plainOtel = build(traceIdAt(9_000, "0102030405060708090a0b0c"), 9_0
   },
 ]);
 
+const IMPORT_ERROR_LOG =
+  'Uncaught Exception \t{"errorType":"Runtime.ImportModuleError","errorMessage":"Error: Cannot find module \'left-pad\'\\nRequire stack:\\n- /var/task/index.js\\n- /opt/nodejs/ivy/handler.mjs","stack":["Runtime.ImportModuleError: Error: Cannot find module \'left-pad\'","Require stack:","- /var/task/index.js","- /opt/nodejs/ivy/handler.mjs","    at Object.<anonymous> (/var/task/index.js:1:17)"]}';
+
+/** An init failure: the extension's synthetic invocation span with the log tail (no tracer spans). */
+export const initFailed = build(traceIdAt(20_000, "5e1f00d1e2f3a4b5c6d7e8f9"), 20_000, "eu-west-1", "reports-export", [
+  {
+    id: "e1",
+    name: "reports-export",
+    kind: "INTERNAL",
+    offset: 0,
+    duration: 212.5,
+    status: "ERROR",
+    statusMessage: "Error: Cannot find module 'left-pad'",
+    attributes: {
+      "ivy.invocation": "true",
+      "ivy.synthetic": "true",
+      "ivy.failure.phase": "init",
+      "ivy.platform.status": "error",
+      "error.type": "Runtime.ImportModuleError",
+      "faas.invocation_id": "",
+      "faas.coldstart": "true",
+      "faas.trigger": "other",
+      "ivy.init_duration_ms": "212.5",
+    },
+    events: [log(180, "info", "loading config from /var/task/config.json"), log(205, "error", IMPORT_ERROR_LOG)],
+  },
+]);
+
+/** Out of memory after partial spans: the tracer's provisional root, completed by the extension. */
+export const oomCrashed = build(traceIdAt(30_000, "0e0e1f1f2a2a3b3b4c4c5d5d"), 30_000, "eu-west-1", "reports-export", [
+  {
+    id: "a01",
+    name: "reports-export",
+    kind: "INTERNAL",
+    offset: 0,
+    duration: 2380.2,
+    status: "ERROR",
+    statusMessage: "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory",
+    attributes: {
+      "ivy.invocation": "true",
+      "ivy.failure.phase": "invoke",
+      "ivy.platform.status": "error",
+      "error.type": "Runtime.OutOfMemory",
+      "faas.invocation_id": "0b0e1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d",
+      "faas.coldstart": "false",
+      "faas.trigger": "timer",
+      "ivy.trigger.source": "aws:scheduled",
+      "ivy.memory_max_used_mb": "128",
+      "ivy.memory_size_mb": "128",
+      "ivy.billed_duration_ms": "2381",
+    },
+    events: [
+      log(15, "info", "exporting 250000 rows"),
+      log(2370, "error", "<--- Last few GCs --->"),
+      log(2375, "error", "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory"),
+    ],
+  },
+  {
+    id: "a02",
+    parent: "a01",
+    name: "DynamoDB.Scan",
+    offset: 12,
+    duration: 640.3,
+    attributes: aws("DynamoDB", "Scan", { "aws.dynamodb.table_names": '["reports"]' }, { TableName: "reports" }, { Count: 1000 }),
+  },
+]);
+
 export const invocations: Invocation[] = [
   {
     trace_id: checkoutFailed.trace_id,
@@ -359,6 +426,11 @@ export const invocations: Invocation[] = [
     error_type: "TypeError",
     error_message: "Cannot read properties of undefined (reading 'id')",
     memory_used_mb: 96,
+    memory_limit_mb: 512,
+    failure_phase: null,
+    failure_kind: null,
+    synthetic: false,
+    init_duration_ms: 241.7,
   },
   {
     trace_id: queueFailed.trace_id,
@@ -377,6 +449,11 @@ export const invocations: Invocation[] = [
     error_type: "ConditionalCheckFailedException",
     error_message: "The conditional request failed",
     memory_used_mb: 71,
+    memory_limit_mb: 512,
+    failure_phase: null,
+    failure_kind: null,
+    synthetic: false,
+    init_duration_ms: null,
   },
   {
     trace_id: checkoutOk.trace_id,
@@ -395,6 +472,11 @@ export const invocations: Invocation[] = [
     error_type: null,
     error_message: null,
     memory_used_mb: 88,
+    memory_limit_mb: 512,
+    failure_phase: null,
+    failure_kind: null,
+    synthetic: false,
+    init_duration_ms: null,
   },
 ];
 
@@ -408,6 +490,7 @@ export const errorGroups: ErrorGroup[] = [
     first_seen: "2026-11-14T08:12:44.120Z",
     last_seen: "2026-11-14T12:00:00.000Z",
     sample_trace_id: checkoutFailed.trace_id,
+    failure_kind: null,
   },
   {
     fingerprint: "b3c4",
@@ -418,7 +501,68 @@ export const errorGroups: ErrorGroup[] = [
     first_seen: "2026-11-14T10:01:02.000Z",
     last_seen: "2026-11-14T12:00:05.000Z",
     sample_trace_id: queueFailed.trace_id,
+    failure_kind: null,
+  },
+  {
+    fingerprint: "d5e6",
+    function: "reports-export",
+    error_type: "Runtime.ImportModuleError",
+    error_message: "Error: Cannot find module 'left-pad'",
+    count: 3,
+    first_seen: "2026-11-14T11:59:40.000Z",
+    last_seen: "2026-11-14T12:00:20.000Z",
+    sample_trace_id: initFailed.trace_id,
+    failure_kind: "init_failed",
   },
 ];
 
-export const traces = [checkoutFailed, checkoutOk, queueFailed, plainOtel];
+export const failureInvocations: Invocation[] = [
+  {
+    trace_id: initFailed.trace_id,
+    span_id: "00000000000000e1",
+    ts: "2026-11-14T12:00:20.000Z",
+    function: "reports-export",
+    region: "eu-west-1",
+    status: "error",
+    duration_ms: 212.5,
+    cold_start: true,
+    request_id: "",
+    trigger: "unknown",
+    http_method: null,
+    http_path: null,
+    http_status: null,
+    error_type: "Runtime.ImportModuleError",
+    error_message: "Error: Cannot find module 'left-pad'",
+    memory_used_mb: null,
+    memory_limit_mb: 128,
+    failure_phase: "init",
+    failure_kind: "init_failed",
+    synthetic: true,
+    init_duration_ms: 212.5,
+  },
+  {
+    trace_id: oomCrashed.trace_id,
+    span_id: "0000000000000a01",
+    ts: "2026-11-14T12:00:30.000Z",
+    function: "reports-export",
+    region: "eu-west-1",
+    status: "error",
+    duration_ms: 2380.2,
+    cold_start: false,
+    request_id: "0b0e1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d",
+    trigger: "aws:scheduled",
+    http_method: null,
+    http_path: null,
+    http_status: null,
+    error_type: "Runtime.OutOfMemory",
+    error_message: "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory",
+    memory_used_mb: null,
+    memory_limit_mb: 128,
+    failure_phase: "invoke",
+    failure_kind: "out_of_memory",
+    synthetic: true,
+    init_duration_ms: null,
+  },
+];
+
+export const traces = [checkoutFailed, checkoutOk, queueFailed, plainOtel, initFailed, oomCrashed];

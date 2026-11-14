@@ -1,3 +1,4 @@
+import { failureKind } from '@ivy/spans';
 import type { Context } from 'hono';
 import { dataQuery } from '../../lib/tenancy/context.js';
 import { decodeCursor, encodeCursor } from '../../lib/utils/cursor.js';
@@ -22,6 +23,10 @@ interface InvocationRow {
   error_type: string;
   error_message: string;
   memory_used_mb: number;
+  memory_limit_mb: number;
+  failure_phase: string;
+  synthetic: boolean;
+  init_duration_ms: number;
 }
 
 function parseLimit(value: string | undefined): number {
@@ -70,7 +75,8 @@ export async function getInvocations(c: Context) {
   const rows = await dataQuery<InvocationRow>(
     c,
     `SELECT toUnixTimestamp64Milli(ts) AS ts_ms, trace_id, span_id, function, region, status, duration_ms,
-       cold_start, request_id, trigger, http_method, http_path, http_status, error_type, error_message, memory_used_mb
+       cold_start, request_id, trigger, http_method, http_path, http_status, error_type, error_message, memory_used_mb,
+       memory_limit_mb, failure_phase, synthetic, init_duration_ms
      FROM invocations
      WHERE ${where.join(' AND ')}
      ORDER BY ts DESC, span_id DESC
@@ -98,6 +104,11 @@ export async function getInvocations(c: Context) {
       error_type: emptyToNull(row.error_type),
       error_message: emptyToNull(row.error_message),
       memory_used_mb: zeroToNull(round(row.memory_used_mb, 1)),
+      memory_limit_mb: zeroToNull(row.memory_limit_mb),
+      failure_phase: row.failure_phase === 'init' || row.failure_phase === 'invoke' ? row.failure_phase : null,
+      failure_kind: row.status === 'error' ? failureKind(row.error_type, row.failure_phase) : null,
+      synthetic: row.synthetic,
+      init_duration_ms: zeroToNull(round(row.init_duration_ms)),
     })),
     next_cursor: rows.length > limit && last ? encodeCursor({ ts: last.ts_ms, spanId: last.span_id }) : null,
   });

@@ -1,4 +1,4 @@
-import type { ErrorGroup, Invocation } from "@ivy/spans";
+import { failureLabel, missingTraceNote, type ErrorGroup, type Invocation } from "@ivy/spans";
 import { ms, oneLine, shortIso } from "../text/text.js";
 
 const trigger = (t: string) => t.replace(/^aws:/, "") || "unknown";
@@ -17,8 +17,13 @@ export function formatInvocationLine(inv: Invocation, messageChars = 140): strin
   );
   let line = parts.join(" ");
   if (inv.status === "error") {
+    const label = failureLabel(inv.failure_kind);
+    if (label) line += ` · ${label}`;
     const message = [inv.error_type, inv.error_message].filter(Boolean).join(": ");
     line += ` · ${oneLine(message || "error", messageChars)}`;
+    if (inv.failure_phase === "init" && !inv.request_id) line += " · no request";
+    const note = missingTraceNote(inv.failure_kind, inv.synthetic);
+    if (note) line += ` · ${note}`;
   }
   return `${line} · trace ${inv.trace_id}`;
 }
@@ -34,7 +39,8 @@ export function formatErrorGroups(items: ErrorGroup[]): string {
   return items
     .map(
       (g) =>
-        `${g.count}× ${g.function} · ${oneLine(`${g.error_type}: ${g.error_message}`, 160)}` +
+        `${g.count}× ${g.function}${g.failure_kind ? ` · ${failureLabel(g.failure_kind)}` : ""} · ${oneLine(`${g.error_type}: ${g.error_message}`, 160)}` +
+        (g.failure_kind === "init_failed" ? " · no trace spans: the runtime never started the handler" : "") +
         ` · first ${shortIso(g.first_seen)} · last ${shortIso(g.last_seen)} · sample trace ${g.sample_trace_id}`,
     )
     .join("\n");

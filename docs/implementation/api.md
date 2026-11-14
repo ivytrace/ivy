@@ -48,10 +48,18 @@ Query: `function`, `status` (`ok`|`error`), `q` (free text: matches request ID, 
   "status": "ok", "duration_ms": 93.2, "cold_start": false,
   "request_id": "…", "trigger": "aws:apigatewayv2",
   "http_method": "POST", "http_path": "/orders", "http_status": 200,
-  "error_type": null, "error_message": null, "memory_used_mb": 88
+  "error_type": null, "error_message": null, "memory_used_mb": 88,
+  "memory_limit_mb": 256, "failure_phase": null, "failure_kind": null, "synthetic": false, "init_duration_ms": null
 } ], "next_cursor": "…" | null }
 ```
 Sorted by `ts` descending.
+
+Failures outside the handler (reported by the Ivy extension from the Lambda Telemetry API, `platform-failures.md`)
+have `failure_phase` `init` or `invoke` and a `failure_kind`: `init_failed`, `out_of_memory`, `timed_out` or `crashed`
+(labels "Init failed", "Out of memory", "Timed out", "Crashed"; `failureKind()`/`failureLabel()` in `@ivy/spans`).
+Tracer-reported timeouts (`error_type` `Timeout`) are `timed_out` too. `synthetic: true` means the extension created
+the invocation span itself (the trace has no tracer spans). `request_id` is `""` for an init failure that had no
+request. `memory_limit_mb` comes from the `faas.max_memory` resource attribute, `init_duration_ms` is set on cold starts.
 
 ## `GET /api/traces/:traceId`
 All spans of a trace, sorted by start time.
@@ -67,6 +75,10 @@ All spans of a trace, sorted by start time.
 } ] }
 ```
 Attribute values are strings in storage; the API returns them as stored (strings).
+Update spans (`ivy.update = true`: Lambda report data the extension sends after the invocation, see
+`span-conventions.md`) are merged into the span with the same span ID (`mergeUpdateSpans` in `@ivy/spans`) and never
+returned themselves, so `ivy.billed_duration_ms`, `ivy.memory_max_used_mb` and `ivy.memory_size_mb` appear on the
+invocation span once the report has arrived.
 JSON-valued attributes (`ivy.payload.*`, headers, arrays) are JSON strings for the UI to parse.
 404 if not found.
 
@@ -80,9 +92,11 @@ Query: `function`.
 { "items": [ {
   "fingerprint": "…", "function": "…", "error_type": "TypeError",
   "error_message": "Cannot read properties of undefined (reading 'id')",
-  "count": 42, "first_seen": "…", "last_seen": "…", "sample_trace_id": "…"
+  "count": 42, "first_seen": "…", "last_seen": "…", "sample_trace_id": "…", "failure_kind": null
 } ] }
 ```
+`failure_kind` as in `/api/invocations` (from the newest occurrence). Init failures group by function, error type and
+the first meaningful log line, e.g. `Runtime.ImportModuleError` + `Error: Cannot find module 'left-pad'`.
 
 ## `GET /api/stats/timeseries`
 Query: `function` (optional), `bucket` (`1m`|`5m`|`15m`|`1h`|`1d`, default picked from range to keep about 100 points or fewer).

@@ -1,3 +1,4 @@
+import { mergeUpdateSpans } from '@ivy/spans';
 import type { Context } from 'hono';
 import { traceResponse } from '../../lib/format/text-trace.js';
 import { dataQuery } from '../../lib/tenancy/context.js';
@@ -53,9 +54,7 @@ export async function getTrace(c: Context) {
   if (rows.length === 0) rows = await fetchSpans(c, traceId);
   if (rows.length === 0) return c.json({ error: 'Trace not found' }, 404);
 
-  return traceResponse(c, {
-    trace_id: traceId,
-    spans: rows.map((row) => {
+  const spans = rows.map((row) => {
       const durationMs = row.duration_ns / 1e6;
       return {
         span_id: row.span_id,
@@ -76,6 +75,7 @@ export async function getTrace(c: Context) {
           attributes: row.event_attributes[i],
         })),
       };
-    }),
-  });
+    });
+  // Update spans (late Lambda report data from the extension) are folded into their invocation span.
+  return traceResponse(c, { trace_id: traceId, spans: mergeUpdateSpans(spans) });
 }

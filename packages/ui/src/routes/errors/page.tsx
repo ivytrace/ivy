@@ -3,6 +3,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 
 import { DataTable } from "@/components/tables/data-table";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
+import { FailureBadge } from "@/components/common/status";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltipped } from "@/components/ui/tooltipped";
@@ -20,7 +21,10 @@ const columns: ColumnDef<ErrorGroup, unknown>[] = [
     header: "Error",
     cell: ({ row }) => (
       <Link to={traceLink(row.original.sample_trace_id)} className="block max-w-2xl">
-        <span className="font-semibold text-red-400">{row.original.error_type}</span>
+        <span className="flex items-center gap-2">
+          {row.original.failure_kind && <FailureBadge kind={row.original.failure_kind} hint={false} />}
+          <span className="font-semibold text-red-400">{row.original.error_type}</span>
+        </span>
         <span className="mt-0.5 block line-clamp-2 text-muted-foreground">{row.original.error_message}</span>
       </Link>
     ),

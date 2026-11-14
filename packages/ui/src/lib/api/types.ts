@@ -1,4 +1,5 @@
 export type { Span, SpanEvent, Trace } from "../spans/types.ts";
+import type { FailureKind } from "@ivy/spans";
 
 export interface AuthSettings {
   enabled: true;
@@ -44,6 +45,11 @@ export interface Invocation {
   error_type: string | null;
   error_message: string | null;
   memory_used_mb: number | null;
+  memory_limit_mb: number | null;
+  failure_phase: "init" | "invoke" | null;
+  failure_kind: FailureKind | null;
+  synthetic: boolean;
+  init_duration_ms: number | null;
 }
 
 export interface ErrorGroup {
@@ -55,6 +61,7 @@ export interface ErrorGroup {
   first_seen: string;
   last_seen: string;
   sample_trace_id: string;
+  failure_kind: FailureKind | null;
 }
 
 export interface TimeseriesPoint {

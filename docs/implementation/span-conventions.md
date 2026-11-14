@@ -40,10 +40,46 @@ One per invocation. It is the span the `invocations` table is built from.
 - HTTP triggers: `http.request.method`, `url.path`, `http.route` (if known), `http.response.status_code`
 - `ivy.payload.request`: event, JSON string, size-capped (see below)
 - `ivy.payload.response`: handler result, JSON string, size-capped
-- `ivy.memory_used_mb`: number (best effort)
+- `ivy.memory_used_mb`: number (best effort, from the tracer; `ivy.memory_max_used_mb` from the platform report wins when present)
 - Errors: span status `ERROR` with message, plus an `exception` event
   (`exception.type`, `exception.message`, `exception.stacktrace`). Also set
-  `error.type` on the span. Timeouts: `error.type = "Timeout"`.
+  `error.type` on the span. Timeouts: `error.type = "Timeout"` from the tracer, replaced by
+  `Sandbox.Timedout` when the extension sees the platform's timeout.
+- `ivy.init_duration_ms` (double): on cold starts, the init phase duration from the Lambda platform
+  (`platform.initReport`). `ivy.restore_duration_ms` likewise for SnapStart restores.
+
+### Failures outside the handler (from the extension)
+
+The extension reads the Lambda Telemetry API (`platform-failures.md`) and adds these to the invocation span, or
+creates the invocation span itself when the tracer reported nothing:
+
+- `error.type`: the platform's error type, e.g. `Runtime.ImportModuleError`, `Runtime.HandlerNotFound`,
+  `Runtime.UserCodeSyntaxError`, `Runtime.OutOfMemory`, `Runtime.ExitError`, `Sandbox.Timedout`.
+- `ivy.failure.phase`: `init` (the function failed while loading; the handler never ran) or `invoke`.
+- `ivy.platform.status`: the platform status, `failure` | `error` | `timeout`.
+- `ivy.synthetic = true`: the extension created this span; there are no tracer spans (always for init failures).
+- Status `ERROR`, message = the first meaningful log line (e.g. `Error: Cannot find module 'left-pad'`), which is
+  what error groups are keyed on. No `exception` event.
+- The log tail (last 50 lines / 8 KB, redacted) as `log` events, same shape as console logs below.
+- `faas.invocation_id` is empty or absent for an init failure that had no request; the UI shows "no request".
+
+Readers derive one of four labels (`failureKind` in `@ivy/spans`): "Init failed" (phase `init`, or an init error
+type), "Out of memory" (`Runtime.OutOfMemory`), "Timed out" (`Sandbox.Timedout` or `Timeout`), "Crashed" (other
+invoke-phase failures).
+
+### Update spans (late Lambda report data)
+
+`platform.report` (billed duration, max memory) only exists after the invoke phase has ended, i.e. after the
+extension exported the invocation. The extension sends it with a later export as an **update span**: same
+`traceId`, `spanId`, name and start/end time as the invocation span, with
+
+- `ivy.update = true` **(marker; never together with `ivy.invocation`)**
+- `faas.invocation_id`
+- `ivy.billed_duration_ms` (int), `ivy.memory_max_used_mb` (int), `ivy.memory_size_mb` (int)
+- optionally `ivy.init_duration_ms`, `ivy.restore_duration_ms`
+
+Readers merge an update span's attributes into the span with the same span ID and drop the update span
+(`mergeUpdateSpans`). It creates no `invocations` row and is not a trace for billing.
 
 ## Outgoing call spans (children)
 

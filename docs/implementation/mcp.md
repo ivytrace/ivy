@@ -82,9 +82,9 @@ line starts with its workspace slug in brackets (`[shop-production] …`). Time 
 | tool | input | output |
 |---|---|---|
 | `list_workspaces` | – | `slug · name · ID` per workspace. |
-| `find_failing_invocations` | `workspace?`, `function?`, `since` (1h), `limit` (20, max 100) | Count line, then one line per failed invocation (`formatInvocationLine`), newest first across workspaces. |
+| `find_failing_invocations` | `workspace?`, `function?`, `since` (1h), `limit` (20, max 100) | Count line, then one line per failed invocation (`formatInvocationLine`), newest first across workspaces. Failures outside the handler carry their label (`Init failed`, `Out of memory`, `Timed out`, `Crashed`), `no request` for init failures without one, and a `no trace: …` note when the runtime never started or the process died before the tracer could report. |
 | `search_invocations` | `workspace?`, `q?`, `function?`, `status?`, `since` (24h), `limit` (20) | Same lines. `q` is the API's free text (request/trace ID exact, error message or path substring). |
-| `list_error_groups` | `workspace?`, `function?`, `since` (24h), `limit` (20) | Totals line, then `count× function · type: message · first … · last … · sample trace …`, most frequent first. |
+| `list_error_groups` | `workspace?`, `function?`, `since` (24h), `limit` (20) | Totals line, then `count× function · [label ·] type: message · first … · last … · sample trace …`, most frequent first; init failure groups say they have no trace spans. |
 | `get_trace_summary` | `workspace?`, `trace_id` or `request_id`, `detail` (normal), `max_tokens` (2000) | `[workspace]` line, then `formatTrace`. A request ID is looked up over the last 7 days. |
 | `compare_invocations` | `workspace?`, `trace_id`, `baseline_trace_id?`, `max_tokens` | `compareTraces`. Without a baseline: the latest successful invocation of the same function in the same workspace (last 7 days). |
 | `render_waterfall` | `workspace?`, `trace_id` | MCP Apps view of the span waterfall; text: the `formatTrace` tree. |

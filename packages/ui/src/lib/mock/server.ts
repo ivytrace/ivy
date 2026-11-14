@@ -116,6 +116,7 @@ function errors(params: URLSearchParams): ErrorGroup[] {
       first_seen: list[list.length - 1].ts,
       last_seen: list[0].ts,
       sample_trace_id: list[0].trace_id,
+      failure_kind: list[0].failure_kind,
     }))
     .sort((a, b) => b.count - a.count);
 }

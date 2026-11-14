@@ -1,3 +1,4 @@
+import { failureLabel, invocationResources, spanFailureKind } from "./failures.js";
 import type { Span } from "./types.js";
 
 export type ServiceIcon =
@@ -436,20 +437,34 @@ function describeInvocation(span: Span) {
   const method = a["http.request.method"];
   const route = a["http.route"] || a["url.path"];
   const status = a["http.response.status_code"];
+  const kind = spanFailureKind(span);
+  const res = invocationResources(span);
+  const msText = (v: number | null) => (v === null ? undefined : `${Math.round(v * 10) / 10} ms`);
+  const memory =
+    res.memoryUsedMb === null ? undefined : `${res.memoryUsedMb} MB${res.memoryLimitMb !== null ? ` of ${res.memoryLimitMb} MB` : ""}`;
   return {
     icon: "function" as ServiceIcon,
     serviceLabel: "Lambda",
     operation: "Invocation",
     target: span.name,
-    note: method && route ? `${method} ${route}${status ? ` – ${status}` : ""}` : `triggered by ${triggerLabel(source)}`,
+    note:
+      kind === "init_failed"
+        ? "init failed"
+        : method && route
+          ? `${method} ${route}${status ? ` – ${status}` : ""}`
+          : `triggered by ${triggerLabel(source)}`,
     graphLabel: span.name,
     groupingKey: ["invocation", span.span_id].join("|"),
     fields: [
       ...field("Function", span.name),
-      ...field("Request ID", a["faas.invocation_id"]),
+      ...field("Request ID", a["faas.invocation_id"] || (kind === "init_failed" ? "none (failed before a request)" : undefined)),
+      ...field("Failure", kind ? `${failureLabel(kind)} (${a["ivy.failure.phase"] || "invoke"} phase)` : undefined),
       ...field("Trigger", source),
       ...field("Cold start", a["faas.coldstart"]),
-      ...field("Memory used", a["ivy.memory_used_mb"] ? `${a["ivy.memory_used_mb"]} MB` : undefined),
+      ...field("Memory used", memory),
+      ...field("Billed duration", msText(res.billedDurationMs)),
+      ...field("Init duration", msText(res.initDurationMs)),
+      ...field("Restore duration", msText(res.restoreDurationMs)),
       ...field("Region", span.resource["cloud.region"]),
       ...field("ARN", a["cloud.resource_id"]),
     ],

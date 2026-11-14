@@ -15,6 +15,14 @@ const object = (properties: Record<string, unknown>, required = Object.keys(prop
   required,
 });
 
+const failureKind = {
+  type: ['string', 'null'],
+  enum: ['init_failed', 'out_of_memory', 'timed_out', 'crashed', null],
+  description:
+    'Failure outside the handler, reported by the Ivy extension from the Lambda Telemetry API (labels: Init failed, ' +
+    'Out of memory, Timed out, Crashed). Null for successful invocations and ordinary handler errors.',
+} as const;
+
 const list = (ref: string) => object({ items: { type: 'array', items: { $ref: `#/components/schemas/${ref}` } } });
 
 export const schemas = {
@@ -32,6 +40,14 @@ export const schemas = {
     trigger: { type: 'string', examples: ['aws:apigatewayv2', 'aws:sqs'] },
     http_method: nstr, http_path: nstr, http_status: { type: ['integer', 'null'] },
     error_type: nstr, error_message: nstr, memory_used_mb: { type: ['number', 'null'] },
+    memory_limit_mb: { type: ['integer', 'null'] },
+    failure_phase: { type: ['string', 'null'], enum: ['init', 'invoke', null] },
+    failure_kind: failureKind,
+    synthetic: {
+      type: 'boolean',
+      description: 'The extension created the invocation span itself because the tracer reported nothing (init failure, crash): the trace has no child spans.',
+    },
+    init_duration_ms: { type: ['number', 'null'], description: 'Set on cold starts.' },
   }),
   InvocationList: object({
     items: { type: 'array', items: { $ref: '#/components/schemas/Invocation' } },
@@ -46,14 +62,20 @@ export const schemas = {
     service: str, start: time, end: time, duration_ms: num,
     status_code: { type: 'string', enum: ['OK', 'ERROR', 'UNSET'] },
     status_message: str,
-    attributes: { ...strMap, description: 'Span attributes as stored (strings); JSON-valued ones (`ivy.payload.*`, headers, arrays) are JSON strings. See span-conventions.md.' },
+    attributes: {
+      ...strMap,
+      description:
+        'Span attributes as stored (strings); JSON-valued ones (`ivy.payload.*`, headers, arrays) are JSON strings. See ' +
+        'span-conventions.md. Late Lambda report data (`ivy.billed_duration_ms`, `ivy.memory_max_used_mb`, ' +
+        '`ivy.memory_size_mb`) is merged into the invocation span; update spans are never listed themselves.',
+    },
     resource: strMap,
     events: { type: 'array', items: { $ref: '#/components/schemas/SpanEvent' } },
   }),
   Trace: object({ trace_id: str, spans: { type: 'array', items: { $ref: '#/components/schemas/Span' } } }),
   ErrorGroup: object({
     fingerprint: str, function: str, error_type: str, error_message: str, count: int,
-    first_seen: time, last_seen: time, sample_trace_id: str,
+    first_seen: time, last_seen: time, sample_trace_id: str, failure_kind: failureKind,
   }),
   ErrorGroupList: list('ErrorGroup'),
   TimeseriesPoint: object({ ts: time, invocations: int, errors: int, p95_ms: num }),
