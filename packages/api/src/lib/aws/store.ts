@@ -23,7 +23,8 @@ export interface AwsStore {
 const iso = (ms: number) => new Date(ms).toISOString();
 
 const ACCOUNT_COLUMNS = `tenant_id, id, name, account_id, role_arn, external_id, event_secret, stack_name, stack_region,
-  regions, all_regions, status, error,
+  regions, all_regions, status, error, throttle_metrics, throttle_status,
+  toUnixTimestamp64Milli(throttles_polled_to) AS throttles_polled_to,
   toUnixTimestamp64Milli(created_at) AS created_at,
   toUnixTimestamp64Milli(verified_at) AS verified_at,
   toUnixTimestamp64Milli(last_sync_at) AS last_sync_at`;
@@ -52,6 +53,7 @@ const accountRow = (a: AwsAccount, deleted = 0) => ({
   created_at: iso(a.created_at),
   verified_at: iso(a.verified_at),
   last_sync_at: iso(a.last_sync_at),
+  throttles_polled_to: iso(a.throttles_polled_to ?? 0),
   updated_at: version(),
   deleted,
 });

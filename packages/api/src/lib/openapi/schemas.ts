@@ -23,7 +23,8 @@ export const schemas = {
   Config: object({ version: str, auth: object({ enabled: bool }) }),
   FunctionSummary: object({
     name: str, region: str, invocations: int, errors: int, error_rate: num, cold_starts: int,
-    avg_ms: num, p50_ms: num, p95_ms: num, p99_ms: num, last_invoked: time,
+    avg_ms: num, p50_ms: num, p95_ms: num, p99_ms: num, last_invoked: ntime,
+    throttles: { type: 'integer', description: 'Invocations Lambda rejected (CloudWatch `Throttles`); they never reached the function. 0 when throttle polling is off.' },
   }),
   FunctionList: list('FunctionSummary'),
   Invocation: object({
@@ -53,10 +54,12 @@ export const schemas = {
   Trace: object({ trace_id: str, spans: { type: 'array', items: { $ref: '#/components/schemas/Span' } } }),
   ErrorGroup: object({
     fingerprint: str, function: str, error_type: str, error_message: str, count: int,
-    first_seen: time, last_seen: time, sample_trace_id: str,
+    first_seen: time, last_seen: time,
+    sample_trace_id: { ...nstr, description: 'null for the synthetic `Throttled` group: throttled requests never reach the function, so there is no trace.' },
+    kind: { type: 'string', enum: ['error', 'throttle'], description: '`throttle`: one synthetic group per function counting throttles (error_type `Throttled`).' },
   }),
   ErrorGroupList: list('ErrorGroup'),
-  TimeseriesPoint: object({ ts: time, invocations: int, errors: int, p95_ms: num }),
+  TimeseriesPoint: object({ ts: time, invocations: int, errors: int, p95_ms: num, throttles: int }),
   Timeseries: list('TimeseriesPoint'),
   AwsSetup: object({
     principal_arn: nstr, template_url: nstr, events_url: nstr, public_url: nstr, ingest_endpoint: nstr, layer_sha256: nstr,
@@ -69,6 +72,11 @@ export const schemas = {
     status: { type: 'string', enum: ['pending', 'connected', 'error'] },
     error: { ...nstr, description: 'On a connected account: per-region sync errors, one per line.' },
     created_at: time, verified_at: ntime, last_sync_at: ntime, syncing: bool,
+    throttle_metrics: { type: 'boolean', description: 'Poll CloudWatch for Lambda throttles (GetMetricData, billed to this AWS account).' },
+    throttle_status: {
+      type: ['string', 'null'], enum: ['ok', 'missing_permission', 'error', null],
+      description: '`missing_permission`: the stack predates `cloudwatch:GetMetricData`; update the stack with the current template.',
+    },
     counts: object({ traced: int, opted_out: int, unsupported: int, conflict: int, error: int, pending: int, total: int }),
     quick_create_url: nstr, template_download_url: str,
   }),
@@ -80,10 +88,11 @@ export const schemas = {
       regions: { type: 'array', items: str },
       all_regions: bool,
       stack_region: str,
+      throttle_metrics: { type: 'boolean', default: true },
     },
     ['account_id', 'regions'],
   ),
-  AwsAccountUpdate: object({ name: str, regions: { type: 'array', items: str }, all_regions: bool }, []),
+  AwsAccountUpdate: object({ name: str, regions: { type: 'array', items: str }, all_regions: bool, throttle_metrics: bool }, []),
   AwsVerifyResult: object({ verified: bool, account: { $ref: '#/components/schemas/AwsAccount' } }),
   AwsDeleteResult: object({ deleted: bool, detached: bool, detach_errors: { type: 'array', items: str } }),
   AwsFunction: object({

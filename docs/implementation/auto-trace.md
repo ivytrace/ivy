@@ -71,7 +71,8 @@ Ivy only uses the AWS SDK as a client; nothing of Ivy runs in AWS.
   Without `?account=` the template is generic (only the principal has a default): that's the file to publish to S3.
   With `?account=<id>` all defaults are filled in for the download-and-upload path.
 - Role policy (least privilege): `lambda:ListFunctions`, `GetFunction`, `GetFunctionConfiguration`,
-  `UpdateFunctionConfiguration`, `ListLayerVersions` and `tag:GetResources` on `*`; `PublishLayerVersion` and
+  `UpdateFunctionConfiguration`, `ListLayerVersions`, `tag:GetResources` and `cloudwatch:GetMetricData` (throttles, see
+  "Throttles" below; it has no resource-level permissions) on `*`; `PublishLayerVersion` and
   `GetLayerVersion` only on `arn:…:lambda:*:<acct>:layer:ivy-trace-nodejs[:*]`. Trust: the principal, with an
   `sts:ExternalId` condition. The role is tagged `ivy:component`.
 - The template has to be at an S3 URL for a quick-create link. `IVY_CFN_TEMPLATE_URL` configures it; the API builds
@@ -135,6 +136,50 @@ the opt-out tag; they show as `pending`. In "all enabled regions" mode, regions 
 system-managed key stored hashed and encrypted with `IVY_SECRET_KEY` (`tenancy.md`, "Auto-trace key"). Revoking that key
 makes the next sync write a new one into every function.
 
+### Throttles
+
+Throttled requests never reach the function, so neither the layer nor the extension sees them. Ivy reads them from
+CloudWatch through the same role (`lib/aws/throttles.ts`):
+
+- **When.** At the end of an account sync, if the account's `throttle_metrics` setting is on (the default) and the last
+  poll is at least 5 minutes old. The sync loop syncs each account every `IVY_AWS_SYNC_INTERVAL_SECONDS` (300), so in
+  practice once per sync; with a longer interval the window simply grows.
+- **What.** Per region *that has traced functions* (throttles of other functions aren't stored, so other regions are
+  skipped): one `GetMetricData` query for the account-level `AWS/Lambda` `Throttles` metric (no dimensions, `Sum`,
+  period 60). Only if it has a non-zero point, a second call asks for `Throttles` per `FunctionName`, for the traced
+  functions of that region only, limited to the first..last throttled minute; up to 500 queries per request, following
+  `NextToken`.
+- **Window and watermark.** `throttles_polled_to` on the account is the minute-aligned end of the last successful poll.
+  The next poll reads from 10 minutes before it (CloudWatch datapoints can land late) up to the current minute, and at
+  most 3 hours back (first poll, or after a gap). Errors keep the watermark, so the window is retried.
+- **Storage.** `ivy.function_throttles` (per shard, like the span tables): `tenant_id, function, region, minute,
+  account_id, throttles, updated_at`, `ReplacingMergeTree(updated_at)` ordered by `(tenant_id, function, region,
+  minute)`, TTL = retention, row policy `ivy_tenant`, listed in `TENANT_SCOPED_TABLES`. Only non-zero minutes are
+  written; re-reading a minute replaces its row, and reads use `FINAL`. Storage has no project dimension yet; throttles
+  are matched to functions by name and region, the same way invocations are.
+- **API/UI.** `GET /api/functions` (`throttles` per function), `GET /api/stats/timeseries` (`throttles` per bucket,
+  stacked on the errors chart), and `GET /api/errors` adds one synthetic `Throttled` group per function (no trace; the
+  UI links it to the function). The MCP tool `list_error_groups` shows it and says there is no trace.
+- **Missing permission.** Stacks created before Ivy asked for `cloudwatch:GetMetricData` get `AccessDenied`. The poll
+  stops for that account (one denied call), stores `throttle_status = 'missing_permission'`, and the rest of the sync is
+  unaffected. The account page and list tell the user to update the stack with the current template; the next poll
+  after that picks up. Other errors store `throttle_status = 'error'` and are logged.
+- **Setting.** `throttle_metrics` per account (`PATCH /api/aws/accounts/:id`, a switch on the account page), on by
+  default. It is a setting because the API calls are billed to the customer's AWS account.
+
+**Cost to the customer.** CloudWatch charges `GetMetricData` at $0.01 per 1,000 metrics requested (us-east-1 list price;
+`GetMetricData` is excluded from the CloudWatch free tier). Each query in a request counts as one metric.
+
+| | metrics requested | cost |
+|---|---|---|
+| Account-level poll, per region with traced functions | 12 per hour → 8,640 per 30-day month | **≈ $0.09 per region per month** ($0.0864) |
+| 3 regions | 25,920 | ≈ $0.26 per month |
+| Per-function follow-up, only in a poll that saw throttles | 1 per traced function in that region | 100 functions → $0.001 per throttled poll |
+| Worst case: 100 traced functions, throttled in every poll all month | +864,000 | +$8.64 per month |
+
+An account without throttling pays about 9 cents per region per month; throttling adds a tenth of a cent per poll per
+100 traced functions. Turning the setting off stops all calls.
+
 ## API
 
 See `api.md` (`/api/aws/*`).
@@ -157,7 +202,9 @@ See `api.md` (`/api/aws/*`).
 
 ## Verification
 
-- `packages/api`: `attach.test.ts` (plan rules), `template.test.ts` (YAML round trip, structure, cfn-lint, quick-create URL),
+- `packages/api`: `throttles.test.ts` (poll cadence and window, account-level first, per-function only when throttled and
+  only for traced functions, 500-query batches and `NextToken`, `AccessDenied` → `missing_permission`, other errors keep
+  the watermark), `attach.test.ts` (plan rules), `template.test.ts` (YAML round trip, structure, cfn-lint, quick-create URL),
   `sync.test.ts` (layer reuse/publish, conflict retry, revision conflicts, unreadable tags, disabled regions, removed
   functions, single-function toggle, detach) and `routes/aws/aws.test.ts` (all routes end to end with an in-memory
   store), all with `aws-sdk-client-mock`; no AWS account involved.
@@ -174,4 +221,6 @@ Not verified: a real AWS account (stack deploy, AssumeRole, PublishLayerVersion,
 - One EventBridge rule in the stack region only; other regions poll. Organizations / StackSets are not supported.
 - Opt-outs are applied immediately, but a sync that already planned the function may re-attach it once; the next sync
   (interval) corrects it.
+- Throttle counts lag by up to one poll (5 minutes) plus CloudWatch's own delay; they are per minute, not per request,
+  and only for functions Ivy traces. No real-AWS run of the polling yet (aws-sdk-client-mock only).
 - Self-hosted Ivy on a laptop needs a public ingest URL (a tunnel) for Lambda to reach the ingest router.

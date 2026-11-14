@@ -35,13 +35,14 @@ Span data lives in the `ivy` database (one per cell/shard, see `tenancy.md`); th
 |---|---|---|---|
 | `otel_traces` | MergeTree, daily partitions | `(TenantId, toStartOfHour(Timestamp), TraceId)` | all spans; trace lookups |
 | `invocations` (MV `invocations_mv`) | MergeTree, daily partitions | `(tenant_id, function, ts)` | one row per root span with `ivy.invocation = 'true'` |
+| `function_throttles` | ReplacingMergeTree(updated_at), monthly partitions | `(tenant_id, function, region, minute)` | Lambda throttles per function and minute, polled from CloudWatch (`auto-trace.md`, "Throttles"); read with `FINAL` |
 | `invocations_hourly` (MV `invocations_hourly_mv`) | AggregatingMergeTree | `(tenant_id, function, region, hour)` | counts, errors, cold starts, duration sum, last invoked, `quantilesTDigest(0.5,0.95,0.99)` state |
 
 - `otel_traces` is ordered for trace lookups, not per-service scans. Per-function queries go through
   `invocations`. A trace lookup is a range scan over about 3 hour buckets, plus a binary search on TraceId.
-- Retention: `TTL … + toIntervalDay(IVY_RETENTION_DAYS)` (default 30) on all three tables,
+- Retention: `TTL … + toIntervalDay(IVY_RETENTION_DAYS)` (default 30) on all span tables and `function_throttles`,
   `ttl_only_drop_parts = 1` so whole daily partitions are dropped.
-- Row policies `ivy_tenant` on the three tables limit reads to the tenant in the `SQL_ivy_tenant` setting when
+- Row policies `ivy_tenant` on these tables limit reads to the tenant in the `SQL_ivy_tenant` setting when
   a query sets it (the API always does). See `tenancy.md` for why they pass everything when it isn't set.
 - Skip indexes: bloom filters on `TraceId`/`trace_id`/`request_id`/`error_fingerprint` and on span
   attribute keys/values; ngram bloom filters on `http_path` and `error_message`.

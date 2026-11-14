@@ -47,6 +47,9 @@ export async function postAwsAccount(c: Context) {
     created_at: Date.now(),
     verified_at: 0,
     last_sync_at: 0,
+    throttle_metrics: body.throttle_metrics !== false,
+    throttle_status: '',
+    throttles_polled_to: 0,
   };
   await awsStore().saveAccount(account);
   return c.json(presentAccount(account, await principalArn()), 201);

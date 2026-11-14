@@ -7,6 +7,7 @@ import {
   UpdateFunctionConfigurationCommand,
   type FunctionConfiguration,
 } from '@aws-sdk/client-lambda';
+import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { GetResourcesCommand, ResourceGroupsTaggingAPIClient } from '@aws-sdk/client-resource-groups-tagging-api';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import { mockClient } from 'aws-sdk-client-mock';
@@ -15,12 +16,14 @@ import { resetAwsClientsForTests } from './clients.js';
 import { applyUpdate, ensureLayer, resetLayerCacheForTests, setLayerZipForTests, sleep } from './lambda.js';
 import { memoryStore } from './memory-store.js';
 import { setAwsStore } from './store.js';
+import { setThrottleSinkForTests } from './throttles.js';
 import { detachAccount, syncAccount, syncFunction } from './sync.js';
 import type { AwsAccount } from './types.js';
 
 const lambda = mockClient(LambdaClient);
 const tagging = mockClient(ResourceGroupsTaggingAPIClient);
 const sts = mockClient(STSClient);
+const cloudwatch = mockClient(CloudWatchClient);
 
 const ACCOUNT_ID = '123456789012';
 const LAYER_V1 = `arn:aws:lambda:eu-west-1:${ACCOUNT_ID}:layer:ivy-trace-nodejs:1`;
@@ -45,6 +48,9 @@ const account: AwsAccount = {
   created_at: 1,
   verified_at: 1,
   last_sync_at: 0,
+  throttle_metrics: true,
+  throttle_status: '',
+  throttles_polled_to: 0,
 };
 
 function config(name: string, extra: Partial<FunctionConfiguration> = {}): FunctionConfiguration {
@@ -59,6 +65,9 @@ beforeEach(() => {
   lambda.reset();
   tagging.reset();
   sts.reset();
+  cloudwatch.reset();
+  cloudwatch.on(GetMetricDataCommand).resolves({ MetricDataResults: [] });
+  setThrottleSinkForTests({ save: async () => {} });
   resetAwsClientsForTests();
   resetLayerCacheForTests();
   setLayerZipForTests(ZIP);
@@ -74,6 +83,7 @@ beforeEach(() => {
 });
 
 afterAll(() => {
+  setThrottleSinkForTests(undefined);
   vi.unstubAllEnvs();
   setLayerZipForTests(undefined);
 });
@@ -214,6 +224,28 @@ describe('syncAccount', () => {
 
     await syncAccount({ ...account, regions: ['eu-west-1', 'ap-east-1'] });
     expect((await mem.store.getAccount('default', 'conn-1'))?.error).toContain('ap-east-1: The security token');
+  });
+
+  it('polls throttles after the function sync, and only when the account allows it', async () => {
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [config('a')] });
+    await syncAccount({ ...account, throttle_metrics: false });
+    expect(cloudwatch.commandCalls(GetMetricDataCommand)).toHaveLength(0);
+    expect((await mem.store.getAccount('default', 'conn-1'))?.throttle_status).toBe('');
+
+    await syncAccount(account);
+    expect(cloudwatch.commandCalls(GetMetricDataCommand)).toHaveLength(1);
+    const saved = await mem.store.getAccount('default', 'conn-1');
+    expect(saved?.throttle_status).toBe('ok');
+    expect(saved?.throttles_polled_to).toBeGreaterThan(0);
+  });
+
+  it('keeps syncing functions when the role lacks cloudwatch:GetMetricData', async () => {
+    cloudwatch.on(GetMetricDataCommand).rejects(Object.assign(new Error('not authorized to perform: cloudwatch:GetMetricData'), { name: 'AccessDenied' }));
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [config('a')] });
+    await syncAccount(account);
+    const saved = await mem.store.getAccount('default', 'conn-1');
+    expect(saved).toMatchObject({ status: 'connected', error: '', throttle_status: 'missing_permission', throttles_polled_to: 0 });
+    expect((await mem.store.listFunctions('default')).map((f) => f.state)).toEqual(['traced']);
   });
 
   it('removes functions that no longer exist', async () => {

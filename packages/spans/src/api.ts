@@ -27,7 +27,10 @@ export interface ErrorGroup {
   count: number;
   first_seen: string;
   last_seen: string;
-  sample_trace_id: string;
+  /** null for the synthetic Throttled group: throttled requests never reach the function. */
+  sample_trace_id: string | null;
+  /** "throttle": one synthetic group per function counting Lambda throttles (error_type "Throttled"). */
+  kind?: "error" | "throttle";
 }
 
 export interface FunctionSummary {
@@ -41,5 +44,7 @@ export interface FunctionSummary {
   p50_ms: number;
   p95_ms: number;
   p99_ms: number;
-  last_invoked: string;
+  last_invoked: string | null;
+  /** Invocations Lambda rejected (CloudWatch Throttles); they never reached the function. */
+  throttles?: number;
 }

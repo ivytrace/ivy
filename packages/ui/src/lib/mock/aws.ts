@@ -80,6 +80,8 @@ function makeAccount(fields: Partial<MockAccount> & Pick<MockAccount, "id" | "na
     verified_at: new Date(now - 5 * 86_400_000).toISOString(),
     last_sync_at: new Date(now - 2 * 60_000).toISOString(),
     template_download_url: `/api/aws/template.yaml?account=${fields.id}&download=1`,
+    throttle_metrics: true,
+    throttle_status: "ok",
     created_ms: now - 5 * 86_400_000,
     sync_until: 0,
     ...fields,
@@ -104,6 +106,7 @@ export function createAwsMock(options: MockOptions = {}) {
           stack_region: "eu-west-1",
           error: "ap-southeast-2: User: arn:aws:sts::210987654321:assumed-role/IvyTrace-accstagi/ivy-trace is not authorized to perform: lambda:ListFunctions",
           last_sync_at: new Date(now - 4 * 60_000).toISOString(),
+          throttle_status: "missing_permission",
         },
         now,
       ),
@@ -171,6 +174,8 @@ export function createAwsMock(options: MockOptions = {}) {
           created_at: new Date().toISOString(),
           verified_at: null,
           last_sync_at: null,
+          throttle_metrics: body.throttle_metrics !== false,
+          throttle_status: null,
           created_ms: Date.now(),
         },
         Date.now(),
@@ -211,6 +216,7 @@ export function createAwsMock(options: MockOptions = {}) {
       account.status = "connected";
       account.error = null;
       account.verified_at = new Date().toISOString();
+      account.throttle_status = "ok";
       if (!functions.some((f) => f.account_id === account.account_id)) {
         functions.push(...makeFunctions(account.account_id, NEW_ACCOUNT_FUNCTIONS(account.stack_region), Date.now()));
       }
@@ -227,6 +233,7 @@ export function createAwsMock(options: MockOptions = {}) {
       if (Array.isArray(body.regions)) account.regions = body.regions as string[];
       if (typeof body.all_regions === "boolean") account.all_regions = body.all_regions;
       if (typeof body.name === "string" && body.name) account.name = body.name;
+      if (typeof body.throttle_metrics === "boolean") account.throttle_metrics = body.throttle_metrics;
       startSync(account);
       return { status: 200, body: present(account) };
     }

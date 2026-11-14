@@ -14,9 +14,9 @@ import { Tooltipped } from "@/components/ui/tooltipped";
 import { useTimeRange } from "@/components/layout/time-range";
 import { useFunctions, useInvocations, useTimeseries } from "@/lib/api/hooks";
 import type { Invocation } from "@/lib/api/types";
-import { invocationsLink, traceLink } from "@/lib/links/links";
+import { errorsLink, invocationsLink, traceLink } from "@/lib/links/links";
 import { triggerLabel } from "@/lib/spans/services";
-import { formatAgo, formatDuration, formatTimestamp } from "@/lib/utils/format";
+import { formatAgo, formatDuration, formatNumber, formatTimestamp } from "@/lib/utils/format";
 
 const PAGE_SIZE = 50;
 const ALL = "__all";
@@ -133,6 +133,7 @@ export default function Invocations() {
   const functions = useFunctions(range);
   const series = useTimeseries(range, { function: fn });
 
+  const throttles = fn ? (functions.data?.items.find((f) => f.name === fn)?.throttles ?? 0) : 0;
   const functionNames = [...new Set([...(functions.data?.items.map((f) => f.name) ?? []), ...(fn ? [fn] : [])])].sort();
 
   return (
@@ -141,6 +142,18 @@ export default function Invocations() {
       <p className="mb-4 text-sm text-muted-foreground">
         {fn ? "Invocations of this function." : "All traced invocations, newest first."}
       </p>
+      {throttles > 0 && (
+        <p className="text-sm">
+          <span className="font-medium text-orange-400">{formatNumber(throttles)} throttled</span>
+          <span className="text-muted-foreground">
+            {" "}
+            requests in this time range. Lambda rejected them before they reached the function, so they have no traces.{" "}
+          </span>
+          <Link to={errorsLink(fn)} className="text-primary hover:underline">
+            Errors
+          </Link>
+        </p>
+      )}
 
       {fn && (
         <div className="my-5 grid gap-5 md:grid-cols-3">
@@ -151,6 +164,7 @@ export default function Invocations() {
             error={series.error}
             metric="errors"
             color="var(--chart-2)"
+            stacked={{ metric: "throttles", label: "Throttled", color: "var(--chart-4)" }}
           />
           <TimeseriesChart
             title="p95 duration"

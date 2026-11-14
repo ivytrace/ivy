@@ -7,6 +7,7 @@ import type {
 } from "../api/types.ts";
 import { createAwsMock, type MockOptions } from "./aws.ts";
 import { buildTrace, INVOCATIONS, NOW, type MockInvocation } from "./fixtures.ts";
+import { THROTTLED_MESSAGE, THROTTLES, type MockThrottle } from "./throttles.ts";
 
 export type { MockOptions };
 
@@ -45,6 +46,12 @@ function inRange(params: URLSearchParams): MockInvocation[] {
   });
 }
 
+function throttlesInRange(params: URLSearchParams): MockThrottle[] {
+  const [from, to] = range(params);
+  const fn = params.get("function");
+  return THROTTLES.filter((t) => t.minute >= from && t.minute < to && (!fn || t.function === fn));
+}
+
 const percentile = (sorted: number[], p: number) =>
   sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] : 0;
 
@@ -59,6 +66,8 @@ function functions(params: URLSearchParams): FunctionSummary[] {
     list.push(inv);
     groups.set(inv.function, list);
   }
+  const throttled = new Map<string, number>();
+  for (const t of throttlesInRange(params)) throttled.set(t.function, (throttled.get(t.function) ?? 0) + t.throttles);
   return [...groups.entries()].map(([name, list]) => {
     const durations = list.map((i) => i.duration_ms).sort((a, b) => a - b);
     const errors = list.filter((i) => i.status === "error").length;
@@ -74,6 +83,7 @@ function functions(params: URLSearchParams): FunctionSummary[] {
       p95_ms: percentile(durations, 0.95),
       p99_ms: percentile(durations, 0.99),
       last_invoked: list[0].ts,
+      throttles: throttled.get(name) ?? 0,
     };
   });
 }
@@ -105,7 +115,7 @@ function errors(params: URLSearchParams): ErrorGroup[] {
     groups.set(key, list);
   }
   return [...groups.entries()]
-    .map(([key, list]) => ({
+    .map(([key, list]): ErrorGroup => ({
       fingerprint: Math.abs([...key].reduce((h, c) => (Math.imul(31, h) + c.charCodeAt(0)) | 0, 0))
         .toString(16)
         .padStart(8, "0"),
@@ -116,8 +126,26 @@ function errors(params: URLSearchParams): ErrorGroup[] {
       first_seen: list[list.length - 1].ts,
       last_seen: list[0].ts,
       sample_trace_id: list[0].trace_id,
+      kind: "error",
     }))
+    .concat(throttleGroups(params))
     .sort((a, b) => b.count - a.count);
+}
+
+function throttleGroups(params: URLSearchParams): ErrorGroup[] {
+  const byFn = new Map<string, MockThrottle[]>();
+  for (const t of throttlesInRange(params)) byFn.set(`${t.region}:${t.function}`, [...(byFn.get(`${t.region}:${t.function}`) ?? []), t]);
+  return [...byFn.entries()].map(([key, list]) => ({
+    fingerprint: `throttled:${key}`,
+    function: list[0].function,
+    error_type: "Throttled",
+    error_message: THROTTLED_MESSAGE,
+    count: list.reduce((n, t) => n + t.throttles, 0),
+    first_seen: new Date(Math.min(...list.map((t) => t.minute))).toISOString(),
+    last_seen: new Date(Math.max(...list.map((t) => t.minute))).toISOString(),
+    sample_trace_id: null,
+    kind: "throttle",
+  }));
 }
 
 const BUCKET_MS: Record<string, number> = {
@@ -142,6 +170,11 @@ function timeseries(params: URLSearchParams): TimeseriesPoint[] {
     buckets.set(b, [...(buckets.get(b) ?? []), inv.duration_ms]);
     if (inv.status === "error") errs.set(b, (errs.get(b) ?? 0) + 1);
   }
+  const throttled = new Map<number, number>();
+  for (const t of throttlesInRange(params)) {
+    const b = Math.floor(t.minute / bucket) * bucket;
+    throttled.set(b, (throttled.get(b) ?? 0) + t.throttles);
+  }
   const out: TimeseriesPoint[] = [];
   for (let b = start; b <= to; b += bucket) {
     const d = (buckets.get(b) ?? []).sort((x, y) => x - y);
@@ -150,6 +183,7 @@ function timeseries(params: URLSearchParams): TimeseriesPoint[] {
       invocations: d.length,
       errors: errs.get(b) ?? 0,
       p95_ms: percentile(d, 0.95),
+      throttles: throttled.get(b) ?? 0,
     });
   }
   return out;

@@ -11,7 +11,7 @@ import { Tooltipped } from "@/components/ui/tooltipped";
 import { useTimeRange } from "@/components/layout/time-range";
 import { sparklineBucket, useAwsAccounts, useAwsFunctions, useFunctions, useTimeseries } from "@/lib/api/hooks";
 import type { FunctionSummary } from "@/lib/api/types";
-import { AWS_ACCOUNTS_PATH, invocationsLink } from "@/lib/links/links";
+import { AWS_ACCOUNTS_PATH, errorsLink, invocationsLink } from "@/lib/links/links";
 import { formatAgo, formatDuration, formatNumber, formatPercent } from "@/lib/utils/format";
 import { cn } from "@/lib/utils/cn";
 
@@ -85,6 +85,20 @@ const columns: ColumnDef<FunctionSummary, unknown>[] = [
     ),
   },
   {
+    accessorKey: "throttles",
+    header: "Throttles",
+    cell: ({ row }) =>
+      row.original.throttles > 0 ? (
+        <Tooltipped title="Requests Lambda rejected (concurrency limit). They never reached the function, so they have no traces.">
+          <Link to={errorsLink(row.original.name)} className="tabular-nums text-orange-400 hover:underline">
+            {formatNumber(row.original.throttles)}
+          </Link>
+        </Tooltipped>
+      ) : (
+        <span className="tabular-nums text-muted-foreground">0</span>
+      ),
+  },
+  {
     accessorKey: "cold_starts",
     header: "Cold starts",
     cell: ({ row }) => <span className="tabular-nums">{formatNumber(row.original.cold_starts)}</span>,
@@ -111,7 +125,7 @@ const columns: ColumnDef<FunctionSummary, unknown>[] = [
   {
     accessorKey: "last_invoked",
     header: "Last invoked",
-    cell: ({ row }) => <span className="whitespace-nowrap text-muted-foreground">{formatAgo(row.original.last_invoked)}</span>,
+    cell: ({ row }) => <span className="whitespace-nowrap text-muted-foreground">{row.original.last_invoked ? formatAgo(row.original.last_invoked) : "–"}</span>,
   },
   {
     id: "tracing",
@@ -160,6 +174,7 @@ export default function Functions() {
           error={series.error}
           metric="errors"
           color="var(--chart-2)"
+          stacked={{ metric: "throttles", label: "Throttled", color: "var(--chart-4)" }}
         />
         <TimeseriesChart
           title="p95 duration"
