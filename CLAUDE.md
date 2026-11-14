@@ -9,3 +9,4 @@
 - The UI (and later the website) is dark mode only. No light theme, no theme toggle.
 - No Claude Code attribution in commits or PRs: no `Co-Authored-By: Claude` or `Claude-Session` trailers, no "Generated with Claude Code" lines.
 - The product is called "Ivy" in all prose and UI. "ivytrace"/"Ivy Trace" is only for domains (ivytrace.dev) and GitHub/npm org names, because "ivy" alone is too generic.
+- Keep every UI surface visually in sync: the dashboard (`packages/ui`), the MCP App views (`packages/mcp`) and the website's trace demo (`website/` in the private `ivytrace/ivy-hosted` repo). A visual change to one (colours, tabs, waterfall, service graph, icons, badges) is applied to the others in the same piece of work. The MCP App views reuse the dashboard's components rather than copying them; the website demo is a copy, so update it explicitly and note it in the hand-off when you can't.
