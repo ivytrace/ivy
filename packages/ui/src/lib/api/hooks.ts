@@ -1,6 +1,9 @@
 import useSWR, { type SWRConfiguration } from "swr";
 import { buildUrl, fetchJson, rangeParams, type QueryParams } from "./client";
 import type {
+  AwsAccount,
+  AwsFunction,
+  AwsSetup,
   Config,
   ErrorGroup,
   FunctionSummary,
@@ -60,3 +63,22 @@ export const useTrace = (traceId: string | undefined) =>
     keepPreviousData: false,
     revalidateIfStale: false,
   });
+
+export const useAwsSetup = () => useApi<AwsSetup>(buildUrl("/aws/setup"), { revalidateIfStale: false });
+
+const busy = (a: AwsAccount) => a.syncing || a.status === "pending";
+
+/** Polls while an account is syncing or waiting to be verified. */
+export const useAwsAccounts = () =>
+  useApi<ListResponse<AwsAccount>>(buildUrl("/aws/accounts"), {
+    refreshInterval: (data) => (data?.items.some(busy) ? 3000 : 30_000),
+  });
+
+export const useAwsAccount = (id: string | undefined) =>
+  useApi<AwsAccount>(id ? buildUrl(`/aws/accounts/${encodeURIComponent(id)}`) : null, {
+    keepPreviousData: false,
+    refreshInterval: (data) => (data && busy(data) ? 3000 : 30_000),
+  });
+
+export const useAwsFunctions = (accountId?: string, options: { refreshInterval?: number } = {}) =>
+  useApi<ListResponse<AwsFunction>>(buildUrl("/aws/functions", { account: accountId }), options);

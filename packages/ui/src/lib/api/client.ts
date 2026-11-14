@@ -24,8 +24,8 @@ export function rangeParams(range: TimeRange): QueryParams {
   return "since" in range ? { since: range.since } : { from: range.from, to: range.to };
 }
 
-export async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: { accept: "application/json" } });
+export async function fetchJson<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(url, { ...init, headers: { accept: "application/json", ...init.headers } });
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
@@ -37,4 +37,12 @@ export async function fetchJson<T>(url: string): Promise<T> {
     throw new ApiError(res.status, message);
   }
   return (await res.json()) as T;
+}
+
+export function sendJson<T>(method: "POST" | "PUT" | "PATCH" | "DELETE", url: string, body?: unknown): Promise<T> {
+  return fetchJson<T>(url, {
+    method,
+    headers: body === undefined ? {} : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 }

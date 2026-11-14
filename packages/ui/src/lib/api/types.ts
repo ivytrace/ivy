@@ -67,3 +67,64 @@ export interface InvocationsResponse extends ListResponse<Invocation> {
 export type Since = "15m" | "1h" | "24h" | "7d";
 
 export type TimeRange = { since: Since } | { from: string; to: string };
+
+export type TraceState = "traced" | "opted_out" | "unsupported" | "conflict" | "error" | "pending";
+
+export type AwsAccountStatus = "pending" | "connected" | "error";
+
+export interface AwsSetup {
+  principal_arn: string | null;
+  template_url: string | null;
+  events_url: string | null;
+  public_url: string | null;
+  ingest_endpoint: string | null;
+  layer_sha256: string | null;
+  default_region: string;
+  regions: string[];
+  sync_interval_seconds: number;
+  issues: string[];
+}
+
+export interface AwsAccount {
+  id: string;
+  name: string;
+  account_id: string;
+  role_arn: string;
+  external_id: string;
+  stack_name: string;
+  stack_region: string;
+  regions: string[];
+  all_regions: boolean;
+  status: AwsAccountStatus;
+  error: string | null;
+  created_at: string | null;
+  verified_at: string | null;
+  last_sync_at: string | null;
+  syncing: boolean;
+  counts: Record<TraceState | "total", number>;
+  quick_create_url: string | null;
+  template_download_url: string;
+}
+
+export interface AwsFunction {
+  account_id: string;
+  region: string;
+  name: string;
+  arn: string;
+  runtime: string;
+  state: TraceState;
+  reason: string | null;
+  tracing_enabled: boolean;
+  updated_at: string;
+}
+
+export interface VerifyResponse {
+  verified: boolean;
+  account: AwsAccount;
+}
+
+export interface TracingResponse {
+  applied: boolean;
+  error: string | null;
+  function: AwsFunction | null;
+}

@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { handleMockRequest } from "./server";
-import type { ErrorGroup, FunctionSummary, InvocationsResponse, Trace } from "../api/types";
+import { describe, expect, it, vi } from "vitest";
+import { createMockHandler, handleMockRequest } from "./server";
+import type { AwsAccount, AwsFunction, ErrorGroup, FunctionSummary, InvocationsResponse, Trace, VerifyResponse } from "../api/types";
 import { describeSpan, getLogs } from "../spans/services";
 
 const get = <T>(path: string) => {
@@ -43,5 +43,43 @@ describe("mock API", () => {
 
   it("returns 404 for unknown traces", () => {
     expect(get("/api/traces/nope").status).toBe(404);
+  });
+});
+
+describe("mock AWS API", () => {
+  it("lists accounts and functions, toggles tracing and walks the connect flow", () => {
+    vi.useFakeTimers();
+    const handle = createMockHandler();
+    const call = <T>(method: string, path: string, body?: Record<string, unknown>) => {
+      const res = handle(new URL(path, "http://mock"), { method, body });
+      return { status: res.status, body: res.body as T };
+    };
+
+    const accounts = call<{ items: AwsAccount[] }>("GET", "/api/aws/accounts").body.items;
+    expect(accounts.map((a) => a.status)).toEqual(["connected", "connected"]);
+    expect(accounts[0].counts.total).toBeGreaterThan(5);
+
+    const fns = call<{ items: AwsFunction[] }>("GET", `/api/aws/functions?account=${accounts[0].account_id}`).body.items;
+    const traced = fns.find((f) => f.state === "traced")!;
+    const off = call<{ function: AwsFunction }>("PUT", `/api/aws/functions/${traced.account_id}/${traced.region}/${traced.name}`, { tracing_enabled: false });
+    expect(off.body.function).toMatchObject({ state: "opted_out", tracing_enabled: false });
+
+    const created = call<AwsAccount>("POST", "/api/aws/accounts", { account_id: "111122223333", regions: ["eu-west-1"], stack_region: "eu-west-1" });
+    expect(created.status).toBe(201);
+    expect(created.body.status).toBe("pending");
+    expect(call<VerifyResponse>("POST", `/api/aws/accounts/${created.body.id}/verify`).body.verified).toBe(false);
+    vi.advanceTimersByTime(10_000);
+    const verified = call<VerifyResponse>("POST", `/api/aws/accounts/${created.body.id}/verify`).body;
+    expect(verified).toMatchObject({ verified: true, account: { status: "connected", syncing: true } });
+
+    expect(call("DELETE", `/api/aws/accounts/${created.body.id}`).status).toBe(200);
+    expect(call("GET", `/api/aws/accounts/${created.body.id}`).status).toBe(404);
+    vi.useRealTimers();
+  });
+
+  it("can start empty", () => {
+    const handle = createMockHandler({ empty: true });
+    expect((handle(new URL("http://mock/api/aws/accounts")).body as { items: unknown[] }).items).toEqual([]);
+    expect((handle(new URL("http://mock/api/functions?since=7d")).body as { items: unknown[] }).items).toEqual([]);
   });
 });

@@ -1,14 +1,17 @@
 import { Link } from "react-router";
+import { Cloud, Plus } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 
 import { DataTable } from "@/components/tables/data-table";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
+import { TraceStateLabel, TracingToggle } from "@/components/aws/trace-state";
+import { Button } from "@/components/ui/button";
 import { Sparkline, TimeseriesChart } from "@/components/stats/timeseries-chart";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { useTimeRange } from "@/components/layout/time-range";
-import { sparklineBucket, useFunctions, useTimeseries } from "@/lib/api/hooks";
+import { sparklineBucket, useAwsAccounts, useAwsFunctions, useFunctions, useTimeseries } from "@/lib/api/hooks";
 import type { FunctionSummary } from "@/lib/api/types";
-import { invocationsLink } from "@/lib/links/links";
+import { AWS_ACCOUNTS_PATH, invocationsLink } from "@/lib/links/links";
 import { formatAgo, formatDuration, formatNumber, formatPercent } from "@/lib/utils/format";
 import { cn } from "@/lib/utils/cn";
 
@@ -22,6 +25,25 @@ function FunctionSparkline({ name, metric }: { name: string; metric: "invocation
       color={metric === "errors" ? "var(--chart-2)" : "var(--chart-1)"}
       className="w-40"
     />
+  );
+}
+
+/** Auto-trace state of a function seen in traces, matched by region + name. */
+function TracingCell({ fn }: { fn: FunctionSummary }) {
+  const { data } = useAwsFunctions();
+  const aws = data?.items.find((f) => f.name === fn.name && f.region === fn.region);
+  if (!aws) {
+    return (
+      <Tooltipped title="Not in a connected AWS account (layer attached manually)">
+        <span className="text-xs text-muted-foreground">Manual</span>
+      </Tooltipped>
+    );
+  }
+  return (
+    <span className="flex items-center gap-3">
+      <TracingToggle fn={aws} />
+      <TraceStateLabel state={aws.state} reason={aws.reason} />
+    </span>
   );
 }
 
@@ -91,12 +113,40 @@ const columns: ColumnDef<FunctionSummary, unknown>[] = [
     header: "Last invoked",
     cell: ({ row }) => <span className="whitespace-nowrap text-muted-foreground">{formatAgo(row.original.last_invoked)}</span>,
   },
+  {
+    id: "tracing",
+    header: "Tracing",
+    enableSorting: false,
+    cell: ({ row }) => <TracingCell fn={row.original} />,
+  },
 ];
+
+function ConnectAccount() {
+  return (
+    <div className="flex flex-col items-center gap-3 p-10 text-center text-sm">
+      <Cloud className="size-6 text-muted-foreground" />
+      <div>
+        <div className="font-medium">Connect an AWS account to start tracing</div>
+        <div className="mt-1 max-w-md text-muted-foreground">
+          Ivy attaches its layer to your Node.js Lambda functions. Traces show up here after their next invocation.
+        </div>
+      </div>
+      <Button asChild>
+        <Link to={`${AWS_ACCOUNTS_PATH}?connect=1`}>
+          <Plus className="mr-2 size-4" />
+          Connect AWS account
+        </Link>
+      </Button>
+    </div>
+  );
+}
 
 export default function Functions() {
   const { range } = useTimeRange();
   const functions = useFunctions(range);
   const series = useTimeseries(range);
+  const accounts = useAwsAccounts();
+  const noAccounts = accounts.data?.items.length === 0;
 
   return (
     <div>
@@ -132,10 +182,14 @@ export default function Functions() {
           getRowId={(f) => `${f.region}/${f.name}`}
           defaultSorting={[{ id: "invocations", desc: true }]}
           empty={
-            <EmptyState
-              title="No functions in this time range"
-              description="Attach the Ivy layer to a Lambda function and invoke it, or pick a longer time range."
-            />
+            noAccounts ? (
+              <ConnectAccount />
+            ) : (
+              <EmptyState
+                title="No functions in this time range"
+                description="Traced functions appear after their first invocation. Pick a longer time range, or check the AWS accounts page."
+              />
+            )
           }
         />
       )}

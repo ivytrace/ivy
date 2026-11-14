@@ -22,6 +22,7 @@ export const Menu = () => (
         <MenuLink to="/functions">Functions</MenuLink>
         <MenuLink to="/invocations">Invocations</MenuLink>
         <MenuLink to="/errors">Errors</MenuLink>
+        <MenuLink to="/settings">Settings</MenuLink>
       </nav>
       <div className="ml-auto flex items-center gap-2">
         <TimeRangePicker />

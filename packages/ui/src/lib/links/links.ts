@@ -7,3 +7,7 @@ export const invocationsLink = (filters: { function?: string; status?: "ok" | "e
   const qs = params.toString();
   return `/invocations${qs ? `?${qs}` : ""}`;
 };
+
+export const AWS_ACCOUNTS_PATH = "/settings/aws";
+
+export const accountLink = (id: string) => `${AWS_ACCOUNTS_PATH}/${encodeURIComponent(id)}`;

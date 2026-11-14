@@ -5,11 +5,20 @@ import type {
   InvocationsResponse,
   TimeseriesPoint,
 } from "../api/types.ts";
+import { createAwsMock, type MockOptions } from "./aws.ts";
 import { buildTrace, INVOCATIONS, NOW, type MockInvocation } from "./fixtures.ts";
+
+export type { MockOptions };
 
 export interface MockResponse {
   status: number;
   body: unknown;
+  contentType?: string;
+}
+
+export interface MockRequest {
+  method?: string;
+  body?: Record<string, unknown>;
 }
 
 const SINCE_MS: Record<string, number> = {
@@ -144,6 +153,22 @@ function timeseries(params: URLSearchParams): TimeseriesPoint[] {
     });
   }
   return out;
+}
+
+/** A stateful mock API (AWS accounts can be connected, toggled and deleted while the dev server runs). */
+export function createMockHandler(options: MockOptions = {}) {
+  const aws = createAwsMock(options);
+  return (url: URL, req: MockRequest = {}): MockResponse => {
+    const method = req.method ?? "GET";
+    if (url.pathname.startsWith("/api/aws/")) {
+      return aws.handle(method, url.pathname, url.searchParams, req.body ?? {}) ?? { status: 404, body: { error: "not found" } };
+    }
+    if (method !== "GET") return { status: 405, body: { error: "Method not allowed" } };
+    if (options.empty && url.pathname !== "/api/health" && url.pathname !== "/api/config") {
+      return { status: url.pathname.startsWith("/api/traces/") ? 404 : 200, body: url.pathname === "/api/invocations" ? { items: [], next_cursor: null } : { items: [] } };
+    }
+    return handleMockRequest(url);
+  };
 }
 
 export function handleMockRequest(url: URL): MockResponse {
