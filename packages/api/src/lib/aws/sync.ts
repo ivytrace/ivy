@@ -1,7 +1,6 @@
 import type { LambdaClient } from '@aws-sdk/client-lambda';
 import type { ResourceGroupsTaggingAPIClient } from '@aws-sdk/client-resource-groups-tagging-api';
-import { defaultProjectId } from '../tenancy/ids.js';
-import { listProjects } from '../tenancy/projects.js';
+import { defaultProjectOf, listProjects } from '../tenancy/projects.js';
 import { mapLimit } from '../utils/concurrency.js';
 import { assignmentContext, assignProject, stackOf, type Assignment, type AssignmentContext } from './assign.js';
 import { fromConfiguration, needsLayer, planFunction, type Desired, type LambdaFunction, type Plan } from './attach.js';
@@ -33,8 +32,13 @@ export interface Assigner {
 /** Loads the workspace's projects, rules and manual choices once per sync. */
 export async function loadAssigner(tenantId: string, accountId?: string): Promise<Assigner> {
   const store = awsStore();
-  const [projects, rules, settings] = await Promise.all([listProjects(tenantId), store.listRules(tenantId), store.listSettings(tenantId, accountId)]);
-  const base = assignmentContext(projects, rules, defaultProjectId(tenantId));
+  const [projects, rules, settings, defaultId] = await Promise.all([
+    listProjects(tenantId),
+    store.listRules(tenantId),
+    store.listSettings(tenantId, accountId),
+    defaultProjectOf(tenantId),
+  ]);
+  const base = assignmentContext(projects, rules, defaultId);
   const manual = new Map<string, FunctionSetting>(settings.map((s) => [settingKey(s.account_id, s.region, s.function_name), s]));
   const ingest = new Map<string, Promise<IngestConfig | null>>();
   return {

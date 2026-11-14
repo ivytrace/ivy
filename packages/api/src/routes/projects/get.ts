@@ -1,12 +1,16 @@
 import type { Context } from 'hono';
 import { projectOf, tenantOf } from '../../lib/tenancy/context.js';
-import { listProjects, presentProject } from '../../lib/tenancy/projects.js';
+import { defaultProjectOf, listProjects, presentProject } from '../../lib/tenancy/projects.js';
 
 /** The workspace's projects; `?archived=1` includes archived ones. */
 export async function getProjects(c: Context) {
   const archived = c.req.query('archived') === '1';
   const projects = (await listProjects(tenantOf(c).id)).filter((p) => archived || !p.archived);
-  return c.json({ items: projects.map(presentProject) });
+  const defaultId = await defaultProjectOf(tenantOf(c).id);
+  return c.json({ items: projects.map((p) => presentProject(p, defaultId)) });
 }
 
-export const getProject = (c: Context) => c.json(presentProject(projectOf(c)));
+export async function getProject(c: Context) {
+  const project = projectOf(c);
+  return c.json(presentProject(project, await defaultProjectOf(project.tenant_id)));
+}

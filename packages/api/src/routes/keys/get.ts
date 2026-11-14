@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { projectOf, tenantOf } from '../../lib/tenancy/context.js';
+import { defaultProjectOf } from '../../lib/tenancy/projects.js';
 import type { ApiKeyRecord } from '../../lib/tenancy/store.js';
 import { keyProjectId } from '../../lib/tenancy/tenants.js';
 import { tenancyStore } from '../../lib/tenancy/store.js';
@@ -19,6 +20,7 @@ export const presentKey = (k: ApiKeyRecord) => ({
 export async function getKeys(c: Context) {
   const project = projectOf(c);
   const revoked = c.req.query('revoked') === '1';
-  const keys = (await tenancyStore().listKeys(tenantOf(c).id)).filter((k) => keyProjectId(k) === project.id && (revoked || k.revoked_at === null));
+  const defaultId = await defaultProjectOf(tenantOf(c).id);
+  const keys = (await tenancyStore().listKeys(tenantOf(c).id)).filter((k) => keyProjectId(k, defaultId) === project.id && (revoked || k.revoked_at === null));
   return c.json({ items: keys.map(presentKey) });
 }

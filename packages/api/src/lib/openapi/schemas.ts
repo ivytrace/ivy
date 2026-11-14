@@ -72,10 +72,17 @@ export const schemas = {
     limits: { $ref: '#/components/schemas/Limits' },
     blocked: { type: 'boolean', description: 'Ingest is being refused: quota reached with over_quota `block`.' },
   }),
-  Workspace: object({ id: str, slug: str, name: str, role, default: bool, created_at: time }),
+  Workspace: object({
+    id: str, slug: str, name: str, role, default: bool,
+    default_project_id: { type: 'string', description: 'The default project: keys without a project and functions traced without a project go there.' },
+    created_at: time,
+  }),
   WorkspaceList: list('Workspace'),
   WorkspaceCreate: object({ name: str, slug: { type: 'string', description: 'Optional; generated from the name when omitted.' } }, ['name']),
-  WorkspaceUpdate: object({ name: str, slug: str }, []),
+  WorkspaceUpdate: object({
+    name: str, slug: str,
+    default_project: { type: 'string', description: 'Slug or ID of an active project to make the default (any member may change it; name and slug are for owners).' },
+  }, []),
   Member: object({ sub: str, email: nstr, role, you: bool, joined_at: time }),
   MemberList: list('Member'),
   MemberUpdate: object({ role }),
@@ -99,7 +106,10 @@ export const schemas = {
   Project: object({ id: str, slug: str, name: str, archived: bool, default: bool, created_at: time }),
   ProjectList: list('Project'),
   ProjectCreate: object({ name: str, slug: { type: 'string', description: 'Optional; generated from the name when omitted.' } }, ['name']),
-  ProjectUpdate: object({ name: str, slug: str, archived: bool }, []),
+  ProjectUpdate: object({
+    name: str, slug: str, archived: bool,
+    new_default: { type: 'string', description: 'With `archived: true` on the default project: slug or ID of the project that becomes the default (default: the oldest remaining active project). Ignored for other projects.' },
+  }, []),
   Key: object({
     id: str, name: str, kind: { type: 'string', enum: ['user', 'auto-trace', 'bootstrap'] },
     prefix: str, created_at: time, revoked_at: ntime,

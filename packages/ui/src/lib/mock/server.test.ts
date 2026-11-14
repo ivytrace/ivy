@@ -96,6 +96,22 @@ describe("mock API: workspaces and data", () => {
     expect(call("POST", `/api/invitations/${token}/accept`).status).toBe(410);
   });
 
+  it("moves the default project, also when the default is archived, and keeps one project", () => {
+    const call = client();
+    const defaultOf = () => call<{ items: Project[] }>("GET", "/api/w/acme/projects").body.items.filter((p) => p.default).map((p) => p.slug);
+    expect(defaultOf()).toEqual(["default"]);
+    expect(call<Workspace>("PATCH", "/api/w/acme", { default_project: "checkout-prod" }).body.default_project_id).toMatch(/^prj_/);
+    expect(defaultOf()).toEqual(["checkout-prod"]);
+    expect(call("PATCH", "/api/w/acme/p/checkout-prod", { archived: true, new_default: "checkout-staging" }).status).toBe(200);
+    expect(defaultOf()).toEqual(["checkout-staging"]);
+
+    const solo = client({ empty: true });
+    expect(solo<{ error: string }>("PATCH", "/api/w/personal/p/default", { archived: true })).toEqual({
+      status: 409,
+      body: { error: "A workspace needs at least one project" },
+    });
+  });
+
   it("receives a first trace in an empty workspace a few seconds after a key is created", () => {
     vi.useFakeTimers();
     const call = client({ empty: true });

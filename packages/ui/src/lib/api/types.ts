@@ -44,6 +44,8 @@ export interface Workspace {
   name: string;
   role: Role;
   default: boolean;
+  /** The default project: keys without a project and functions traced without one go there. */
+  default_project_id: string;
   created_at: string;
 }
 

@@ -37,6 +37,10 @@ live in `docs/implementation/`.
   signed-in user whose email matches and is verified by the identity provider.
 - Self-hosted without sign-in, or with `IVY_SINGLE_TENANT` on, has one workspace and no member management.
 - Moving a function to another project affects only new data; data already ingested stays where it is.
+- **The default project is a movable designation**, not a fixed project: any project can be made the default, and the
+  default project can be archived (not deleted: its data stays until retention) as long as another active project
+  exists, which then becomes the default. Keys without a project and functions traced without a project follow the
+  default; keys created for the archived project stop working. A workspace always keeps at least one project.
 
 ## Authentication
 - Dashboard, API and MCP: **either no auth or OIDC**, never passwords or basic auth, not even temporarily.

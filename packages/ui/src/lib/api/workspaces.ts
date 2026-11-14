@@ -18,14 +18,14 @@ export const refreshWorkspace = (ws?: string) =>
 
 export const createWorkspace = (body: { name: string }) => sendJson<Workspace>("POST", "/api/workspaces", body);
 
-export const updateWorkspace = (ws: string, body: { name?: string; slug?: string }) => sendJson<Workspace>("PATCH", api(ws), body);
+export const updateWorkspace = (ws: string, body: { name?: string; slug?: string; default_project?: string }) => sendJson<Workspace>("PATCH", api(ws), body);
 
 export const deleteWorkspace = (ws: string, confirm: string) =>
   sendJson<{ deleted: boolean }>("DELETE", `${api(ws)}?confirm=${enc(confirm)}`);
 
 export const createProject = (ws: string, body: { name: string }) => sendJson<Project>("POST", `${api(ws)}/projects`, body);
 
-export const updateProject = (ws: string, project: string, body: { name?: string; slug?: string; archived?: boolean }) =>
+export const updateProject = (ws: string, project: string, body: { name?: string; slug?: string; archived?: boolean; new_default?: string }) =>
   sendJson<Project>("PATCH", `${api(ws)}/p/${enc(project)}`, body);
 
 export const createKey = (ws: string, project: string, name: string) => sendJson<CreatedKey>("POST", `${api(ws)}/p/${enc(project)}/keys`, { name });

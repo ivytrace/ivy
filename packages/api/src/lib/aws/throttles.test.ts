@@ -1,8 +1,9 @@
-import { defaultProjectId } from '../tenancy/ids.js';
 import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import { mockClient } from 'aws-sdk-client-mock';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { defaultProjectId } from '../tenancy/ids.js';
+import { memoryTenancyStore, setTenancyStore, tenancyStore } from '../tenancy/store.js';
 import { resetAwsClientsForTests } from './clients.js';
 import { pollAccountThrottles, pollWindow, setThrottleSinkForTests, throttlePollDue, type ThrottleRow } from './throttles.js';
 import type { AwsAccount, FunctionStatus } from './types.js';
@@ -60,6 +61,7 @@ const fn = (function_name: string, state: FunctionStatus['state'] = 'traced', re
 let saved: ThrottleRow[];
 
 beforeEach(() => {
+  setTenancyStore(memoryTenancyStore());
   cw.reset();
   sts.reset();
   resetAwsClientsForTests();
@@ -133,6 +135,15 @@ describe('throttle polling', () => {
       { tenant_id: 'ten_a', project_id: defaultProjectId('ten_a'), function: 'checkout', region: 'eu-west-1', minute: t2.getTime(), account_id: account.account_id, throttles: 4 },
       { tenant_id: 'ten_a', project_id: 'prj_ops', function: 'worker', region: 'eu-west-1', minute: t2.getTime(), account_id: account.account_id, throttles: 1 },
     ]);
+  });
+
+  it("stores throttles of functions without a project under the workspace's current default project", async () => {
+    await tenancyStore().saveTenant({ id: 'ten_a', slug: 'a', name: 'A', shard_id: 'shard-1', default_project_id: 'prj_moved', created_at: 1 });
+    cw.on(GetMetricDataCommand)
+      .resolvesOnce({ MetricDataResults: [{ Id: 'account', Timestamps: [new Date(NOW_MINUTE - MIN)], Values: [1] }] })
+      .resolvesOnce({ MetricDataResults: [{ Id: 'f0', Timestamps: [new Date(NOW_MINUTE - MIN)], Values: [1] }] });
+    await pollAccountThrottles({ ...account, regions: ['eu-west-1'] }, ['eu-west-1'], [fn('checkout')], NOW);
+    expect(saved.map((r) => r.project_id)).toEqual(['prj_moved']);
   });
 
   it('splits more than 500 functions into several requests and follows NextToken', async () => {

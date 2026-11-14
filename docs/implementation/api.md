@@ -102,11 +102,15 @@ An existing owner keeps the owner role.
 ## Workspace routes (`/api/w/:workspace`)
 
 ### `GET /api/w/:workspace`
-The workspace as in `GET /api/workspaces`, with the caller's role.
+The workspace as in `GET /api/workspaces`, with the caller's role, plus `default_project_id`: the workspace's default
+project.
 
-### `PATCH /api/w/:workspace` (owner)
-Body: any of `name`, `slug`. Renaming doesn't change the slug, so URLs stay stable; changing the slug is a separate,
-explicit edit ("Change URL"). 409 if the slug is taken; the `default` workspace's slug can't change.
+### `PATCH /api/w/:workspace`
+Body: any of `name`, `slug` (owner), `default_project` (any member). Renaming doesn't change the slug, so URLs stay
+stable; changing the slug is a separate, explicit edit ("Change URL"). 409 if the slug is taken; the `default`
+workspace's slug can't change. `default_project` (slug or ID of an active project, 400 otherwise) makes that project
+the default: keys without a project and functions traced without a project go there from now on (keys within the
+router's one-minute key cache, functions at the next sync).
 
 ### `DELETE /api/w/:workspace?confirm=<slug>` (owner)
 `confirm` must repeat the slug (400 otherwise). 409 while AWS accounts are connected (disconnect them first) and
@@ -154,15 +158,20 @@ is no per-project usage route.
 
 - `GET /api/w/:workspace/projects` (`?archived=1` includes archived) →
   `{ "items": [ { "id": "prj_…", "slug": "checkout-prod", "name": "Checkout (prod)", "archived": false, "default": false, "created_at": "…" } ] }`
-  `default` marks the project every workspace starts with (it can be renamed but not archived).
+  `default` (boolean) marks the workspace's default project, where keys without a project and functions traced
+  without a project go. Every workspace starts with one; the designation moves with `PATCH /api/w/:workspace`
+  (`default_project`) or when the default project is archived.
 - `POST /api/w/:workspace/projects`, body `{ "name": "Checkout (prod)" }` → 201 with the project. The slug is
   generated from the name like workspace slugs (`checkout-prod`; fallback `project`), unique within the workspace
   (`-2`, `-3`, … on collisions; `all` and `settings` are skipped). An optional `"slug"` is used as given instead (409 if
   it exists in the workspace).
 - `GET /api/w/:workspace/p/:project` → the project.
-- `PATCH /api/w/:workspace/p/:project`, body: any of `name`, `slug`, `archived` (boolean) → the project. Renaming
-  doesn't change the slug. Archiving
-  stops its keys from ingesting (401 at the router) and re-syncs AWS accounts so no function sends to it.
+- `PATCH /api/w/:workspace/p/:project`, body: any of `name`, `slug`, `archived` (boolean), `new_default` → the
+  project. Renaming doesn't change the slug. Archiving stops the keys created for it from ingesting (401 at the
+  router) and re-syncs AWS accounts so no function sends to it. Archiving the **default** project first makes
+  `new_default` (slug or ID of another active project; 400 otherwise) the default, or without it the oldest remaining
+  active project; keys without a project then send to the new default. 409 "A workspace needs at least one project"
+  for the last active project. `new_default` is ignored for other projects.
 
 ### Ingest keys of a project
 
