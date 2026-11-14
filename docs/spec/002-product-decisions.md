@@ -82,7 +82,7 @@ live in `docs/implementation/`.
   built-in fallback). Hosted-only behaviour goes into hooks in `ivy-hosted`, not into `ivy`.
 
 ## Billing
-- Billing is per **workspace**. Free tier of **100,000 traces per month**, then **€2 per million traces**;
+- Billing is per **workspace**. Free tier of **100,000 traces per month**, then **€5 per million traces** (raised from €2 on 2026-11-14);
   one trace is one Lambda invocation.
 - Billing and Stripe code live in `ivy-hosted`. The open-source product only knows generic per-workspace limits:
   no limits set means unlimited, so self-hosted is unlimited. Hosted sets the free tier through the

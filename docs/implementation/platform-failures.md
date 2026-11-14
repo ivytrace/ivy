@@ -12,7 +12,7 @@ before it can report them:
 
 Ivy covers the first three in the Rust extension with the Lambda **Telemetry API**, and throttles in the API's
 auto-trace loop with **CloudWatch metrics**. The guiding constraint is the margin: a trace is one invocation and is
-billed at €2 per million, so a healthy invocation must not get extra spans, and function logs are never shipped
+billed at €5 per million, so a healthy invocation must not get extra spans, and function logs are never shipped
 wholesale. Data is added only on failure, plus a few attributes on the existing invocation span.
 
 ## Extension: Telemetry API

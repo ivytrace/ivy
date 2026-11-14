@@ -195,7 +195,7 @@ request, against a 2 s budget and a 2000-span queue, all or nothing. Now (`src/l
    collapsed LLM calls are summed (bridge usage attributes, or the `usage` in a provider's response body for
    plain HTTP calls, recognised by host or by the providers' paths such as `/v1/chat/completions`). 50/10/3 keep
    every ordinary trace untouched (few functions make 50 identical calls) while turning a 3,000-call loop into
-   ~16 spans; the stored bytes fall accordingly, which matters at €2 per million traces.
+   ~16 spans; the stored bytes fall accordingly, which matters at €5 per million traces.
    Known limit: calls from a bundled SDK are only recognised as AWS calls at flush time, so they group by HTTP
    method, host and path (`POST dynamodb.eu-west-1.amazonaws.com /`), mixing operations.
 2. **Span limit**: after collapsing, at most `IVY_MAX_SPANS` (2000) children. Kept first: failing spans, summaries
