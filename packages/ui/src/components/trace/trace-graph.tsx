@@ -34,7 +34,7 @@ function ServiceNode({ data }: NodeProps<FlowNode>) {
       <Handle type="target" position={Position.Left} isConnectable={false} />
       <Handle type="source" position={Position.Right} isConnectable={false} />
       {data.instances > 1 && (
-        <div className="absolute -right-2 -top-2 min-w-5 rounded-full bg-primary px-1 text-center text-[10px] leading-5 text-white">
+        <div className="absolute -right-2 -top-2 min-w-5 rounded-full bg-primary px-1 text-center text-[10px] leading-5 text-primary-foreground">
           {data.instances}
         </div>
       )}
