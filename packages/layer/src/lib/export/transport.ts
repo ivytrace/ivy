@@ -1,0 +1,94 @@
+import http from 'node:http';
+import https from 'node:https';
+import { gzipSync } from 'node:zlib';
+
+// Captured at import time, before instrumentation patches these modules.
+const httpRequest = http.request;
+const httpsRequest = https.request;
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 2 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 2 });
+
+export interface PostResult {
+  status: number;
+  body: string;
+}
+
+export interface PostOptions {
+  headers?: Record<string, string>;
+  timeoutMs: number;
+  gzip?: boolean;
+  keepAlive?: boolean;
+}
+
+export function post(url: string, body: string, opts: PostOptions): Promise<PostResult> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn: () => void) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        fn();
+      }
+    };
+    const timer = setTimeout(() => {
+      done(() => reject(new Error(`timeout after ${opts.timeoutMs}ms`)));
+      req.destroy();
+    }, opts.timeoutMs);
+    let payload: Buffer = Buffer.from(body, 'utf8');
+    const headers: Record<string, string | number> = { 'content-type': 'application/json', ...opts.headers };
+    if (opts.gzip && payload.length > 1024) {
+      payload = gzipSync(payload);
+      headers['content-encoding'] = 'gzip';
+    }
+    headers['content-length'] = payload.length;
+    const u = new URL(url);
+    const isHttps = u.protocol === 'https:';
+    const request = isHttps ? httpsRequest : httpRequest;
+    const agent = opts.keepAlive === false ? false : isHttps ? httpsAgent : httpAgent;
+    const req = request(u, { method: 'POST', headers, agent }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () =>
+        done(() => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') })),
+      );
+      res.on('error', (err) => done(() => reject(err)));
+    });
+    req.on('error', (err) => done(() => reject(err)));
+    req.end(payload);
+  });
+}
+
+export function isRetryable(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Posts with retries on network errors / retryable statuses, bounded by a total budget.
+ * Resolves true on success, false when the batch should be dropped.
+ */
+export async function postWithRetry(
+  url: string,
+  body: string,
+  opts: PostOptions & { budgetMs: number; attempts?: number; onError?: (msg: string) => void },
+): Promise<boolean> {
+  const deadline = Date.now() + opts.budgetMs;
+  const attempts = opts.attempts ?? 3;
+  for (let i = 0; i < attempts; i++) {
+    const remaining = deadline - Date.now();
+    if (remaining < 50) break;
+    try {
+      const res = await post(url, body, { ...opts, timeoutMs: Math.min(opts.timeoutMs, remaining) });
+      if (res.status >= 200 && res.status < 300) return true;
+      opts.onError?.(`export failed with HTTP ${res.status}: ${res.body.slice(0, 200)}`);
+      if (!isRetryable(res.status)) return false;
+    } catch (err) {
+      opts.onError?.(`export failed: ${(err as Error).message}`);
+    }
+    const backoff = 100 * 3 ** i;
+    if (Date.now() + backoff >= deadline) break;
+    await sleep(backoff);
+  }
+  return false;
+}

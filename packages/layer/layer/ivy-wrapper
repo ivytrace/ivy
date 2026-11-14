@@ -1,0 +1,7 @@
+#!/bin/bash
+# Lambda exec wrapper: routes the runtime to the Ivy handler, which loads the original one.
+if [ -n "$IVY_ENDPOINT" ] && [ -z "$IVY_ORIGINAL_HANDLER" ] && [ "${IVY_DISABLE:-}" != "true" ] && [ "${IVY_DISABLE:-}" != "1" ]; then
+  export IVY_ORIGINAL_HANDLER="$_HANDLER"
+  export _HANDLER="/opt/nodejs/ivy/handler.handler"
+fi
+exec "$@"
