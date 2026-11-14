@@ -25,6 +25,7 @@
     "@ivy/spans": "workspace:*",
     "@scalar/hono-api-reference": "^0.12.20",
     "hono": "^4.13.18",
+    "jose": "^6.2.17",
     "yaml": "^2.9.1"
   },
   "devDependencies": {

@@ -24,8 +24,39 @@ export function rangeParams(range: TimeRange): QueryParams {
   return "since" in range ? { since: range.since } : { from: range.from, to: range.to };
 }
 
+interface AuthHooks {
+  getAccessToken: () => Promise<string | null>;
+  onUnauthorized: () => void;
+}
+
+let auth: AuthHooks | undefined;
+
+/** Set by the auth provider when OIDC is on: API calls then carry a bearer token. */
+export function setAuthHooks(hooks: AuthHooks | undefined) {
+  auth = hooks;
+}
+
+export async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const token = await auth?.getAccessToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set("authorization", `Bearer ${token}`);
+  const res = await fetch(url, { ...init, headers });
+  if (res.status === 401 && auth) auth.onUnauthorized();
+  return res;
+}
+
+/** Downloads a file from the API with the user's token (a plain link can't carry one). */
+export async function downloadFile(url: string, filename: string) {
+  const res = await apiFetch(url);
+  if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  const href = URL.createObjectURL(await res.blob());
+  const a = Object.assign(document.createElement("a"), { href, download: filename });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(href), 1000);
+}
+
 export async function fetchJson<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(url, { ...init, headers: { accept: "application/json", ...init.headers } });
+  const res = await apiFetch(url, { ...init, headers: { accept: "application/json", ...init.headers } });
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {

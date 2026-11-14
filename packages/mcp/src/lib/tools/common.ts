@@ -1,5 +1,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import type { Workspace } from "../data/types.js";
+import { ToolInputError } from "../workspaces/scope.js";
 
 export const since = (fallback: string) =>
   z
@@ -30,6 +32,15 @@ export const traceId = z
   .regex(/^[0-9a-fA-F]{32}$/, "A trace ID is 32 hex characters")
   .describe("Trace ID (32 hex characters), as shown in invocation lists.");
 
+export const workspace = z
+  .string()
+  .min(1)
+  .optional()
+  .describe("Workspace ID or slug (see list_workspaces). Omit to cover all of your workspaces.");
+
+/** Prefix that tells the model which workspace a line belongs to (later `[workspace/project]`). */
+export const label = (w: Workspace) => `[${w.slug}]`;
+
 export const text = (value: string): CallToolResult => ({ content: [{ type: "text", text: value }] });
 
 export const failure = (message: string): CallToolResult => ({ content: [{ type: "text", text: message }], isError: true });
@@ -39,6 +50,7 @@ export async function guarded(run: () => Promise<CallToolResult>): Promise<CallT
   try {
     return await run();
   } catch (err) {
+    if (err instanceof ToolInputError) return failure(err.message);
     return failure(`Ivy query failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }

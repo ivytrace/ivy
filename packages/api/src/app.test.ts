@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from './app.js';
 
 const app = createApp({ uiDir: '/nonexistent', tenants: { resolve: async () => ({ id: 'default', shardId: 'shard-1' }) } });
@@ -24,5 +24,19 @@ describe('app', () => {
   it('returns 404 for malformed trace IDs', async () => {
     const res = await app.request('/api/traces/not-a-trace');
     expect(res.status).toBe(404);
+  });
+});
+
+describe('app with OIDC configured', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('requires a token on data routes but not on config', async () => {
+    vi.stubEnv('IVY_OIDC_ISSUER', 'https://auth.example.test');
+    vi.stubEnv('IVY_OIDC_CLIENT_ID', 'ivy');
+    expect((await app.request('/api/functions')).status).toBe(401);
+    expect((await app.request('/api/aws/template.yaml')).status).toBe(401);
+    expect((await app.request('/api/nope')).status).toBe(401);
+    const config = await app.request('/api/config');
+    expect((await config.json()).auth).toMatchObject({ enabled: true, clientId: 'ivy', audience: 'ivy' });
   });
 });

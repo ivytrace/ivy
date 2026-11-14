@@ -114,8 +114,9 @@ The resolver is an interface:
 interface TenantResolver { resolve(c: Context): Promise<Tenant | null> }  // null → 401
 ```
 
-Today `singleTenantResolver('default')` resolves every request to `default` (no user auth yet). With OIDC login this
-becomes session → user → tenant membership; only the resolver changes. `/api/health`, `/api/config` and
+The app uses `userTenantResolver()` (`members.ts`): `default` with auth off or in single-tenant mode (the default),
+otherwise the signed-in user's tenant from `ivy_control.tenant_members`, created on their first request. See
+`auth.md`, "Users and tenants". `singleTenantResolver(id)` remains for tests. `/api/health`, `/api/config` and
 `/api/aws/events` (authenticated by its own secret) are registered before the middleware and have no tenant.
 Tenant → shard lookups are cached for 30 s.
 

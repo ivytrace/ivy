@@ -4,14 +4,14 @@ import { bearerAuth, protectedResourceMetadata, type AuthUser, type McpAuth } fr
 import type { IvyData } from "../data/types.js";
 import { createIvyMcpServer } from "../server/server.js";
 
-export interface McpRoutesOptions {
-  /** Data access for one request; called after auth and `middleware`, so it can read the tenant from the context. */
+export interface McpRoutesOptions<U extends AuthUser = AuthUser> {
+  /** Data access for one request; called after auth and `middleware`, so it can read the user from the context. */
   data: (c: Context) => IvyData;
   /** OAuth protected resource settings. Without it the endpoint is open (self-hosted without OIDC). */
-  auth?: McpAuth;
-  /** Called with the verified user, e.g. to put it on the context for the tenant resolver. */
-  onAuthenticated?: (c: Context, user: AuthUser, token: string) => void;
-  /** Runs after auth, before the MCP handler (e.g. tenant resolution). */
+  auth?: McpAuth<U>;
+  /** Called with the verified user, e.g. to put it on the context for workspace resolution. */
+  onAuthenticated?: (c: Context, user: U, token: string) => void;
+  /** Runs after auth, before the MCP handler. */
   middleware?: MiddlewareHandler[];
   /** Mount path of the endpoint (default `/mcp`). */
   path?: string;
@@ -22,7 +22,7 @@ export interface McpRoutesOptions {
  * Hono routes for Ivy's remote MCP server: Streamable HTTP in stateless JSON mode at `path`, plus the
  * RFC 9728 metadata documents when auth is on. Mount with `app.route("/", mcpRoutes(…))`.
  */
-export function mcpRoutes(options: McpRoutesOptions): Hono {
+export function mcpRoutes<U extends AuthUser>(options: McpRoutesOptions<U>): Hono {
   const path = options.path ?? "/mcp";
   const app = new Hono();
 

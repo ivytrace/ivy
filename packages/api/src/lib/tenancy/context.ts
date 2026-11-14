@@ -12,8 +12,7 @@ export interface Tenant {
 }
 
 /**
- * Maps a request to its tenant. Today there is no user auth, so every request is the `default`
- * tenant. With OIDC login this becomes: session → user → tenant membership (and a tenant picker).
+ * Maps a request to its tenant (the app uses `userTenantResolver` from members.ts).
  * Returning null answers 401.
  */
 export interface TenantResolver {

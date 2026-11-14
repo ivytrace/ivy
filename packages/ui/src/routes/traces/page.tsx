@@ -13,7 +13,7 @@ import { Waterfall } from "@/components/trace/waterfall";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { ApiError } from "@/lib/api/client";
 import { useTrace } from "@/lib/api/hooks";
@@ -180,8 +180,8 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
               <TabsList>
                 <TabsTrigger value="overview">Overview</TabsTrigger>
-                <TabsTrigger value="timeline">Timeline ({rows.length})</TabsTrigger>
-                <TabsTrigger value="logs">Logs ({logs.length})</TabsTrigger>
+                <TabsTrigger value="timeline">Timeline<TabsCount>{rows.length}</TabsCount></TabsTrigger>
+                <TabsTrigger value="logs">Logs<TabsCount>{logs.length}</TabsCount></TabsTrigger>
               </TabsList>
               {invocations.length > 1 && (
                 <div className="flex items-center gap-2">

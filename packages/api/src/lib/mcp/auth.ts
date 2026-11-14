@@ -1,15 +1,11 @@
-import type { AuthUser, McpAuth, TokenVerifier } from '@ivy/mcp';
+import type { McpAuth, TokenVerifier } from '@ivy/mcp';
 import type { Context } from 'hono';
+import { HTTPException } from 'hono/http-exception';
+import { readAuthConfig } from '../auth/config.js';
+import type { AuthUser } from '../auth/user.js';
+import { AuthError, verifyAccessToken } from '../auth/verify.js';
 
 const env = (name: string) => process.env[name]?.trim() || undefined;
-
-/**
- * Placeholder until the OIDC verifier (lib/auth) is merged: rejects every token, so an endpoint with
- * OIDC configured fails closed. See docs/implementation/mcp.md, "Wiring the verifier".
- */
-export const pendingVerifier: TokenVerifier = {
-  verify: async () => null,
-};
 
 /** Canonical MCP URL: IVY_MCP_RESOURCE, else IVY_PUBLIC_URL + /mcp. */
 export function mcpResource(): string | null {
@@ -19,22 +15,29 @@ export function mcpResource(): string | null {
   return base ? `${base.replace(/\/$/, '')}/mcp` : null;
 }
 
+/** The OIDC verifier (lib/auth) with the MCP audience: null for bad tokens, 503 when the provider is unreachable. */
+export const oidcVerifier: TokenVerifier<AuthUser> = {
+  async verify(token, { audience }) {
+    try {
+      return await verifyAccessToken(token, { audience });
+    } catch (error) {
+      if (error instanceof AuthError && error.status === 401) return null;
+      if (error instanceof AuthError) throw new HTTPException(error.status, { message: error.message });
+      throw error;
+    }
+  },
+};
+
 /** MCP auth settings, or undefined when OIDC is not configured (the endpoint is then open, like the API). */
-export function mcpAuthFromEnv(verifier: TokenVerifier = pendingVerifier): McpAuth | undefined {
-  const issuer = env('IVY_OIDC_ISSUER');
-  if (!issuer) return undefined;
+export function mcpAuthFromEnv(verifier: TokenVerifier<AuthUser> = oidcVerifier): McpAuth<AuthUser> | undefined {
+  const config = readAuthConfig();
+  if (!config) return undefined;
   const resource = mcpResource();
   if (!resource) throw new Error('IVY_OIDC_ISSUER is set but neither IVY_MCP_RESOURCE nor IVY_PUBLIC_URL is: the MCP endpoint needs its canonical URL');
-  return { resource, authorizationServers: [issuer], verifier };
+  return { resource, authorizationServers: [config.issuer], verifier };
 }
 
-declare module 'hono' {
-  interface ContextVariableMap {
-    mcpUser: AuthUser;
-  }
-}
-
-/** Puts the verified MCP user on the context, where the tenant resolver can read it. */
+/** Puts the MCP caller on the context where /api puts its caller (`authUser(c)`). */
 export function rememberMcpUser(c: Context, user: AuthUser) {
-  c.set('mcpUser', user);
+  c.set('authUser', user);
 }

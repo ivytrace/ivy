@@ -49,7 +49,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: mock ? undefined : { "/api": "http://localhost:3000" },
+    proxy: mock ? undefined : { "/api": process.env.IVY_API_URL ?? "http://localhost:3000" },
   },
   build: { outDir: "dist", sourcemap: false, chunkSizeWarningLimit: 1500 },
   test: { environment: "node" },

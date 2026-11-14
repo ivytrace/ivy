@@ -28,7 +28,21 @@ export interface KeyMatch {
   tenant: TenantRecord;
 }
 
+export type MemberRole = 'owner' | 'member';
+
+/** A signed-in user's access to a tenant, by OIDC subject. */
+export interface MemberRecord {
+  tenant_id: string;
+  sub: string;
+  email: string;
+  role: MemberRole;
+  created_at: number;
+}
+
 export interface TenancyStore {
+  /** Tenants this OIDC subject belongs to, oldest membership first. */
+  findMemberships(sub: string): Promise<MemberRecord[]>;
+  saveMember(member: MemberRecord): Promise<void>;
   getTenant(id: string): Promise<TenantRecord | null>;
   listTenants(): Promise<TenantRecord[]>;
   saveTenant(tenant: TenantRecord): Promise<void>;
@@ -50,7 +64,20 @@ const TENANT_COLUMNS = 'id, name, shard_id, toUnixTimestamp64Milli(created_at) A
 const KEY_COLUMNS = `tenant_id, id, name, kind, key_hash, prefix, encrypted_key,
   toUnixTimestamp64Milli(created_at) AS created_at, toUnixTimestamp64Milli(revoked_at) AS revoked_at`;
 
+const MEMBER_COLUMNS = 'tenant_id, sub, email, role, toUnixTimestamp64Milli(created_at) AS created_at';
+
 export const clickhouseTenancyStore: TenancyStore = {
+  // Cross-tenant by nature: it is how a user's tenant is found in the first place.
+  findMemberships: (sub) =>
+    crossTenantQuery<MemberRecord>(
+      controlClient(),
+      `SELECT ${MEMBER_COLUMNS} FROM tenant_members FINAL WHERE sub = {sub:String} AND NOT deleted ORDER BY created_at, tenant_id`,
+      { sub },
+    ),
+
+  saveMember: (m) =>
+    insertRows(controlClient(), 'tenant_members', [{ ...m, created_at: iso(m.created_at), updated_at: version(), deleted: 0 }]),
+
   async getTenant(id) {
     const rows = await crossTenantQuery<TenantRecord>(
       controlClient(),
@@ -95,8 +122,18 @@ export const clickhouseTenancyStore: TenancyStore = {
 export function memoryTenancyStore(): TenancyStore {
   const tenants = new Map<string, TenantRecord>();
   const keys = new Map<string, ApiKeyRecord>();
+  const members = new Map<string, MemberRecord>();
   const copy = <T>(v: T): T => structuredClone(v);
   return {
+    async findMemberships(sub) {
+      return [...members.values()]
+        .filter((m) => m.sub === sub)
+        .sort((a, b) => a.created_at - b.created_at || a.tenant_id.localeCompare(b.tenant_id))
+        .map(copy);
+    },
+    async saveMember(m) {
+      members.set(`${m.tenant_id}/${m.sub}`, copy(m));
+    },
     async getTenant(id) {
       const t = tenants.get(id);
       return t ? copy(t) : null;

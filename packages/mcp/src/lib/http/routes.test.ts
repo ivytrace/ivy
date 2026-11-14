@@ -1,27 +1,60 @@
-import { checkoutFailed, checkoutOk, errorGroups, invocations, queueFailed, traces } from "@ivy/format/fixtures";
+import { checkoutFailed, checkoutOk, errorGroups, invocations, queueFailed } from "@ivy/format/fixtures";
+import type { ErrorGroup, Invocation, Trace } from "@ivy/spans";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Hono } from "hono";
 import { describe, expect, it } from "vitest";
-import type { InvocationQuery, IvyData } from "../data/types.js";
+import type { InvocationQuery, IvyData, Workspace } from "../data/types.js";
 import { mcpRoutes } from "./routes.js";
 
-function fakeData(calls: InvocationQuery[] = []): IvyData {
+interface Seed {
+  workspace: Workspace;
+  invocations: Invocation[];
+  traces: Trace[];
+  errors: ErrorGroup[];
+  broken?: boolean;
+}
+
+const prod: Seed = {
+  workspace: { id: "ten_prod", name: "Shop production", slug: "shop-production" },
+  invocations: [invocations[0], invocations[2]],
+  traces: [checkoutFailed, checkoutOk],
+  errors: [errorGroups[0]],
+};
+const staging: Seed = {
+  workspace: { id: "ten_stg", name: "Staging", slug: "staging" },
+  invocations: [invocations[1]],
+  traces: [queueFailed],
+  errors: [errorGroups[1]],
+};
+const broken: Seed = { workspace: { id: "ten_x", name: "Broken", slug: "broken" }, invocations: [], traces: [], errors: [], broken: true };
+
+type Call = { workspace: string; method: string; query?: InvocationQuery };
+
+function fakeData(seeds: Seed[], calls: Call[] = []): IvyData {
+  const seed = (w: Workspace) => {
+    const s = seeds.find((x) => x.workspace.id === w.id)!;
+    if (s.broken) throw new Error("shard unavailable");
+    return s;
+  };
   return {
-    async invocations(query) {
-      calls.push(query);
-      return invocations
-        .filter((i) => !query.status || i.status === query.status)
+    workspaces: async () => seeds.map((s) => s.workspace),
+    async invocations(w, query) {
+      calls.push({ workspace: w.slug, method: "invocations", query });
+      return seed(w)
+        .invocations.filter((i) => !query.status || i.status === query.status)
         .filter((i) => !query.function || i.function === query.function)
         .filter((i) => !query.q || i.request_id === query.q || i.trace_id === query.q || i.error_message?.includes(query.q))
         .slice(0, query.limit);
     },
-    async trace(id) {
-      return traces.find((t) => t.trace_id === id) ?? null;
+    async trace(w, id) {
+      calls.push({ workspace: w.slug, method: "trace" });
+      return seed(w).traces.find((t) => t.trace_id === id) ?? null;
     },
-    async errors(query) {
-      return errorGroups.filter((g) => !query.function || g.function === query.function);
+    async errors(w, query) {
+      calls.push({ workspace: w.slug, method: "errors" });
+      return seed(w).errors.filter((g) => !query.function || g.function === query.function);
     },
   };
 }
@@ -38,89 +71,117 @@ async function connect(app: Hono, headers: Record<string, string> = {}) {
 
 const textOf = (result: unknown) => ((result as CallToolResult).content[0] as { text: string }).text;
 
+async function call(seeds: Seed[], name: string, args: Record<string, unknown> = {}, calls?: Call[]) {
+  const client = await connect(mcpRoutes({ data: () => fakeData(seeds, calls) }));
+  return (await client.callTool({ name, arguments: args })) as CallToolResult;
+}
+
 describe("MCP server", () => {
   it("lists the tools with schemas", async () => {
-    const client = await connect(mcpRoutes({ data: () => fakeData() }));
+    const client = await connect(mcpRoutes({ data: () => fakeData([prod]) }));
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "compare_invocations",
       "find_failing_invocations",
       "get_trace_summary",
       "list_error_groups",
+      "list_workspaces",
       "search_invocations",
     ]);
     for (const tool of tools) {
       expect(tool.description!.length).toBeGreaterThan(80);
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.annotations?.readOnlyHint).toBe(true);
+      if (tool.name !== "list_workspaces") expect(tool.inputSchema.properties).toHaveProperty("workspace");
     }
     const summary = tools.find((t) => t.name === "get_trace_summary")!;
-    expect(Object.keys(summary.inputSchema.properties ?? {})).toEqual(["trace_id", "request_id", "detail", "max_tokens"]);
+    expect(Object.keys(summary.inputSchema.properties ?? {})).toEqual(["workspace", "trace_id", "request_id", "detail", "max_tokens"]);
   });
 
-  it("find_failing_invocations lists failures as text", async () => {
-    const calls: InvocationQuery[] = [];
-    const client = await connect(mcpRoutes({ data: () => fakeData(calls) }));
-    const text = textOf(await client.callTool({ name: "find_failing_invocations", arguments: { function: "checkout-createOrder" } }));
-    expect(calls).toEqual([{ function: "checkout-createOrder", status: "error", since: "1h", limit: 20 }]);
+  it("list_workspaces lists slug, name and ID", async () => {
+    expect(textOf(await call([prod, staging], "list_workspaces"))).toBe(
+      "2 workspaces:\nshop-production · Shop production · ten_prod\nstaging · Staging · ten_stg",
+    );
+  });
+
+  it("find_failing_invocations merges all workspaces newest first, labelled", async () => {
+    const calls: Call[] = [];
+    const text = textOf(await call([prod, staging], "find_failing_invocations", {}, calls));
+    expect(calls.map((c) => [c.workspace, c.query])).toEqual([
+      ["shop-production", { function: undefined, status: "error", since: "1h", limit: 20 }],
+      ["staging", { function: undefined, status: "error", since: "1h", limit: 20 }],
+    ]);
     expect(text).toMatchInlineSnapshot(`
-      "1 failed invocations of checkout-createOrder in the last 1h, newest first:
-      2026-11-14T12:00:00Z ERROR checkout-createOrder 212ms cold POST /orders → 500 · TypeError: Cannot read properties of undefined (reading 'id') · trace 6af84d409a1b2c3d4e5f60718293a4b5"
+      "2 failed invocations in 2 workspaces, last 1h, newest first:
+      [staging] 2026-11-14T12:00:05Z ERROR orders-processQueue 96.3ms sqs · ConditionalCheckFailedException: The conditional request failed · trace 6af84d4577aa88bb99cc00dd11ee22ff
+      [shop-production] 2026-11-14T12:00:00Z ERROR checkout-createOrder 212ms cold POST /orders → 500 · TypeError: Cannot read properties of undefined (reading 'id') · trace 6af84d409a1b2c3d4e5f60718293a4b5"
     `);
   });
 
-  it("search_invocations passes filters through", async () => {
-    const calls: InvocationQuery[] = [];
-    const client = await connect(mcpRoutes({ data: () => fakeData(calls) }));
-    const text = textOf(await client.callTool({ name: "search_invocations", arguments: { q: "conditional", status: "error", since: "7d", limit: 5 } }));
-    expect(calls[0]).toEqual({ q: "conditional", function: undefined, status: "error", since: "7d", limit: 5 });
-    expect(text).toContain("orders-processQueue");
-    expect(text).not.toContain("checkout-createOrder");
+  it("applies the combined limit and narrows to one workspace by slug or ID", async () => {
+    const one = textOf(await call([prod, staging], "find_failing_invocations", { limit: 1 }));
+    expect(one.split("\n")).toHaveLength(2);
+    expect(one).toContain("more exist");
+
+    const calls: Call[] = [];
+    const scoped = textOf(await call([prod, staging], "search_invocations", { workspace: "TEN_STG", q: "conditional" }, calls));
+    expect(calls.map((c) => c.workspace)).toEqual(["staging"]);
+    expect(scoped).toContain("in workspace staging");
+
+    const unknown = await call([prod, staging], "search_invocations", { workspace: "nope" });
+    expect(unknown.isError).toBe(true);
+    expect(textOf(unknown)).toContain("Yours: shop-production, staging");
   });
 
-  it("get_trace_summary renders the trace by trace ID or request ID", async () => {
-    const client = await connect(mcpRoutes({ data: () => fakeData() }));
-    const byTrace = textOf(await client.callTool({ name: "get_trace_summary", arguments: { trace_id: checkoutFailed.trace_id } }));
-    expect(byTrace).toContain("checkout-createOrder · API Gateway POST /orders → 500 · cold start · 212ms · ERROR");
-    expect(byTrace).toContain("! TypeError: Cannot read properties of undefined (reading 'id')");
+  it("returns the other workspaces when one fails, and says which", async () => {
+    const result = await call([prod, broken, staging], "list_error_groups");
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toMatchInlineSnapshot(`
+      "2 error groups (49 failed invocations) in 3 workspaces, last 24h:
+      [shop-production] 42× checkout-createOrder · TypeError: Cannot read properties of undefined (reading 'id') · first 2026-11-14T08:12:44Z · last 2026-11-14T12:00:00Z · sample trace 6af84d409a1b2c3d4e5f60718293a4b5
+      [staging] 7× orders-processQueue · ConditionalCheckFailedException: The conditional request failed · first 2026-11-14T10:01:02Z · last 2026-11-14T12:00:05Z · sample trace 6af84d4577aa88bb99cc00dd11ee22ff
 
-    const byRequest = textOf(
-      await client.callTool({ name: "get_trace_summary", arguments: { request_id: "c0ffee00-1111-4222-8333-444455556666", detail: "summary" } }),
-    );
+      Not included (query failed): broken (shard unavailable)"
+    `);
+    const allBroken = await call([broken], "list_error_groups");
+    expect(allBroken.isError).toBe(true);
+  });
+
+  it("get_trace_summary finds the workspace holding the trace via the invocations index", async () => {
+    const calls: Call[] = [];
+    const text = textOf(await call([prod, staging], "get_trace_summary", { trace_id: queueFailed.trace_id }, calls));
+    expect(text.split("\n")[0]).toBe("[staging]");
+    expect(text).toContain("orders-processQueue · SQS · warm · 96.3ms · ERROR");
+    const probes = calls.filter((c) => c.method === "invocations");
+    expect(probes.map((c) => c.workspace)).toEqual(["shop-production", "staging"]);
+    expect(probes[0].query).toMatchObject({ q: queueFailed.trace_id, from: "2026-11-14T11:00:05.000Z", to: "2026-11-14T13:00:05.000Z", limit: 1 });
+    expect(calls.filter((c) => c.method === "trace").map((c) => c.workspace)).toEqual(["staging"]);
+  });
+
+  it("get_trace_summary looks up request IDs and reports missing traces as tool errors", async () => {
+    const byRequest = textOf(await call([prod, staging], "get_trace_summary", { request_id: "c0ffee00-1111-4222-8333-444455556666", detail: "summary" }));
     expect(byRequest).toContain(`trace ${queueFailed.trace_id}`);
     expect(byRequest).toContain("×8");
+
+    const missing = await call([prod, staging], "get_trace_summary", { trace_id: "0".repeat(32) });
+    expect(missing.isError).toBe(true);
+    expect(textOf(missing)).toContain("not found in any of your 2 workspaces");
+    expect((await call([prod], "get_trace_summary", {})).isError).toBe(true);
   });
 
-  it("get_trace_summary reports missing traces as tool errors", async () => {
-    const client = await connect(mcpRoutes({ data: () => fakeData() }));
-    const result = (await client.callTool({ name: "get_trace_summary", arguments: { trace_id: "0".repeat(32) } })) as CallToolResult;
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain("not found");
-    const neither = (await client.callTool({ name: "get_trace_summary", arguments: {} })) as CallToolResult;
-    expect(neither.isError).toBe(true);
-  });
-
-  it("compare_invocations picks the latest successful run as baseline", async () => {
-    const calls: InvocationQuery[] = [];
-    const client = await connect(mcpRoutes({ data: () => fakeData(calls) }));
-    const text = textOf(await client.callTool({ name: "compare_invocations", arguments: { trace_id: checkoutFailed.trace_id } }));
-    expect(calls).toEqual([{ function: "checkout-createOrder", status: "ok", since: "7d", limit: 1 }]);
-    expect(text).toContain("B is the latest successful invocation of checkout-createOrder.");
+  it("compare_invocations picks the latest successful run in the same workspace", async () => {
+    const calls: Call[] = [];
+    const text = textOf(await call([staging, prod], "compare_invocations", { trace_id: checkoutFailed.trace_id }, calls));
+    expect(calls.filter((c) => c.query?.status === "ok")).toEqual([
+      { workspace: "shop-production", method: "invocations", query: { function: "checkout-createOrder", status: "ok", since: "7d", limit: 1 } },
+    ]);
+    expect(text.split("\n").slice(0, 2)).toEqual(["[shop-production]", "B is the latest successful invocation of checkout-createOrder."]);
     expect(text).toContain(`trace ${checkoutOk.trace_id}`);
     expect(text).toContain("- only in B: DynamoDB.PutItem checkout-orders");
   });
 
-  it("list_error_groups summarizes groups", async () => {
-    const client = await connect(mcpRoutes({ data: () => fakeData() }));
-    const text = textOf(await client.callTool({ name: "list_error_groups", arguments: { since: "24h", limit: 1 } }));
-    expect(text.split("\n")[0]).toBe("2 error groups (49 failed invocations) in the last 24h, showing the top 1:");
-    expect(text).toContain("42× checkout-createOrder");
-  });
-
   it("rejects invalid arguments", async () => {
-    const client = await connect(mcpRoutes({ data: () => fakeData() }));
-    const result = (await client.callTool({ name: "find_failing_invocations", arguments: { since: "yesterday" } })) as CallToolResult;
-    expect(result.isError).toBe(true);
+    expect((await call([prod], "find_failing_invocations", { since: "yesterday" })).isError).toBe(true);
   });
 });
 
@@ -135,7 +196,7 @@ describe("MCP auth", () => {
   };
 
   it("serves protected resource metadata at both well-known paths", async () => {
-    const app = mcpRoutes({ data: () => fakeData(), auth });
+    const app = mcpRoutes({ data: () => fakeData([prod]), auth });
     for (const path of ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"]) {
       const res = await app.request(path);
       expect(await res.json()).toEqual({
@@ -149,7 +210,7 @@ describe("MCP auth", () => {
   });
 
   it("answers 401 with resource_metadata without a valid token", async () => {
-    const app = mcpRoutes({ data: () => fakeData(), auth });
+    const app = mcpRoutes({ data: () => fakeData([prod]), auth });
     const missing = await app.request("/mcp", { method: "POST" });
     expect(missing.status).toBe(401);
     expect(missing.headers.get("www-authenticate")).toBe(
@@ -162,17 +223,17 @@ describe("MCP auth", () => {
 
   it("accepts a token for the MCP audience and hands the user on", async () => {
     const users: string[] = [];
-    const app = mcpRoutes({ data: () => fakeData(), auth, onAuthenticated: (_c, user) => users.push(user.sub) });
+    const app = mcpRoutes({ data: () => fakeData([prod]), auth, onAuthenticated: (_c, user) => users.push(user.sub) });
     const client = await connect(app, { authorization: "Bearer good" });
-    expect((await client.listTools()).tools).toHaveLength(5);
+    expect((await client.listTools()).tools).toHaveLength(6);
     expect(users.length).toBeGreaterThan(0);
   });
 
   it("has no metadata and no auth when auth is off", async () => {
-    const app = mcpRoutes({ data: () => fakeData() });
+    const app = mcpRoutes({ data: () => fakeData([prod]) });
     expect((await app.request("/.well-known/oauth-protected-resource")).status).toBe(404);
     expect((await app.request("/.well-known/oauth-protected-resource/mcp")).status).toBe(404);
     const client = await connect(app);
-    expect((await client.listTools()).tools).toHaveLength(5);
+    expect((await client.listTools()).tools).toHaveLength(6);
   });
 });

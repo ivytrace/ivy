@@ -2,25 +2,34 @@ import { mcpRoutes, type TokenVerifier } from '@ivy/mcp';
 import type { Hono } from 'hono';
 import pkg from '../../../package.json' with { type: 'json' };
 import { getApiDocs, getOpenApi } from '../../routes/openapi/get.js';
-import { tenantContext, type TenantResolver } from '../tenancy/context.js';
+import type { AuthUser } from '../auth/user.js';
+import type { TenantResolver } from '../tenancy/context.js';
 import { mcpAuthFromEnv, rememberMcpUser } from './auth.js';
 import { apiData } from './data.js';
+import { memberWorkspaces, resolverWorkspaces, type WorkspaceSource } from './workspaces.js';
+
+export interface AgentSurfaceOptions {
+  /** Token check for /mcp; the OIDC verifier by default. */
+  verifier?: TokenVerifier<AuthUser>;
+  /** The caller's workspaces; all memberships by default. */
+  workspaces?: WorkspaceSource;
+}
 
 /**
  * Ivy's agent-facing surface: the OpenAPI document and docs page (public), and the remote MCP server
- * at /mcp (bearer auth when OIDC is configured, then the same tenant resolution as /api).
- * Called from createApp before the /api tenant middleware.
+ * at /mcp (bearer token with the MCP audience when OIDC is configured; reads every workspace the caller
+ * is a member of). Called from createApp; `tenants` pins MCP reads to one tenant (tests).
  */
-export function mountAgentSurface(app: Hono, tenants: TenantResolver, verifier?: TokenVerifier) {
+export function mountAgentSurface(app: Hono, tenants?: TenantResolver, options: AgentSurfaceOptions = {}) {
+  const workspaces = options.workspaces ?? (tenants ? resolverWorkspaces(tenants) : memberWorkspaces());
   app.get('/api/openapi.json', getOpenApi);
   app.get('/api/docs', getApiDocs);
   app.route(
     '/',
     mcpRoutes({
-      auth: mcpAuthFromEnv(verifier),
+      auth: mcpAuthFromEnv(options.verifier),
       onAuthenticated: rememberMcpUser,
-      middleware: [tenantContext(tenants)],
-      data: apiData,
+      data: (c) => apiData(c, workspaces),
       version: pkg.version,
     }),
   );

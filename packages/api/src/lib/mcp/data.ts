@@ -1,15 +1,17 @@
-import type { ErrorGroup, Invocation, Trace } from '@ivy/spans';
 import type { IvyData } from '@ivy/mcp';
+import type { ErrorGroup, Invocation, Trace } from '@ivy/spans';
 import { Hono, type Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { getErrors } from '../../routes/errors/get.js';
 import { getInvocations } from '../../routes/invocations/get.js';
 import { getTrace } from '../../routes/traces/get.js';
-import { tenantOf, type Tenant } from '../tenancy/context.js';
+import type { Tenant } from '../tenancy/context.js';
+import type { ApiWorkspace, WorkspaceSource } from './workspaces.js';
 
 /**
- * The API's own route handlers, run in-process (no HTTP) with the tenant the outer request resolved.
- * The MCP tools therefore go through the same SQL, validation and tenant guard (dataQuery) as the API.
+ * The API's own route handlers, run in-process (no HTTP) for one workspace's tenant. The MCP tools
+ * therefore go through the same SQL, validation and tenant guard (dataQuery → that tenant's shard)
+ * as the API, one tenant-scoped read per workspace; the fan-out over workspaces is in @ivy/mcp.
  */
 const routes = new Hono<{ Bindings: { tenant: Tenant } }>()
   .use(async (c, next) => {
@@ -38,18 +40,17 @@ async function call<T>(tenant: Tenant, path: string): Promise<T | null> {
   return body;
 }
 
-export function apiData(c: Context): IvyData {
-  const tenant = tenantOf(c);
+export function apiData(c: Context, workspaces: WorkspaceSource): IvyData<ApiWorkspace> {
+  let resolved: Promise<ApiWorkspace[]> | undefined;
   return {
-    async invocations(query) {
-      const body = await call<{ items: Invocation[] }>(tenant, `/invocations${search({ ...query })}`);
+    workspaces: () => (resolved ??= workspaces(c)),
+    async invocations(w, query) {
+      const body = await call<{ items: Invocation[] }>(w.tenant, `/invocations${search({ ...query })}`);
       return body?.items ?? [];
     },
-    async trace(traceId) {
-      return call<Trace>(tenant, `/traces/${encodeURIComponent(traceId)}`);
-    },
-    async errors(query) {
-      const body = await call<{ items: ErrorGroup[] }>(tenant, `/errors${search({ ...query })}`);
+    trace: (w, traceId) => call<Trace>(w.tenant, `/traces/${encodeURIComponent(traceId)}`),
+    async errors(w, query) {
+      const body = await call<{ items: ErrorGroup[] }>(w.tenant, `/errors${search({ ...query })}`);
       return body?.items ?? [];
     },
   };

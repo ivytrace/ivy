@@ -13,7 +13,7 @@ Vitest, with tests next to their sources.
 
 | | |
 |---|---|
-| `pnpm --filter @ivy/ui dev` | Vite on :5173. `/api` is proxied to `http://localhost:3000` |
+| `pnpm --filter @ivy/ui dev` | Vite on :5173. `/api` is proxied to `http://localhost:3000` (`IVY_API_URL` overrides) |
 | `pnpm --filter @ivy/ui dev:mock` | Same, but `/api` is answered by an in-process mock (no API needed) |
 | `pnpm --filter @ivy/ui build` | Static build in `packages/ui/dist`, served by the API |
 | `pnpm --filter @ivy/ui test` / `typecheck` | Vitest / `tsc --noEmit` |
@@ -65,6 +65,9 @@ src/routes/        functions/, invocations/, traces/, errors/
 - Global: a time range picker (presets map to `since`, custom ranges to `from`/`to`; the preset is stored in
   localStorage), a ⌘K search (functions, jump to a trace ID, search invocations), and the "Authentication
   disabled" banner shown when `GET /api/config` returns `auth.enabled: false`.
+- Auth (`auth.md`): with OIDC on, every route above needs a signed-in user (`RequireAuth` → `/login?returnTo=…`).
+  `/login`, `/auth/callback` and `/logout` render outside the layout. The header has a user menu (email, sign out).
+  `src/lib/auth/` holds the oidc-client-ts wrapper, the provider, `returnTo` handling and the `ivy_session` marker cookie.
 
 ## Span → service rendering (`src/lib/spans/services.ts`)
 

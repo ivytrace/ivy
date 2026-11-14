@@ -91,6 +91,13 @@ services:
       IVY_CLICKHOUSE_DATABASE: ivy
       IVY_SHARDS: ${IVY_SHARDS:-}
       PORT: 3000
+      # Dashboard/API sign-in (docs/implementation/auth.md); no issuer = auth disabled
+      IVY_OIDC_ISSUER: ${IVY_OIDC_ISSUER:-}
+      IVY_OIDC_CLIENT_ID: ${IVY_OIDC_CLIENT_ID:-}
+      IVY_OIDC_AUDIENCE: ${IVY_OIDC_AUDIENCE:-}
+      IVY_OIDC_SCOPES: ${IVY_OIDC_SCOPES:-}
+      IVY_OIDC_ALLOW_AGENTS: ${IVY_OIDC_ALLOW_AGENTS:-}
+      IVY_SINGLE_TENANT: ${IVY_SINGLE_TENANT:-}
       # Tenancy and auto-trace (docs/implementation/tenancy.md, auto-trace.md)
       IVY_INGEST_API_KEY: ${IVY_INGEST_API_KEY:-dev-ingest-key}
       IVY_SECRET_KEY: ${IVY_SECRET_KEY:-}

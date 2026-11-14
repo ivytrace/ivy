@@ -9,8 +9,19 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { createApp } from '../../app.js';
 import { setClientsForTests } from '../clickhouse/client.js';
 import { TENANT_SETTING } from '../clickhouse/scoped.js';
-import { singleTenantResolver } from '../tenancy/context.js';
+import { AuthError, verifyAccessToken } from '../auth/verify.js';
 import { mountAgentSurface } from './mount.js';
+
+vi.mock('../auth/verify.js', async (original) => ({
+  ...(await original<typeof import('../auth/verify.js')>()),
+  verifyAccessToken: vi.fn(async (token: string, { audience }: { audience?: string } = {}) => {
+    if (token === 'provider-down') throw new AuthError('Identity provider unreachable', 503);
+    if (token === 'mcp-token' && audience === 'https://ivytrace.dev/mcp') {
+      return { sub: 'idn_1', issuer: 'https://auth.ivytrace.dev', clientId: 'agt_ivy_1', agent: null };
+    }
+    throw new AuthError('Invalid token', 401);
+  }),
+}));
 
 interface Captured {
   query: string;
@@ -73,7 +84,7 @@ const textOf = (result: unknown) => ((result as CallToolResult).content[0] as { 
 describe('MCP endpoint in the API', () => {
   it('serves every tool through the API route handlers, scoped to the request tenant', async () => {
     const client = await connect(createApp({ uiDir: '/nonexistent', tenants }));
-    expect((await client.listTools()).tools).toHaveLength(5);
+    expect((await client.listTools()).tools).toHaveLength(6);
 
     const calls = {
       find_failing_invocations: { function: 'checkout-createOrder' },
@@ -93,8 +104,9 @@ describe('MCP endpoint in the API', () => {
     expect(outputs.compare_invocations).toContain(`trace ${checkoutOk.trace_id}`);
     expect(outputs.list_error_groups).toContain('42× checkout-createOrder');
 
-    expect(captured.length).toBeGreaterThan(5);
-    for (const q of captured) {
+    const data = captured.filter((q) => /FROM (otel_traces|invocations)/.test(q.query));
+    expect(data.length).toBeGreaterThan(5);
+    for (const q of data) {
       expect(q.query_params.tenant).toBe('ten_a');
       expect(q.clickhouse_settings[TENANT_SETTING]).toBe('ten_a');
     }
@@ -103,42 +115,61 @@ describe('MCP endpoint in the API', () => {
   it('turns API validation errors into tool errors', async () => {
     const client = await connect(createApp({ uiDir: '/nonexistent', tenants }));
     const result = (await client.callTool({ name: 'search_invocations', arguments: { since: '0m' } })) as CallToolResult;
-    expect(textOf(result)).toBe('Ivy query failed: Invalid since: 0m');
+    expect(textOf(result)).toContain('(Invalid since: 0m)');
     expect(result.isError).toBe(true);
   });
 
-  it('answers 401 when the tenant resolver rejects the request', async () => {
-    const app = createApp({ uiDir: '/nonexistent', tenants: { resolve: async () => null } });
-    const res = await app.request('/mcp', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-    expect(res.status).toBe(401);
+  it('fans out over all workspaces, one tenant-scoped query per workspace, labelled', async () => {
+    const ws = (id: string, name: string) => ({ id, name, slug: name.toLowerCase(), tenant: { id, shardId: 'shard-1' } });
+    const app = new Hono();
+    mountAgentSurface(app, undefined, { workspaces: async () => [ws('ten_a', 'Prod'), ws('ten_b', 'Staging')] });
+    const client = await connect(app);
+
+    const text = textOf(await client.callTool({ name: 'find_failing_invocations', arguments: { since: '24h' } }));
+    const lines = text.split('\n');
+    expect(lines[0]).toBe('4 failed invocations in 2 workspaces, last 24h, newest first:');
+    expect(lines.filter((l) => l.startsWith('[prod] '))).toHaveLength(2);
+    expect(lines.filter((l) => l.startsWith('[staging] '))).toHaveLength(2);
+
+    const data = captured.filter((q) => /FROM (otel_traces|invocations)/.test(q.query));
+    expect(data.map((q) => q.query_params.tenant).sort()).toEqual(['ten_a', 'ten_b']);
+    for (const q of data) expect(q.clickhouse_settings[TENANT_SETTING]).toBe(q.query_params.tenant);
+
+    expect(textOf(await client.callTool({ name: 'list_workspaces', arguments: {} }))).toBe(
+      '2 workspaces:\nprod · Prod · ten_a\nstaging · Staging · ten_b',
+    );
   });
 
-  it('is an OAuth protected resource when OIDC is configured', async () => {
+  it('is an OAuth protected resource checked with the OIDC verifier and the MCP audience', async () => {
     vi.stubEnv('IVY_OIDC_ISSUER', 'https://auth.ivytrace.dev');
+    vi.stubEnv('IVY_OIDC_CLIENT_ID', 'ivy-dashboard');
     vi.stubEnv('IVY_MCP_RESOURCE', 'https://ivytrace.dev/mcp');
     const app = new Hono();
-    const verifier = { verify: async (token: string, { audience }: { audience: string }) => (token === 'mcp-token' && audience === 'https://ivytrace.dev/mcp' ? { sub: 'u1' } : null) };
-    mountAgentSurface(app, tenants, verifier);
+    mountAgentSurface(app, tenants);
 
     const metadata = await (await app.request('/.well-known/oauth-protected-resource/mcp')).json();
     expect(metadata).toMatchObject({ resource: 'https://ivytrace.dev/mcp', authorization_servers: ['https://auth.ivytrace.dev'] });
 
-    const res = await app.request('/mcp', { method: 'POST', headers: { authorization: 'Bearer api-token' } });
-    expect(res.status).toBe(401);
-    expect(res.headers.get('www-authenticate')).toContain('resource_metadata="https://ivytrace.dev/.well-known/oauth-protected-resource/mcp"');
+    const missing = await app.request('/mcp', { method: 'POST' });
+    expect(missing.status).toBe(401);
+    expect(missing.headers.get('www-authenticate')).toBe('Bearer resource_metadata="https://ivytrace.dev/.well-known/oauth-protected-resource/mcp"');
+
+    const apiToken = await app.request('/mcp', { method: 'POST', headers: { authorization: 'Bearer api-token' } });
+    expect(apiToken.status).toBe(401);
+    expect(apiToken.headers.get('www-authenticate')).toContain('error="invalid_token"');
 
     const client = await connect(app, { authorization: 'Bearer mcp-token' });
-    expect((await client.listTools()).tools).toHaveLength(5);
+    expect((await client.listTools()).tools).toHaveLength(6);
+    expect(verifyAccessToken).toHaveBeenCalledWith('mcp-token', { audience: 'https://ivytrace.dev/mcp' });
   });
 
-  it('fails closed with OIDC configured until the verifier is wired', async () => {
+  it('answers 503 when the identity provider is unreachable', async () => {
     vi.stubEnv('IVY_OIDC_ISSUER', 'https://auth.ivytrace.dev');
+    vi.stubEnv('IVY_OIDC_CLIENT_ID', 'ivy-dashboard');
     vi.stubEnv('IVY_PUBLIC_URL', 'https://ivy.example.com');
-    const app = new Hono();
-    mountAgentSurface(app, singleTenantResolver());
-    const res = await app.request('/mcp', { method: 'POST', headers: { authorization: 'Bearer anything' } });
-    expect(res.status).toBe(401);
-    expect(res.headers.get('www-authenticate')).toContain('https://ivy.example.com/.well-known/oauth-protected-resource/mcp');
+    const app = createApp({ uiDir: '/nonexistent', tenants });
+    const res = await app.request('/mcp', { method: 'POST', headers: { authorization: 'Bearer provider-down' } });
+    expect(res.status).toBe(503);
   });
 });
 

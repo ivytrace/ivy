@@ -17,6 +17,12 @@ Environment variables (set in your shell or a `deploy/.env` file):
 
 | variable | default | |
 |---|---|---|
+| `IVY_OIDC_ISSUER` | | OIDC issuer URL. Set it to require sign-in for the dashboard and API; unset, both run without auth (behind your own authenticating proxy) and the UI says so (`docs/implementation/auth.md`) |
+| `IVY_OIDC_CLIENT_ID` | | the dashboard's client ID at the provider (public client, code flow + PKCE); required with an issuer |
+| `IVY_OIDC_AUDIENCE` | the client ID | expected `aud` of access tokens (the API's resource identifier) |
+| `IVY_OIDC_SCOPES` | `openid email profile offline_access` | scopes the UI asks for |
+| `IVY_OIDC_ALLOW_AGENTS` | `true` | also accept tokens of agents registered under the client (`agt_<client>_…`) |
+| `IVY_SINGLE_TENANT` | `1` | every signed-in user works in the `default` tenant; `0` gives each new user a tenant of their own (hosted) |
 | `IVY_INGEST_API_KEY` | `dev-ingest-key` | key of the `default` tenant, created on startup |
 | `IVY_COLLECTOR_TOKEN` | `dev-collector-token` | shared secret between the router and the internal collector; set your own |
 | `IVY_SECRET_KEY` | | encrypts per-tenant auto-trace keys; needed for auto-trace of tenants other than `default` |
