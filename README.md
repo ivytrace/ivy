@@ -49,3 +49,7 @@ OAuth protected resource (`docs/implementation/mcp.md`).
 
 See `docs/implementation/span-conventions.md`, `docs/implementation/api.md`, `docs/implementation/mcp.md` and
 `docs/implementation/tenancy.md` (tenants, API keys, ingest router, sharding plan).
+
+## License
+
+MIT, see [LICENSE](LICENSE).

@@ -63,7 +63,3 @@ Use `tools/loadgen` at 300k invocations/day × 45 spans, with 30 days of data, o
 
 ## Not in v1
 AI root-cause summaries, replay, LLM-call instrumentation, alerting beyond a webhook on new error groups, runtimes other than Node.js, high availability.
-
-## Open questions
-- License: MIT, or source-available like Sentry's FSL?
-- Does the Collector's ClickHouse exporter schema fit, or do we write our own exporter?

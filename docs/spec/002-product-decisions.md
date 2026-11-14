@@ -17,6 +17,9 @@ live in `docs/implementation/`.
 - `ivytrace/ivy-hosted` (private) holds the hosted deployment, the marketing website and hosted-only code
   (billing, hooks). Every push to `ivy` main deploys hosted.
 - No AI-tool attribution in commits or pull requests.
+- `ivy` is MIT licensed.
+- Storage uses the OpenTelemetry Collector's ClickHouse exporter rather than a custom exporter (see
+  `docs/implementation/storage.md`).
 
 ## Accounts, workspaces and projects
 - Users belong to **workspaces** (visible: create, switch, invite teammates). A workspace owns members, billing,
