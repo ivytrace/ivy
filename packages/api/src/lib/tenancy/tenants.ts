@@ -1,16 +1,30 @@
 import { defaultProjectId, hashKey, keyPrefix, newApiKey, newKeyId, newTenantId } from './ids.js';
 import { decrypt, encrypt, serverSecret } from './secret-box.js';
 import { DEFAULT_SHARD, shardConfigs } from './shards.js';
-import { slugify, uniqueSlug } from './slugs.js';
+import { claimSlug, slugify } from './slugs.js';
 import { tenancyStore, type ApiKeyRecord, type KeyKind, type ProjectRecord, type TenantRecord } from './store.js';
 
 export const DEFAULT_TENANT = 'default';
 export const DEFAULT_PROJECT_SLUG = 'default';
 
-const workspaceSlugTaken = async (slug: string) => slug === DEFAULT_TENANT || !!(await tenancyStore().findTenantBySlug(slug));
-
-/** A free workspace slug based on `name` (or `slug` when given and free). */
-export const freeWorkspaceSlug = (name: string) => uniqueSlug(slugify(name), workspaceSlugTaken);
+/**
+ * Gives a workspace the first free slug of `base`, `base-2`, … (unique across workspaces, see
+ * claimSlug), writing the tenant row with it.
+ */
+export function claimWorkspaceSlug(tenant: TenantRecord, base: string): Promise<string> {
+  const store = tenancyStore();
+  return claimSlug({
+    scope: 'workspace',
+    base,
+    taken: async (slug) => {
+      if (slug === DEFAULT_TENANT) return true;
+      const owner = await store.findTenantBySlug(slug);
+      return !!owner && owner.id !== tenant.id;
+    },
+    write: (slug) => store.saveTenant({ ...tenant, slug }),
+    won: async (slug) => (await store.findTenantBySlug(slug))?.id === tenant.id,
+  });
+}
 
 /**
  * The project every workspace starts with. Its ID is derived from the tenant ID (`defaultProjectId`),
@@ -28,16 +42,15 @@ export async function ensureDefaultProject(tenantId: string): Promise<ProjectRec
   return project;
 }
 
-export async function createTenant(name: string, shardId = DEFAULT_SHARD, id = newTenantId(), slug?: string): Promise<TenantRecord> {
+/**
+ * Creates a tenant (workspace) with its default project. `slug` is used as given (the caller checked
+ * it); otherwise one is generated from `slugBase` (default: the name).
+ */
+export async function createTenant(name: string, shardId = DEFAULT_SHARD, id = newTenantId(), slug?: string, slugBase?: string): Promise<TenantRecord> {
   if (!shardConfigs().has(shardId)) throw new Error(`Unknown shard ${shardId}`);
-  const tenant = {
-    id,
-    slug: slug ?? (id === DEFAULT_TENANT ? DEFAULT_TENANT : await freeWorkspaceSlug(name)),
-    name,
-    shard_id: shardId,
-    created_at: Date.now(),
-  };
-  await tenancyStore().saveTenant(tenant);
+  const tenant: TenantRecord = { id, slug: slug ?? (id === DEFAULT_TENANT ? DEFAULT_TENANT : ''), name, shard_id: shardId, created_at: Date.now() };
+  if (tenant.slug) await tenancyStore().saveTenant(tenant);
+  else tenant.slug = await claimWorkspaceSlug(tenant, slugify(slugBase ?? name));
   await ensureDefaultProject(tenant.id);
   return tenant;
 }
@@ -120,8 +133,8 @@ export async function ensureWorkspaceDefaults(): Promise<void> {
   const store = tenancyStore();
   for (const tenant of await store.listTenants()) {
     if (!tenant.slug) {
-      const slug = tenant.id === DEFAULT_TENANT ? DEFAULT_TENANT : await freeWorkspaceSlug(tenant.name);
-      await store.saveTenant({ ...tenant, slug });
+      if (tenant.id === DEFAULT_TENANT) await store.saveTenant({ ...tenant, slug: DEFAULT_TENANT });
+      else await claimWorkspaceSlug(tenant, slugify(tenant.name));
     }
     await ensureDefaultProject(tenant.id);
   }

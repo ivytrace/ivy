@@ -1,6 +1,6 @@
 import { HTTPException } from 'hono/http-exception';
 import { defaultProjectId, newProjectId } from './ids.js';
-import { isSlug, RESERVED_PROJECT_SLUGS, slugify, uniqueSlug } from './slugs.js';
+import { claimSlug, isSlug, RESERVED_PROJECT_SLUGS, slugify } from './slugs.js';
 import { tenancyStore, type ProjectRecord } from './store.js';
 
 const TTL_MS = 10_000;
@@ -55,13 +55,23 @@ async function save(project: ProjectRecord) {
 
 export async function createProject(tenantId: string, input: { name?: unknown; slug?: unknown }): Promise<ProjectRecord> {
   const name = checkName(input.name);
-  const projects = await tenancyStore().listProjects(tenantId);
-  const slug =
-    input.slug === undefined || input.slug === ''
-      ? await uniqueSlug(slugify(name, 'project'), (s) => RESERVED_PROJECT_SLUGS.includes(s) || projects.some((p) => p.slug === s))
-      : checkSlug(input.slug, projects);
-  const project: ProjectRecord = { tenant_id: tenantId, id: newProjectId(), slug, name, archived: false, created_at: Date.now() };
-  await save(project);
+  const store = tenancyStore();
+  const project: ProjectRecord = { tenant_id: tenantId, id: newProjectId(), slug: '', name, archived: false, created_at: Date.now() };
+  if (input.slug !== undefined && input.slug !== '') {
+    project.slug = checkSlug(input.slug, await store.listProjects(tenantId));
+    await save(project);
+    return project;
+  }
+  // Unique within the workspace: the oldest project holding a slug keeps it (see claimSlug).
+  const holders = async (slug: string) => (await store.listProjects(tenantId)).filter((p) => p.slug === slug);
+  project.slug = await claimSlug({
+    scope: `project:${tenantId}`,
+    base: slugify(name, 'project'),
+    taken: async (slug) => RESERVED_PROJECT_SLUGS.includes(slug) || (await holders(slug)).some((p) => p.id !== project.id),
+    write: (slug) => store.saveProject({ ...project, slug }),
+    won: async (slug) => (await holders(slug))[0]?.id === project.id,
+  });
+  forgetProjects(tenantId);
   return project;
 }
 

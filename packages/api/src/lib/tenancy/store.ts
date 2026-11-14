@@ -144,7 +144,7 @@ export const clickhouseTenancyStore: TenancyStore = {
   async findTenantBySlug(slug) {
     const rows = await crossTenantQuery<TenantRecord>(
       control(),
-      `SELECT ${TENANT_COLUMNS} FROM tenants FINAL WHERE slug = {slug:String} AND NOT deleted ORDER BY created_at LIMIT 1`,
+      `SELECT ${TENANT_COLUMNS} FROM tenants FINAL WHERE slug = {slug:String} AND NOT deleted ORDER BY created_at, id LIMIT 1`,
       { slug },
     );
     return rows[0] ?? null;
@@ -240,7 +240,7 @@ export function memoryTenancyStore(): TenancyStore {
       return t ? copy(t) : null;
     },
     async findTenantBySlug(slug) {
-      const t = [...tenants.values()].sort(byCreated).find((x) => x.slug === slug);
+      const t = [...tenants.values()].sort((a, b) => byCreated(a, b) || a.id.localeCompare(b.id)).find((x) => x.slug === slug);
       return t ? copy(t) : null;
     },
     async listTenants() {
@@ -253,7 +253,7 @@ export function memoryTenancyStore(): TenancyStore {
       tenants.delete(t.id);
     },
     async listProjects(tenant) {
-      return [...projects.values()].filter((p) => p.tenant_id === tenant).sort(byCreated).map(copy);
+      return [...projects.values()].filter((p) => p.tenant_id === tenant).sort((a, b) => byCreated(a, b) || a.id.localeCompare(b.id)).map(copy);
     },
     async saveProject(p) {
       projects.set(`${p.tenant_id}/${p.id}`, copy(p));

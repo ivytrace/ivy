@@ -71,9 +71,11 @@ personal workspace (they own it) on this call.
 ```
 
 ### `POST /api/workspaces`
-Body `{ "name": "Acme", "slug"?: "acme" }`. Creates the workspace with a `default` project; the caller becomes its
-owner. The slug defaults to one made from the name (with a suffix if taken). 201 with the workspace (as in the
-list). 400 invalid name/slug, 409 slug taken, 403 in single-workspace mode.
+Body `{ "name": "Acme" }`. Creates the workspace with a `default` project; the caller becomes its owner. The slug is
+generated from the name (lower case, accents folded, other characters → `-`, at most 40 characters, `workspace` if
+nothing is left) and made unique across workspaces by appending `-2`, `-3`, …; concurrent creates never get the same
+slug. An optional `"slug"` is used as given instead (409 if taken); the dashboard doesn't send it. 201 with the
+workspace (as in the list). 400 invalid name/slug, 403 in single-workspace mode.
 
 ### `GET /api/invitations/:token`
 What an invite link is for (needs a signed-in user):
@@ -97,7 +99,8 @@ An existing owner keeps the owner role.
 The workspace as in `GET /api/workspaces`, with the caller's role.
 
 ### `PATCH /api/w/:workspace` (owner)
-Body: any of `name`, `slug`. 409 if the slug is taken; the `default` workspace's slug can't change.
+Body: any of `name`, `slug`. Renaming doesn't change the slug, so URLs stay stable; changing the slug is a separate,
+explicit edit ("Change URL"). 409 if the slug is taken; the `default` workspace's slug can't change.
 
 ### `DELETE /api/w/:workspace?confirm=<slug>` (owner)
 `confirm` must repeat the slug (400 otherwise). 409 while AWS accounts are connected (disconnect them first) and
@@ -132,10 +135,13 @@ deleted; retention drops them. `{ "deleted": true }`.
 - `GET /api/w/:workspace/projects` (`?archived=1` includes archived) →
   `{ "items": [ { "id": "prj_…", "slug": "checkout-prod", "name": "Checkout (prod)", "archived": false, "default": false, "created_at": "…" } ] }`
   `default` marks the project every workspace starts with (it can be renamed but not archived).
-- `POST /api/w/:workspace/projects`, body `{ "name": "Checkout (prod)", "slug"?: "checkout-prod" }` → 201 with the
-  project. 409 if the slug exists in the workspace.
+- `POST /api/w/:workspace/projects`, body `{ "name": "Checkout (prod)" }` → 201 with the project. The slug is
+  generated from the name like workspace slugs (`checkout-prod`; fallback `project`), unique within the workspace
+  (`-2`, `-3`, … on collisions; `all` and `settings` are skipped). An optional `"slug"` is used as given instead (409 if
+  it exists in the workspace).
 - `GET /api/w/:workspace/p/:project` → the project.
-- `PATCH /api/w/:workspace/p/:project`, body: any of `name`, `slug`, `archived` (boolean) → the project. Archiving
+- `PATCH /api/w/:workspace/p/:project`, body: any of `name`, `slug`, `archived` (boolean) → the project. Renaming
+  doesn't change the slug. Archiving
   stops its keys from ingesting (401 at the router) and re-syncs AWS accounts so no function sends to it.
 
 ### Ingest keys of a project

@@ -60,7 +60,8 @@ describe('workspaces and projects', () => {
     const acme = await createTenant('Acme Inc.');
     const again = await createTenant('Acme Inc.');
     expect(acme.slug).toBe('acme-inc');
-    expect(again.slug).toMatch(/^acme-inc-[0-9a-z]{4}$/);
+    expect(again.slug).toBe('acme-inc-2');
+    expect((await createTenant('Acme Inc.')).slug).toBe('acme-inc-3');
     expect((await store.listProjects(acme.id))[0].id).toBe(defaultProjectId(acme.id));
   });
 

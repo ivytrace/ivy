@@ -6,7 +6,6 @@ import { notify } from '../hooks/run.js';
 import { authUser, type AuthUser } from '../auth/user.js';
 import type { Membership, WorkspaceAccess } from './context.js';
 import { DEFAULT_SHARD } from './shards.js';
-import { slugify, uniqueSlug } from './slugs.js';
 import { tenancyStore, type MemberRecord, type MemberRole, type TenantRecord } from './store.js';
 import { createTenant, DEFAULT_TENANT } from './tenants.js';
 
@@ -88,8 +87,7 @@ async function ensurePersonalWorkspace(user: AuthUser): Promise<void> {
       let created = null;
       if (!(await store.getTenant(id))) {
         const label = user.name || user.email?.split('@')[0] || 'personal';
-        const slug = await uniqueSlug(slugify(label), async (s) => s === DEFAULT_TENANT || !!(await store.findTenantBySlug(s)));
-        created = await createTenant(user.email || user.name || user.sub, DEFAULT_SHARD, id, slug);
+        created = await createTenant(user.email || user.name || user.sub, DEFAULT_SHARD, id, undefined, label);
       }
       await store.saveMember({ tenant_id: id, sub: user.sub, email: user.email ?? '', role: 'owner', created_at: Date.now() });
       forgetMemberships(user.sub);

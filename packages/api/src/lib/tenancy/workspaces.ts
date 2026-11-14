@@ -7,7 +7,7 @@ import { forgetProjects } from './projects.js';
 import { DEFAULT_SHARD } from './shards.js';
 import { isSlug } from './slugs.js';
 import { tenancyStore, type MemberRole, type TenantRecord } from './store.js';
-import { createTenant, DEFAULT_TENANT, freeWorkspaceSlug } from './tenants.js';
+import { createTenant, DEFAULT_TENANT } from './tenants.js';
 
 const bad = (message: string) => new HTTPException(400, { message });
 
@@ -28,7 +28,7 @@ async function checkSlug(slug: unknown, self?: string): Promise<string> {
 /** A new workspace (with its default project), owned by `user`. */
 export async function createWorkspace(user: AuthUser, input: { name?: unknown; slug?: unknown }): Promise<TenantRecord> {
   const name = checkName(input.name);
-  const slug = input.slug === undefined || input.slug === '' ? await freeWorkspaceSlug(name) : await checkSlug(input.slug);
+  const slug = input.slug === undefined || input.slug === '' ? undefined : await checkSlug(input.slug);
   const workspace = await createTenant(name, DEFAULT_SHARD, undefined, slug);
   await tenancyStore().saveMember({ tenant_id: workspace.id, sub: user.sub, email: user.email ?? '', role: 'owner', created_at: Date.now() });
   forgetMemberships(user.sub);

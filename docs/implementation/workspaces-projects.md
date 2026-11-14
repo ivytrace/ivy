@@ -14,7 +14,7 @@ User (OIDC subject) ──member of──▶ Workspace ──has──▶ Projec
 ```
 
 - **Workspace** = the existing *tenant* (`ivy_control.tenants`): ID `ten_…` (`default` for self-hosted), a `slug`
-  unique across workspaces (in URLs) and a `name`, both editable. It owns members, AWS connections and rules, and the
+  unique across workspaces (in URLs) and a `name`. It owns members, AWS connections and rules, and the
   shard holding its spans. Later also billing and quotas.
 - **Project** (`ivy_control.projects`): ID `prj_…`, `slug` unique within the workspace, `name`, `archived`. It owns
   ingest keys (and later alert rules and dashboards). **Every span, and so every function, belongs to exactly one
@@ -40,6 +40,19 @@ API and UI URLs line up, and agents can build URLs from two slugs. Both accept s
 survive renames. The project segment `all` in the UI means "all projects of this workspace" (the function overview and
 errors exist workspace-wide in the API; invocations and traces don't, they need a project), which is why `all` and
 `settings` are reserved project slugs.
+
+### Slugs are generated from names and hidden; URLs stay stable when renaming
+
+Creating a workspace or project takes a name only. The slug comes from the name (`slugify`: lower case, accents
+folded to ASCII, other characters → `-`, dashes collapsed and trimmed, at most 40 characters, `workspace`/`project`
+when nothing is left). Collisions get `-2`, `-3`, … (workspace slugs are unique globally, project slugs within their
+workspace). Renaming changes only the name; the slug, and so every URL, stays. Settings show the URL read-only with a
+"Change URL" action under Advanced.
+
+ClickHouse has no unique constraints, so `claimSlug` (`lib/tenancy/slugs.ts`) makes allocation safe: claims of one
+scope run one at a time in a process, and after writing, a record checks that it is the oldest holder of its slug
+(`created_at`, then ID); if another process wrote the same slug first, the newer record takes the next candidate. A
+test runs two claims as separate "processes" and checks they end up with `acme` and `acme-2`.
 
 ### Membership is checked on every request, and non-members get 404
 
@@ -154,8 +167,9 @@ The app's own paths that CloudFront must send to the app (in addition to those i
 
 ## Gaps
 
-- Slug uniqueness is checked before writing (ClickHouse has no unique constraints): two workspaces created with the
-  same slug in the same instant could both get it; lookups then use the older one.
+- An explicitly chosen slug ("Change URL", or `slug` in a create body) is checked before writing but not re-verified
+  afterwards, so two such edits to the same slug at the same instant could both succeed; lookups then use the older
+  holder.
 - Memberships are cached for 5 s per API process, so a removed member keeps access for up to 5 s (another process
   doesn't see in-process invalidation).
 - Notification hooks are at-most-once; there is no outbox.
