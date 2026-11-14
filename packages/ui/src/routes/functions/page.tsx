@@ -6,7 +6,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/common/states
 import { Sparkline, TimeseriesChart } from "@/components/stats/timeseries-chart";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { useTimeRange } from "@/components/layout/time-range";
-import { useFunctions, useTimeseries } from "@/lib/api/hooks";
+import { sparklineBucket, useFunctions, useTimeseries } from "@/lib/api/hooks";
 import type { FunctionSummary } from "@/lib/api/types";
 import { invocationsLink } from "@/lib/links/links";
 import { formatAgo, formatDuration, formatNumber, formatPercent } from "@/lib/utils/format";
@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils/cn";
 
 function FunctionSparkline({ name, metric }: { name: string; metric: "invocations" | "errors" }) {
   const { range } = useTimeRange();
-  const { data } = useTimeseries(range, { function: name });
+  const { data } = useTimeseries(range, { function: name, bucket: sparklineBucket(range) });
   return (
     <Sparkline
       points={data?.items}

@@ -68,7 +68,7 @@ Query: `function`.
 ```
 
 ## `GET /api/stats/timeseries`
-Query: `function` (optional), `bucket` (`1m`|`5m`|`1h`|`1d`, default picked from range).
+Query: `function` (optional), `bucket` (`1m`|`5m`|`15m`|`1h`|`1d`, default picked from range to keep about 100 points or fewer).
 ```json
 { "items": [ { "ts": "…", "invocations": 10, "errors": 1, "p95_ms": 300.1 } ] }
 ```

@@ -81,7 +81,7 @@ export function TimeseriesChart({
                 />
               }
             />
-            <Bar dataKey={metric} fill={color} radius={3} />
+            <Bar dataKey={metric} fill={color} radius={3} isAnimationActive={false} />
           </BarChart>
         </ChartContainer>
       )}
@@ -116,7 +116,7 @@ export function Sparkline({
                 />
               }
             />
-            <Bar dataKey={metric} fill={color} radius={2} />
+            <Bar dataKey={metric} fill={color} radius={2} isAnimationActive={false} />
           </BarChart>
         </ChartContainer>
       )}

@@ -6,6 +6,7 @@ import type {
   FunctionSummary,
   InvocationsResponse,
   ListResponse,
+  Since,
   TimeRange,
   TimeseriesPoint,
   Trace,
@@ -23,6 +24,15 @@ export const useConfig = () => useApi<Config>(buildUrl("/config"), { revalidateI
 
 export const useFunctions = (range: TimeRange) =>
   useApi<ListResponse<FunctionSummary>>(buildUrl("/functions", rangeParams(range)));
+
+const SINCE_MS: Record<Since, number> = { "15m": 15 * 60_000, "1h": 3_600_000, "24h": 86_400_000, "7d": 7 * 86_400_000 };
+
+export function sparklineBucket(range: TimeRange): string {
+  const span = "since" in range ? SINCE_MS[range.since] : Date.parse(range.to) - Date.parse(range.from);
+  if (span <= 2 * 3_600_000) return "5m";
+  if (span <= 2 * 86_400_000) return "1h";
+  return "1d";
+}
 
 export const useTimeseries = (range: TimeRange, params: { function?: string; bucket?: string } = {}) =>
   useApi<ListResponse<TimeseriesPoint>>(

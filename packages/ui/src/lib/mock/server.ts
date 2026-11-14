@@ -114,6 +114,7 @@ function errors(params: URLSearchParams): ErrorGroup[] {
 const BUCKET_MS: Record<string, number> = {
   "1m": 60_000,
   "5m": 300_000,
+  "15m": 900_000,
   "1h": 3600_000,
   "1d": 86_400_000,
 };
