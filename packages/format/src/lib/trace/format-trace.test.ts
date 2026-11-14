@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkoutFailed, checkoutOk, initFailed, oomCrashed, plainOtel, queueFailed, supportBot, supportBotGenAi } from "../fixtures/traces.js";
+import { checkoutFailed, checkoutOk, importWorker, initFailed, oomCrashed, plainOtel, queueFailed, supportBot, supportBotGenAi } from "../fixtures/traces.js";
 import { estimateTokens } from "../text/text.js";
 import { formatTrace } from "./format-trace.js";
 
@@ -90,5 +90,16 @@ describe("formatTrace", () => {
     for (const line of text.split("\n").filter((l) => /\b(req|res): /.test(l))) {
       expect(line.replace(/^.*?(req|res): /, "").length).toBeLessThanOrEqual(40 + 20);
     }
+  });
+
+  it("renders summary spans of collapsed calls and the spans omitted at the limit", () => {
+    const text = formatTrace(importWorker, { maxTokens: 0 });
+    expect(text).toMatchSnapshot();
+    expect(text).toContain("37 spans omitted (span limit) · 1,496 similar calls collapsed into summary spans");
+    expect(text).toContain(
+      "DynamoDB.PutItem orders × 1,184 (first→last 9060ms, total 6130ms, avg 5.2ms, min 2.1ms, max 29.8ms, 1 error, 9 kept)",
+    );
+    expect(text).toContain("GET api.example.com/products/{sku} × 312 (");
+    expect(text).toContain("DynamoDB.PutItem orders → 400  ERROR");
   });
 });

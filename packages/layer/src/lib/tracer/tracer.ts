@@ -1,9 +1,12 @@
 import type { Config } from '../config/config.js';
+import { chunkSpans } from '../export/chunks.js';
 import { encodeSpan, toKeyValues, type OtlpKeyValue, type OtlpSpan } from '../export/otlp.js';
 import { detectTrigger, httpStatusFromResult, type Trigger } from '../triggers/detect.js';
 import { capString, createKeyMatcher, serialize, serializeBody, type KeyMatcher } from '../utils/redact.js';
 import { newTraceId } from '../utils/ids.js';
 import { anchorClock, now } from './clock.js';
+import { SpanReducer } from './collapse.js';
+import { byteLength, isPayloadKey, PayloadBudget } from './payload-budget.js';
 import { createSpan, recordError, SpanKind, StatusCode, type Attributes, type Span, type SpanKindValue } from './span.js';
 
 export interface LambdaContext {
@@ -29,12 +32,11 @@ export interface Invocation {
   trigger: Trigger;
   event: unknown;
   logCount: number;
-  droppedChildren: number;
+  reducer: SpanReducer;
   done: boolean;
   timer?: NodeJS.Timeout;
 }
 
-const MAX_CHILD_SPANS = 1000;
 const MAX_LOG_EVENTS = 500;
 const MAX_LOG_BYTES = 4 * 1024;
 
@@ -74,7 +76,12 @@ export class Tracer {
     this.coldStart = false;
     if (!this.resource) this.resource = this.buildResource(context);
 
-    const inv: Invocation = { requestId, root, children: [], trigger, event, logCount: 0, droppedChildren: 0, done: false };
+    const c = this.config;
+    const reducer = new SpanReducer(
+      { threshold: c.collapseThreshold, keepFirst: c.collapseKeep, keepSlowest: c.collapseKeepSlowest, maxSpans: c.maxSpans },
+      root.spanId,
+    );
+    const inv: Invocation = { requestId, root, children: [], trigger, event, logCount: 0, reducer, done: false };
     this.active = inv;
 
     const remaining = context.getRemainingTimeInMillis?.();
@@ -88,9 +95,12 @@ export class Tracer {
   startChild(name: string, kind: SpanKindValue = SpanKind.CLIENT): Span | undefined {
     const inv = this.active;
     if (!inv || inv.done) return undefined;
-    if (inv.children.length >= MAX_CHILD_SPANS) {
-      inv.droppedChildren++;
-      return undefined;
+    if (inv.children.length >= inv.reducer.softLimit) {
+      inv.children = inv.reducer.reduce(inv.children, false);
+      if (inv.children.length >= inv.reducer.softLimit) {
+        inv.reducer.drop(1, 'span limit');
+        return undefined;
+      }
     }
     const span = createSpan(inv.root.traceId, name, kind, now(), inv.root.spanId);
     inv.children.push(span);
@@ -153,50 +163,95 @@ export class Tracer {
     }
   }
 
-  /** Serializes payloads and hands the invocation's spans to the sink. Runs after the response is sent. */
+  /**
+   * Collapses repetitive calls, applies the span limit and the payload budget, and hands the spans to
+   * the sink: the invocation span alone first, then the children in chunks. Runs after the response.
+   */
   flush(inv: Invocation, final: boolean, rootOverride?: Span): void {
     try {
       const root = rootOverride ?? inv.root;
       const end = root.endMs ?? now();
-      const spans: OtlpSpan[] = [];
-      for (const child of inv.children) {
+      const reducer = inv.reducer;
+      inv.children = reducer.reduce(inv.children, final);
+      if (final) reducer.finishSummaries(inv.children);
+      const children = inv.children.map((child) => {
         const span = final ? child : { ...child, attributes: { ...child.attributes } };
         if (span.endMs === undefined) {
           span.endMs = end;
           span.attributes['ivy.incomplete'] = true;
         }
-        spans.push(this.encode(span));
+        return span;
+      });
+      if (reducer.collapsedCalls) root.attributes['ivy.collapsed_calls'] = reducer.collapsedCalls;
+      if (reducer.dropped) {
+        root.attributes['ivy.dropped_spans'] = reducer.dropped;
+        root.attributes['ivy.dropped_spans.reason'] = [...reducer.dropReasons].join(', ');
       }
-      if (inv.droppedChildren) root.attributes['ivy.dropped_child_spans'] = inv.droppedChildren;
       if (inv.logCount > MAX_LOG_EVENTS) root.attributes['ivy.dropped_logs'] = inv.logCount - MAX_LOG_EVENTS;
-      spans.unshift(this.encode(root));
-      this.sink({ requestId: inv.requestId, final, resource: this.resource ?? [], spans });
+
+      const budget = new PayloadBudget(this.config.maxInvocationPayloadBytes);
+      this.applyPayloads(root, budget);
+      const encoded = new Map<Span, OtlpSpan>();
+      for (const span of payloadOrder(children)) {
+        this.applyPayloads(span, budget);
+        encoded.set(span, encodeSpan(span));
+      }
+      if (budget.trimmedPayloads) {
+        root.attributes['ivy.trimmed_payload_bytes'] = budget.trimmedBytes;
+        root.attributes['ivy.trimmed_payloads'] = budget.trimmedPayloads;
+      }
+
+      const resource = this.resource ?? [];
+      const chunks = chunkSpans(
+        children.map((s) => encoded.get(s)!),
+        { spans: this.config.exportChunkSpans, bytes: this.config.exportChunkBytes },
+      );
+      this.sink({ requestId: inv.requestId, final: final && !chunks.length, resource, spans: [encodeSpan(root)] });
+      chunks.forEach((spans, i) => this.sink({ requestId: inv.requestId, final: final && i === chunks.length - 1, resource, spans }));
     } catch (e) {
       this.log(`flush failed: ${(e as Error).message}`);
     }
   }
 
-  private encode(span: Span): OtlpSpan {
+  /** Runs the span's finalize hook and turns its payloads into attributes while the budget lasts. */
+  private applyPayloads(span: Span, budget: PayloadBudget): void {
     try {
       span.finalize?.(span);
     } catch {
       // attribute derivation is best effort
     }
+    span.finalize = undefined;
+    let trimmed = false;
+    for (const key in span.attributes) {
+      const v = span.attributes[key];
+      if (typeof v === 'string' && isPayloadKey(key) && !budget.take(byteLength(v))) {
+        delete span.attributes[key];
+        trimmed = true;
+      }
+    }
     let truncated = false;
     for (const p of span.payloads) {
+      if (budget.remaining <= 0) {
+        budget.take(typeof p.value === 'string' ? Math.min(byteLength(p.value), this.config.maxPayloadBytes) : 1);
+        trimmed = true;
+        continue;
+      }
       try {
         const capped =
           p.rawContentType !== undefined && typeof p.value === 'string'
             ? serializeBody(p.value, p.rawContentType, this.config.maxPayloadBytes, this.isSecret)
             : serialize(p.value, this.config.maxPayloadBytes, this.isSecret);
-        if (capped.text) span.attributes[p.key] = capped.text;
+        if (!capped.text) continue;
+        if (budget.take(byteLength(capped.text))) span.attributes[p.key] = capped.text;
+        else trimmed = true;
         truncated ||= capped.truncated;
       } catch {
         // skip unserializable payloads
       }
     }
+    span.payloads = [];
     if (truncated) span.attributes['ivy.payload.truncated'] = true;
-    return encodeSpan(span);
+    if (trimmed) span.attributes['ivy.payload.trimmed'] = true;
   }
 
   private buildResource(context: LambdaContext): OtlpKeyValue[] {
@@ -222,4 +277,18 @@ export class Tracer {
     if (env.AWS_LAMBDA_LOG_STREAM_NAME) attrs['faas.instance'] = env.AWS_LAMBDA_LOG_STREAM_NAME;
     return toKeyValues(attrs);
   }
+}
+
+/**
+ * The order spans get the payload budget in: failing spans first, then the slowest tenth (at least
+ * five), then the rest by start time.
+ */
+export function payloadOrder(spans: Span[]): Span[] {
+  const isError = (s: Span) => s.status.code === StatusCode.ERROR;
+  const errors = spans.filter(isError);
+  const rest = spans.filter((s) => !isError(s));
+  const dur = (s: Span) => (s.endMs ?? s.startMs) - s.startMs;
+  const slowCount = Math.max(5, Math.ceil(rest.length / 10));
+  const slowest = new Set([...rest].sort((a, b) => dur(b) - dur(a)).slice(0, slowCount));
+  return [...errors, ...rest.filter((s) => slowest.has(s)), ...rest.filter((s) => !slowest.has(s)).sort((a, b) => a.startMs - b.startMs)];
 }

@@ -13,8 +13,17 @@ export interface Config {
   timeoutMarginMs: number;
   exportTimeoutMs: number;
   flushBudgetMs: number;
+  flushBudgetPerChunkMs: number;
+  flushBudgetMaxMs: number;
+  exportChunkSpans: number;
+  exportChunkBytes: number;
   maxQueueSpans: number;
   captureLogs: boolean;
+  maxSpans: number;
+  maxInvocationPayloadBytes: number;
+  collapseThreshold: number;
+  collapseKeep: number;
+  collapseKeepSlowest: number;
 }
 
 function int(value: string | undefined, fallback: number): number {
@@ -50,7 +59,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     timeoutMarginMs: int(env.IVY_TIMEOUT_MARGIN_MS, 100),
     exportTimeoutMs: int(env.IVY_EXPORT_TIMEOUT_MS, 1000),
     flushBudgetMs: int(env.IVY_FLUSH_BUDGET_MS, 2000),
+    flushBudgetPerChunkMs: int(env.IVY_FLUSH_BUDGET_PER_CHUNK_MS, 500),
+    flushBudgetMaxMs: int(env.IVY_FLUSH_BUDGET_MAX_MS, 5000),
+    exportChunkSpans: Math.max(1, int(env.IVY_EXPORT_CHUNK_SPANS, 500)),
+    exportChunkBytes: Math.max(16 * 1024, int(env.IVY_EXPORT_CHUNK_BYTES, 1024 * 1024)),
     maxQueueSpans: int(env.IVY_MAX_QUEUE_SPANS, 2000),
     captureLogs: bool(env.IVY_CAPTURE_LOGS, true),
+    maxSpans: Math.max(10, int(env.IVY_MAX_SPANS, 2000)),
+    maxInvocationPayloadBytes: int(env.IVY_MAX_INVOCATION_PAYLOAD_BYTES, 1024 * 1024),
+    collapseThreshold: int(env.IVY_COLLAPSE_THRESHOLD, 50),
+    collapseKeep: int(env.IVY_COLLAPSE_KEEP, 10),
+    collapseKeepSlowest: int(env.IVY_COLLAPSE_KEEP_SLOWEST, 3),
   };
 }

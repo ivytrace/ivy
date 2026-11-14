@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./fixtures": "./src/lib/fixtures/traces.ts",
-    "./ai-fixtures": "./src/lib/fixtures/ai-traces.ts"
+    "./ai-fixtures": "./src/lib/fixtures/ai-traces.ts",
+    "./import-fixtures": "./src/lib/fixtures/import-spans.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -36,4 +36,13 @@ describe("buildServiceGraph", () => {
       ["fn:worker->aws|dynamodb|GetItem|t|", "trigger:aws:sqs->fn:worker"].sort(),
     );
   });
+
+  it("counts the calls of a summary span", () => {
+    const { nodes } = buildServiceGraph([
+      span("root", "", { "ivy.invocation": "true", "ivy.trigger.source": "aws:sqs" }, "worker"),
+      span("a", "root", ddb),
+      span("s", "root", { ...ddb, "ivy.collapsed.count": "1184" }, "DynamoDB.GetItem × 1,184"),
+    ]);
+    expect(nodes.find((n) => n.icon === "dynamodb")?.instances).toBe(1185);
+  });
 });

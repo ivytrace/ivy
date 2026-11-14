@@ -1,6 +1,7 @@
 import type { FailureKind } from "@ivy/spans";
 import type { Invocation, Span, SpanEvent } from "../api/types.ts";
 import { RATE_LIMIT, SUPPORT_TIMELINE_MS, supportEvent, supportResponse, supportSpans, type AiSpanSpec } from "./ai.ts";
+import { IMPORT_FUNCTION, IMPORT_TIMELINE_MS, IMPORT_TRACE_ID, importLogs, importRootAttributes, importSpans } from "./import.ts";
 
 const SUPPORT_FUNCTION = "support-answerTicket";
 
@@ -80,6 +81,15 @@ export const FUNCTIONS: FunctionDef[] = [
     http: { method: "POST", path: "/support/messages", route: "/support/messages" },
     weight: 2,
     errorRate: 0.06,
+  },
+  // Not picked at random: importInvocations() runs it every three hours.
+  {
+    name: IMPORT_FUNCTION,
+    region: "eu-west-1",
+    trigger: "aws:s3",
+    kind: "CONSUMER",
+    weight: 0,
+    errorRate: 0,
   },
 ];
 
@@ -184,7 +194,42 @@ function errorFor(fn: FunctionDef, r: () => number): MockError {
   }
 }
 
-export const INVOCATIONS = buildInvocations();
+/** The import worker, every three hours; the most recent one has a fixed trace ID (`IMPORT_TRACE_ID`). */
+function importInvocations(): MockInvocation[] {
+  const rand = rng(7);
+  const out: MockInvocation[] = [];
+  for (let t = NOW - 4 * 60_000; t > NOW - WEEK; t -= 3 * 3600_000) {
+    const seed = Math.floor(rand() * 2 ** 31);
+    const r = rng(seed);
+    out.push({
+      seed,
+      trace_id: out.length ? Math.floor(t / 1000).toString(16).padStart(8, "0") + hex(r, 24) : IMPORT_TRACE_ID,
+      span_id: hex(r, 16),
+      ts: iso(t),
+      function: IMPORT_FUNCTION,
+      region: "eu-west-1",
+      status: "ok",
+      duration_ms: Math.round(IMPORT_TIMELINE_MS * (0.92 + r() * 0.16) * 10) / 10,
+      cold_start: false,
+      request_id: `${hex(r, 8)}-${hex(r, 4)}-4${hex(r, 3)}-a${hex(r, 3)}-${hex(r, 12)}`,
+      trigger: "aws:s3",
+      http_method: null,
+      http_path: null,
+      http_status: null,
+      error_type: null,
+      error_message: null,
+      memory_used_mb: Math.round(170 + r() * 30),
+      memory_limit_mb: MEMORY_MB,
+      failure_phase: null,
+      failure_kind: null,
+      synthetic: false,
+      init_duration_ms: null,
+    });
+  }
+  return out;
+}
+
+export const INVOCATIONS = [...buildInvocations(), ...importInvocations()].sort((a, b) => b.ts.localeCompare(a.ts));
 
 interface SpanSpec {
   name: string;
@@ -716,7 +761,13 @@ export function buildTrace(inv: MockInvocation): Span[] {
   const failed = inv.status === "error";
   const kind = inv.failure_kind;
   if (kind === "init_failed") return [initFailureSpan(inv, resource, startMs)];
-  const events: SpanEvent[] = kind ? failureLogTail(inv, startMs) : logsFor(inv, startMs);
+  const isImport = fn.name === IMPORT_FUNCTION;
+  const importScale = inv.duration_ms / IMPORT_TIMELINE_MS;
+  const events: SpanEvent[] = isImport
+    ? importLogs.map((e) => ({ ts: iso(startMs + e.offset * importScale), name: e.name, attributes: e.attributes }))
+    : kind
+      ? failureLogTail(inv, startMs)
+      : logsFor(inv, startMs);
   if (failed && !kind) {
     events.push({
       ts: iso(startMs + inv.duration_ms - 1),
@@ -744,7 +795,7 @@ export function buildTrace(inv: MockInvocation): Span[] {
       "ivy.invocation": "true",
       "faas.invocation_id": inv.request_id,
       "faas.coldstart": String(inv.cold_start),
-      "faas.trigger": fn.http ? "http" : fn.trigger === "aws:sqs" ? "pubsub" : "timer",
+      "faas.trigger": fn.http ? "http" : fn.trigger === "aws:sqs" ? "pubsub" : fn.trigger === "aws:s3" ? "datasource" : "timer",
       "ivy.trigger.source": inv.trigger,
       "cloud.resource_id": `arn:aws:lambda:${inv.region}:123456789012:function:${inv.function}`,
       ...(fn.http
@@ -765,15 +816,14 @@ export function buildTrace(inv: MockInvocation): Span[] {
       ...(failed ? { "error.type": inv.error_type ?? "Error" } : {}),
       ...(kind ? { "ivy.failure.phase": "invoke", "ivy.platform.status": kind === "timed_out" ? "timeout" : "error" } : {}),
       ...reportAttributes(inv),
+      ...(isImport ? importRootAttributes : {}),
     },
     resource,
     events,
   };
 
   const spans: Span[] = [root];
-  if (fn.name === SUPPORT_FUNCTION) {
-    const scale = inv.duration_ms / supportTimeline(failed);
-    const ttft = Math.round((240 + r() * 260) * 10) / 10;
+  const addScaled = (specs: AiSpanSpec[], scale: number) => {
     const add = (spec: AiSpanSpec, parent: string) => {
       const id = hex(r, 16);
       const s = startMs + spec.offset * scale;
@@ -795,8 +845,13 @@ export function buildTrace(inv: MockInvocation): Span[] {
       });
       for (const child of spec.children ?? []) add(child, id);
     };
-    for (const spec of supportSpans(failed, ttft)) add(spec, inv.span_id);
+    for (const spec of specs) add(spec, inv.span_id);
     return spans.sort((a, b) => a.start.localeCompare(b.start));
+  };
+  if (isImport) return addScaled(importSpans, importScale);
+  if (fn.name === SUPPORT_FUNCTION) {
+    const ttft = Math.round((240 + r() * 260) * 10) / 10;
+    return addScaled(supportSpans(failed, ttft), inv.duration_ms / supportTimeline(failed));
   }
   const scale = inv.duration_ms / 300;
   // A crash or timeout leaves only the calls made before it (the tracer's provisional snapshot).

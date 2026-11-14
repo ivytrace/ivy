@@ -46,7 +46,7 @@ export function buildServiceGraph(spans: Span[]): { nodes: GraphNode[]; edges: G
     const node = nodes.get(id);
     if (node) {
       node.spanIds.push(span.span_id);
-      node.instances += 1;
+      node.instances += d.collapsed?.count ?? 1;
       node.isError ||= d.isError;
     } else {
       nodes.set(id, {
@@ -54,7 +54,7 @@ export function buildServiceGraph(spans: Span[]): { nodes: GraphNode[]; edges: G
         label: d.graphLabel,
         icon: d.isInvocation ? "lambda" : d.icon,
         spanIds: [span.span_id],
-        instances: 1,
+        instances: d.collapsed?.count ?? 1,
         isTrigger: false,
         isError: d.isError,
       });

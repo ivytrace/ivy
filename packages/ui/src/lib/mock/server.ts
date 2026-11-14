@@ -29,6 +29,7 @@ const SINCE_MS: Record<string, number> = {
 export const PROJECT_OF: Record<string, string> = {
   "checkout-createOrder": "checkout-prod",
   "orders-processQueue": "checkout-prod",
+  "checkout-importOrders": "checkout-prod",
   "auth-getProfile": "billing-api-prod",
   "reports-nightlyExport": "billing-api-staging",
   "support-answerTicket": "support-api-prod",

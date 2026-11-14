@@ -49,6 +49,15 @@ trace 6af84d409a1b… · request 8f1c2d3e-… · eu-west-1 · 2026-11-14T12:00:0
   `payloadChars`. Redaction happens in the layer before storage; trimming never touches keys or `[redacted]`
   values. Payloads cut by the layer are marked `[cut at source, N bytes dropped]`.
 - Three or more consecutive identical successful leaf calls fold into one line: `DynamoDB.GetItem orders ×8 (each 6.2ms–11.1ms)`.
+- Summary spans (runs of similar calls the layer collapsed, `ivy.collapsed.*`, see `span-conventions.md`) get the
+  count and their stats; the duration column is first start to last end. The failing calls and the other kept ones
+  are their own lines, and summary spans never fold with them:
+  `DynamoDB.PutItem orders × 1,184 (first→last 9060ms, total 6130ms, avg 5.2ms, min 2.1ms, max 29.8ms, 1 error, 9 kept)`.
+- When the invocation span has `ivy.dropped_spans`, the header gets a third line, e.g.
+  `37 spans omitted (span limit) · 1,496 similar calls collapsed into summary spans (× lines)` (from
+  `ivy.collapsed_calls`). It is always kept when fitting the token budget. The helpers are `collapsedInfo`,
+  `droppedSpans`, `droppedSpansLabel` and `collapsedCalls` in `@ivy/spans`; the service graph counts a summary span as
+  its number of calls and its total time.
 - `detail`: `summary` (no payloads, only warn/error logs, 2 frames), `normal` (default; payloads of the
   invocation, of failed calls and of 4xx/5xx calls; all logs; 4 frames), `full` (every payload plus HTTP headers,
   10 frames, no folding).
@@ -185,7 +194,8 @@ Includable Auth supports all of this (includable/auth#5):
 - **Views.** `packages/ui/src/mcp-apps/` renders the dashboard's own components: `Waterfall`, `SpanDetails`,
   `Logs`, `ErrorBlock`, `TraceGraph` (React Flow + dagre), `ServiceIcon`, the status badges. The waterfall view has
   Timeline and Logs tabs; failed calls start expanded; expanding a span shows its payloads, error, attributes
-  and its own logs. The graph view shows the trigger, functions and services; clicking a node lists its spans,
+  and its own logs. Summary spans of collapsed calls and the "N spans omitted" note look as on the dashboard
+  (`CollapsedBadge`, `OmittedSpansNote`; see `ui.md`). The graph view shows the trigger, functions and services; clicking a node lists its spans,
   each expandable to its details. Both show the workspace, function, status, duration, cold start and the
   invocation's error above, offer fullscreen when the host allows it (`requestDisplayMode`), resize to their
   content (auto-resize), and apply the host's safe-area insets.

@@ -3,6 +3,7 @@
 //   *    /echo            echoes the request as JSON
 //   POST /dynamodb        fake DynamoDB endpoint (200, returns an item)
 //   POST /dynamodb-fail   fake DynamoDB endpoint (400 ResourceNotFoundException)
+//   POST /llm/v1/chat/completions  fake model endpoint (16 KB answer, 1200 → 80 tokens)
 import http from 'node:http';
 import { gunzipSync } from 'node:zlib';
 
@@ -32,6 +33,10 @@ export function startCaptureServer({ port = 4399, apiKey } = {}) {
       } else if (url.pathname.replace(/\/$/, '') === '/dynamodb') {
         res.writeHead(200, { 'content-type': 'application/x-amz-json-1.0', 'x-amzn-requestid': 'FAKE-REQ-1' });
         res.end(JSON.stringify({ Item: { id: { S: '42' }, name: { S: 'Ada' }, token: { S: 'should-be-redacted' } } }));
+      } else if (url.pathname === '/llm/v1/chat/completions') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        const content = 'Category: furniture. '.repeat(780).slice(0, 16_000);
+        res.end(JSON.stringify({ id: 'chatcmpl-fake', model: 'gpt-4o-mini', choices: [{ message: { role: 'assistant', content } }], usage: { prompt_tokens: 1200, completion_tokens: 80 } }));
       } else if (url.pathname.replace(/\/$/, '') === '/dynamodb-fail') {
         res.writeHead(400, { 'content-type': 'application/x-amz-json-1.0', 'x-amzn-requestid': 'FAKE-REQ-2' });
         res.end(JSON.stringify({ __type: 'com.amazonaws.dynamodb.v20120810#ResourceNotFoundException', message: 'Requested resource not found' }));

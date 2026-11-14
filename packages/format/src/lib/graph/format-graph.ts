@@ -1,4 +1,4 @@
-import { buildServiceGraph, describeSpan, type GraphNode, type Trace } from "@ivy/spans";
+import { buildServiceGraph, collapsedInfo, describeSpan, type GraphNode, type Trace } from "@ivy/spans";
 import { ms } from "../text/text.js";
 import { rootInvocation } from "../trace/tree.js";
 
@@ -33,7 +33,8 @@ export function formatServiceGraph(trace: Trace): string {
     const ids = new Set(n.spanIds);
     return n.spanIds.reduce((sum, id) => {
       const span = spans.get(id);
-      return span && !ids.has(span.parent_span_id) ? sum + span.duration_ms : sum;
+      if (!span || ids.has(span.parent_span_id)) return sum;
+      return sum + (collapsedInfo(span)?.totalMs ?? span.duration_ms);
     }, 0);
   };
 

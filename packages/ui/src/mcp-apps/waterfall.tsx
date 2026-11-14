@@ -2,11 +2,12 @@ import { StrictMode, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import { Logs } from "@/components/trace/logs";
+import { OmittedSpansNote } from "@/components/trace/omitted-note";
 import { SpanDetails } from "@/components/trace/span-details";
 import { Waterfall } from "@/components/trace/waterfall";
 import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getLogs, isInvocationSpan } from "@/lib/spans/services";
-import { buildWaterfall } from "@/lib/spans/tree";
+import { buildWaterfall, findRootInvocation } from "@/lib/spans/tree";
 import type { Span } from "@/lib/spans/types";
 import { ViewShell, type ViewData } from "./shell";
 import "./view.css";
@@ -19,6 +20,7 @@ function TraceWaterfall({ data }: { data: ViewData }) {
   const spans = data.trace.spans;
   const { rows, totalMs } = useMemo(() => buildWaterfall(spans), [spans]);
   const logs = useMemo(() => getLogs(spans), [spans]);
+  const invocation = findRootInvocation(spans);
   const [openIds, setOpenIds] = useState(() => initiallyOpen(spans));
 
   const toggle = (id: string) =>
@@ -55,6 +57,7 @@ function TraceWaterfall({ data }: { data: ViewData }) {
         </TabsTrigger>
       </TabsList>
       <TabsContent value="timeline">
+        {invocation && <OmittedSpansNote invocation={invocation} className="mb-3" />}
         <Waterfall rows={rows} totalMs={totalMs} openIds={openIds} onToggle={toggle} details={details} />
       </TabsContent>
       <TabsContent value="logs">

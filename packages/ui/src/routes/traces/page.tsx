@@ -7,6 +7,7 @@ import { ColdStart, InvocationStatus, MemoryUsage } from "@/components/common/st
 import { PayloadPreview } from "@/components/stats/payload-preview";
 import { ErrorBlock } from "@/components/trace/error-block";
 import { FailureNote } from "@/components/trace/failure-note";
+import { OmittedSpansNote } from "@/components/trace/omitted-note";
 import { Logs } from "@/components/trace/logs";
 import { SpanFields } from "@/components/trace/span-details";
 import { TraceGraph } from "@/components/trace/trace-graph";
@@ -248,6 +249,7 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
               <Overview invocation={invocation} usage={usage} />
             </TabsContent>
             <TabsContent value="timeline">
+              <OmittedSpansNote invocation={invocation} className="mb-3" />
               <Waterfall rows={rows} totalMs={totalMs} openIds={openIds} onToggle={toggle} />
             </TabsContent>
             <TabsContent value="logs">

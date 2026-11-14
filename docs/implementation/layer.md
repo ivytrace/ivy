@@ -37,8 +37,21 @@ calls only exist there). Exporting is done by the extension:
   first `INVOKE`; when `AWS_LAMBDA_EXEC_WRAPPER` points at `ivy-wrapper` the extension expects a
   tracer and waits up to 500 ms for its hello at the first `INVOKE` (in parallel with the
   handler, so it delays nothing in practice). Without the wrapper the extension never blocks.
-- If the hello fails (extension missing), the tracer falls back to exporting directly with the
-  same queue, fire-and-forget after the response.
+- **Startup order.** The extension binds its intake on 127.0.0.1 *before* it calls `register`.
+  Lambda starts the runtime's init as soon as every extension has registered, so binding afterwards
+  let a fast tracer's hello reach a closed port. That race hit real cold starts: the tracer then
+  switched to exporting directly from the runtime, which Lambda freezes right after the response, so
+  nothing was delivered, and the extension, without a hello, did not wait for spans either. Binding
+  first costs nothing measurable.
+- **When the hello fails anyway.** If the exec wrapper is active and `/opt/extensions/ivy-extension`
+  exists, the tracer never switches to direct export: it repeats the hello once at the start of the
+  first invocation and always hands spans to the intake, retrying the connection briefly (50/150/300 ms).
+  A batch that still cannot be delivered is reported with one `[ivy]` line, even without `IVY_DEBUG`.
+  On the extension side a `/spans` batch counts as a hello, and with the wrapper configured and the
+  Telemetry API available it waits for each invocation's spans even when no hello came (the wait ends
+  when the platform reports the runtime done). Direct export is only used without the extension.
+  The e2e case `late-intake` opens the intake 400 ms after registering (test-only
+  `IVY_TEST_INTAKE_DELAY_MS`) and checks that spans still go through the extension.
 
 Why an external extension rather than only in-process flushing: an in-process flush racing the
 freeze would either delay the response or be frozen mid-request, and only external extensions
@@ -106,16 +119,39 @@ protocol and behaviour as before, so the tracer did not change beyond the non-bl
 - OTLP/HTTP JSON to `<IVY_ENDPOINT>/v1/traces`, `Authorization: Bearer <IVY_API_KEY>`, gzip for
   bodies over 1 KB, keep-alive connections. The extension does this in Rust; the tracer's direct
   fallback (`src/lib/export/*`) implements the same rules in TypeScript.
-- Per flush: up to 3 attempts (timeout `IVY_EXPORT_TIMEOUT_MS`, backoff 100/300 ms) within
-  `IVY_FLUSH_BUDGET_MS` (2 s). Retries on network errors, 408, 429, 5xx, except that a 429 or 503 with
-  `Retry-After` (e.g. a workspace over its monthly trace quota, `limits.md`) ends the flush at once: the batch is
-  dropped and counted, and nothing is sent until the delay has passed (capped at 1 hour), not even the forced flush
-  on `SHUTDOWN`.
-- When a flush fails the batch is dropped and counted, and the queue backs off (5 s doubling to
-  5 min) so a dead endpoint costs one bounded attempt instead of one per invocation. Spans that
-  arrive during backoff are buffered up to `IVY_MAX_QUEUE_SPANS` (oldest dropped first).
-- The dropped count is attached as `ivy.dropped_spans` to the first span of the next successful
-  export and logged by the extension.
+- **Invocation spans first.** The tracer hands the invocation span to the extension on its own, then the
+  children in chunks (the last one carries `final`). The extension's queue keeps invocation, synthetic (failure)
+  and update spans apart from children and sends them first, in their own request; then the child chunks one
+  request at a time. A failing or dropped child chunk never takes the invocation with it.
+- **Chunks**: at most `IVY_EXPORT_CHUNK_SPANS` (500) spans and `IVY_EXPORT_CHUNK_BYTES` (1 MB) of uncompressed
+  JSON, measured on the serialized spans, in the tracer's hand-off and in the extension's export alike. A single span
+  larger than a chunk has its payload attributes removed, largest first, and is marked `ivy.payload.trimmed`. 1 MB of
+  span JSON gzips to roughly 100–250 KB, a few hundred ms of upload even on a slow path, so one request fits the
+  per-request timeout with room for a retry.
+- **Budget**: each post-response flush gets `IVY_FLUSH_BUDGET_MS` (2 s) plus `IVY_FLUSH_BUDGET_PER_CHUNK_MS`
+  (500 ms) per child chunk waiting, capped at `IVY_FLUSH_BUDGET_MAX_MS` (5 s). That time is billed to the customer,
+  so it is only spent when there is that much to send: a normal invocation is one or two requests of a few ms. The
+  base covers the invocation request plus a retry; 500 ms per chunk is about twice a chunk's upload at Lambda's
+  network speed; the 5 s cap bounds the worst case (e.g. a slow endpoint with many chunks) to a few cents per
+  thousand such invocations at 1 GB. Chunks that do not fit stay queued and go after the next invocation.
+- Per request: up to 3 attempts (timeout `IVY_EXPORT_TIMEOUT_MS`, backoff 100/300 ms) within the remaining
+  budget. Retries on network errors, 408, 429, 5xx, except that a 429 or 503 with `Retry-After` (e.g. a workspace
+  over its monthly trace quota, `limits.md`) ends the flush at once, and nothing is sent until the delay has passed
+  (capped at 1 hour), not even the forced flush on `SHUTDOWN`.
+- When a request fails its spans are dropped, and the queue backs off (5 s doubling to 5 min) so a dead endpoint
+  costs one bounded attempt instead of one per invocation; the remaining chunks stay queued. Spans that arrive
+  during backoff are buffered up to `IVY_MAX_QUEUE_SPANS`: the oldest child chunks are dropped first, invocation
+  spans only when nothing else is left (a long outage).
+- Lost child spans are recorded on their invocation span: added to `ivy.dropped_spans` (with
+  `ivy.dropped_spans.reason` `queue full` or `export failed`) while it is still queued, or sent as an update span
+  with the new total once it was exported.
+- **Diagnostics without `IVY_DEBUG`**: after each invocation the extension writes at most one line to the
+  function's logs, and only when calls were collapsed, spans were dropped or the export failed:
+  `[ivy] exported 1 invocation, 1 chunk, collapsed 2,987 calls, dropped 0 spans (3 ms)`, or
+  `[ivy] export failed (HTTP 503); exported 0 invocations, 0 chunks, collapsed 0 calls, dropped 2,345 spans (1520 ms); next attempt in 5 s`.
+  `IVY_DEBUG` adds the per-request details.
+- After the platform reports the runtime done, the extension waits a short grace (100 ms) for the tracer's final
+  batch; the grace restarts while chunks keep arriving, up to 1 s.
 - On `SHUTDOWN` the extension flushes with a 1.5 s budget, ignoring backoff.
 - Every instrumentation path is wrapped in try/catch; errors from the user handler are rethrown
   as the same object; the extension catches its own errors and never exits during an invocation.
@@ -138,9 +174,46 @@ cap with the `…[truncated N bytes]` suffix. Unparseable bodies (truncated JSON
 regex-based redaction pass. A key matches `IVY_REDACT_KEYS` if, lowercased with `-`/`_` removed,
 it contains one of the entries (so `x-api-key` matches `api_key`).
 
-Limits per invocation: 1000 child spans, 500 log events (4 KB each), request/response body
-capture of `max(4 × IVY_MAX_PAYLOAD_BYTES, 64 KB)` for `node:http` and 1 MB for `fetch`
-response clones; overflow is counted in `ivy.dropped_child_spans` / `ivy.dropped_logs`.
+Limits per invocation: 500 log events (4 KB each), request/response body capture of
+`max(4 × IVY_MAX_PAYLOAD_BYTES, 64 KB)` for `node:http` and 1 MB for `fetch` response clones
+(overflow in `ivy.dropped_logs`); child spans and payload bytes as below.
+
+## Large invocations
+
+A production import worker (one ~10 s invocation, thousands of AWS SDK calls, LLM calls with 16 KB bodies)
+showed nothing in Ivy. The cause turned out to be the startup race above, but the same function also showed how
+one invocation could outgrow the export: up to 1000 children × two 16 KB payloads in one hand-off and one export
+request, against a 2 s budget and a 2000-span queue, all or nothing. Now (`src/lib/tracer/collapse.ts`,
+`payload-budget.ts`, `export/chunks.ts`, `extension/src/queue.rs`):
+
+1. **Collapsing** (tracer, before export). Calls with the same signature under the same parent (see
+   `span-conventions.md`, "Collapsed summary spans") are counted; past `IVY_COLLAPSE_THRESHOLD` (50) the first
+   `IVY_COLLAPSE_KEEP` (10), the `IVY_COLLAPSE_KEEP_SLOWEST` (3) slowest and every failing call stay, and the rest
+   fold into one summary span per signature, with nested spans. It runs while the invocation runs too: when the
+   buffer reaches `IVY_MAX_SPANS` + 25% the finished calls are collapsed, so a 50,000-call loop never holds more
+   than a few thousand spans (and their payload references) in memory, and the counts stay exact. Tokens of
+   collapsed LLM calls are summed (bridge usage attributes, or the `usage` in a provider's response body for
+   plain HTTP calls, recognised by host or by the providers' paths such as `/v1/chat/completions`). 50/10/3 keep
+   every ordinary trace untouched (few functions make 50 identical calls) while turning a 3,000-call loop into
+   ~16 spans; the stored bytes fall accordingly, which matters at €2 per million traces.
+   Known limit: calls from a bundled SDK are only recognised as AWS calls at flush time, so they group by HTTP
+   method, host and path (`POST dynamodb.eu-west-1.amazonaws.com /`), mixing operations.
+2. **Span limit**: after collapsing, at most `IVY_MAX_SPANS` (2000) children. Kept first: failing spans, summaries
+   and unfinished spans with their ancestors; then by depth (the root's direct children before their children),
+   slowest first. The rest are counted in `ivy.dropped_spans` (`span limit`).
+3. **Payload budget**: `IVY_MAX_INVOCATION_PAYLOAD_BYTES` (1 MB uncompressed) for all payload attributes of the
+   invocation (`ivy.payload.*`, captured headers, LLM prompts/messages/responses/tool data from the bridge). Spent
+   on the invocation's event and response first, then failing spans, then the slowest tenth (at least five), then
+   the rest in start order. Past it, payloads are not even serialized; the span stays, marked
+   `ivy.payload.trimmed`, and the root gets `ivy.trimmed_payload_bytes` / `ivy.trimmed_payloads`. 1 MB keeps the
+   stored size of a heavy trace near that of a few hundred ordinary ones, and fits one export chunk.
+4. **Chunked hand-off and export, invocation first** (Delivery above).
+
+Measured in the e2e harness (Lambda Node.js 22 image, local fake endpoints): 3,000 `PutItem` calls plus 2 failing
+ones arrive as the invocation span plus 16 children (10 first, 3 slowest, 2 errors, `DynamoDB.PutItem × 2,987`),
+exported in 1 chunk in 3–10 ms. 300 model calls with 16 KB request and response bodies and `IVY_COLLAPSE_KEEP=40`:
+44 children, 1008 KB of payloads kept and 347 KB trimmed, the summary's tokens equal 257 × the per-call usage,
+2 chunks in 13–23 ms.
 
 ## Instrumentation
 

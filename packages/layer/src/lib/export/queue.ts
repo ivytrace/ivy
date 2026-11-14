@@ -39,6 +39,11 @@ export class ExportQueue {
     return this.queued;
   }
 
+  /** Batches waiting; the tracer hands over one per invocation span plus one per chunk of children. */
+  get pending(): number {
+    return this.batches.length;
+  }
+
   add(batch: Batch): void {
     if (!batch.spans.length) return;
     while (this.batches.length && this.queued + batch.spans.length > this.opts.maxQueueSpans) {
@@ -77,7 +82,12 @@ export class ExportQueue {
     while (this.batches.length && deadline - now() > 50) {
       const taken: Batch[] = [];
       let count = 0;
-      while (this.batches.length && (count === 0 || count + this.batches[0].spans.length <= maxPerRequest)) {
+      // Invocation spans go in requests of their own, so a failing chunk of children never takes one along.
+      const rootsOnly = isRootBatch(this.batches[0]);
+      while (
+        this.batches.length &&
+        (count === 0 || (count + this.batches[0].spans.length <= maxPerRequest && isRootBatch(this.batches[0]) === rootsOnly))
+      ) {
         const b = this.batches.shift()!;
         taken.push(b);
         count += b.spans.length;
@@ -122,3 +132,6 @@ export class ExportQueue {
     });
   }
 }
+
+const isRootBatch = (b: Batch) =>
+  b.spans.length > 0 && b.spans.every((s) => s.attributes.some((a) => a.key === 'ivy.invocation' && 'boolValue' in a.value && a.value.boolValue));

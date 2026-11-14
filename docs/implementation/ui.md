@@ -26,6 +26,7 @@ accounts and rules, `fixtures.ts` span data):
   `billing-api-prod`, `billing-api-staging`, `support-api-prod`, `default` and an archived one; three members, a pending invitation, ingest
   keys) and `side-project` (you're a member; only its untouched default project, so it opens the quick-start wizard).
 - Span data: a week of invocations of five functions (one, `support-answerTicket` in `support-api-prod`, an AI SDK support bot) spread over the `acme` projects (`projectOfInvocation` in `server.ts`; a quarter of `checkout-createOrder` runs come from `checkout-staging`, so "All projects" shows one name in two projects), with
+- Span data: a week of invocations of five functions (one, `support-answerTicket` in `support-api-prod`, an AI SDK support bot; plus `checkout-importOrders`, an import worker with collapsed calls and omitted spans) spread over the `acme` projects (`PROJECT_OF` in `server.ts`), with
   filters, `since`/`from`/`to`, cursor pagination, error groups, timeseries buckets, and full traces with DynamoDB, S3,
   SQS, SNS, EventBridge, SES, Lambda, Secrets Manager and fetch spans, logs and exceptions. Other workspaces start empty
   and "receive" a first trace 6 s after a rule or an ingest key is created there, so the wizard's last step completes.
@@ -180,6 +181,24 @@ lives here.
 | Secrets Manager | `rpc.service=SecretsManager` | method · `SecretId` | secret |
 | Other AWS | `rpc.system=aws-api` | `rpc.service` icon "aws" · method | |
 | HTTP | CLIENT span with `http.request.method` or `url.full` | method · `url.full` – status | URL, host (`server.address`), port, status. Request/response headers come from `ivy.http.*.headers`. Known hosts (Slack, Shopify, Chargebee, Todoist, CloudFront, legacy S3/SES/EventBridge hostnames) get their own icon |
+
+**Collapsed calls and omitted spans** (`collapsed.ts` in `@ivy/spans`; attributes in `span-conventions.md`). A
+summary span (`ivy.collapsed.count`, named e.g. `DynamoDB.PutItem × 1,184`) is described like the calls it stands for:
+the ` × N` suffix is stripped from the name and `describeSpan` returns `collapsed` (count, total, average, max, min,
+errors, kept, signature). HTTP summaries have no `url.full`, so the target is `server.address` + `http.route`.
+
+- Waterfall row: the base title plus a `× 1,184` outline badge (`CollapsedBadge`, tooltip "N similar calls
+  summarised in one span"). The bar runs from the first call's start to the last call's end and is hatched at 70%
+  opacity so it doesn't read as one long call; the duration column is that first → last span.
+- Details: a line explaining that the calls were summarised (first, slowest and failing calls are kept as their own
+  spans), then Calls, Total, Average, Max, Min, Errors (kept in full), Kept in full, Signature, and "First → last"
+  instead of Duration.
+- Service graph: a summary span counts as its number of calls (shown as `1.2k` from 1,000 on).
+- When the invocation has `ivy.dropped_spans`, an amber note above the waterfall (`OmittedSpansNote`, styled like
+  `FailureNote`) says e.g. "37 spans omitted (span limit): this invocation made more calls than Ivy keeps, so the
+  timeline is incomplete", plus the `ivy.collapsed_calls` total. The MCP App waterfall view shows the same components.
+- Mock: `checkout-importOrders` in `checkout-prod` (S3 trigger, every 3 hours, ~10 s) uses `@ivy/format`'s import
+  fixture (`import-spans.ts`); the latest run is `/w/acme/checkout-prod/traces/ca11ab1e00000000000000000000a1b2`.
 
 All AWS spans also show `cloud.region`, `http.response.status_code` and `aws.request_id`.
 `ivy.payload.request/response` are parsed as JSON after stripping the `…[truncated N bytes]` marker. If
