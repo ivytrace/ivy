@@ -103,8 +103,48 @@ export class InvocationBuilder {
     this.cursorMs = startMs;
   }
 
+  /** Parent of the next span: the invocation, or the span whose `nested` body is running. */
+  private parentSpanId: string = this.rootSpanId;
+
   work(ms: number): void {
     this.cursorMs += Math.max(0.05, ms);
+  }
+
+  /**
+   * A span around `body`: calls made inside it become its children, and it ends where the body's time
+   * ends. Returns the span so the body's results can be added to its attributes afterwards.
+   */
+  nested(name: string, kind: SpanKind, attributes: Attributes, body: (span: Span) => void): Span {
+    this.work(latency(0.2, 0.4));
+    const span: Span = {
+      traceId: this.traceId,
+      spanId: newSpanId(),
+      parentSpanId: this.parentSpanId,
+      name,
+      kind,
+      startMs: this.cursorMs,
+      endMs: this.cursorMs,
+      attributes: { ...attributes },
+      events: [],
+    };
+    this.spans.push(span);
+    const parent = this.parentSpanId;
+    this.parentSpanId = span.spanId;
+    try {
+      body(span);
+    } catch (err) {
+      if (err instanceof InvocationError) {
+        span.status = { code: 'ERROR', message: err.message };
+        span.attributes['error.type'] = err.type;
+        span.events.push({ timeMs: this.cursorMs, name: 'exception', attributes: { 'exception.type': err.type, 'exception.message': err.message } });
+      }
+      throw err;
+    } finally {
+      this.parentSpanId = parent;
+      this.work(latency(0.2, 0.4));
+      span.endMs = this.cursorMs;
+    }
+    return span;
   }
 
   log(severity: 'debug' | 'info' | 'warn' | 'error', message: string): void {
@@ -120,7 +160,7 @@ export class InvocationBuilder {
     const span: Span = {
       traceId: this.traceId,
       spanId: newSpanId(),
-      parentSpanId: this.rootSpanId,
+      parentSpanId: this.parentSpanId,
       name: `${service}.${operation}`,
       kind: 'CLIENT',
       startMs,
@@ -161,7 +201,7 @@ export class InvocationBuilder {
     const span: Span = {
       traceId: this.traceId,
       spanId: newSpanId(),
-      parentSpanId: this.rootSpanId,
+      parentSpanId: this.parentSpanId,
       name: `${method} ${parsed.host}`,
       kind: 'CLIENT',
       startMs,
