@@ -1,50 +1,100 @@
 # Auto-trace: connecting AWS accounts (M4)
 
-Users connect an AWS account from **Settings → AWS accounts**. Ivy then attaches the Node.js layer to every
-supported function in that account, including new ones, and keeps it attached. Code lives in
-`packages/api/src/lib/aws/` and `packages/api/src/routes/aws/`, the UI in `packages/ui/src/routes/settings/` and
-`packages/ui/src/components/aws/`.
+Users connect an AWS account to a **workspace** from **Workspace settings → AWS accounts**. Ivy then lists every
+function in the selected regions and attaches the Node.js layer to the functions the user **selects**, into the
+project they choose, including new functions that match their selection later. Tracing is **opt-in**: connecting an
+account traces nothing. Code lives in `packages/api/src/lib/aws/` and `packages/api/src/routes/aws/`, the UI in
+`packages/ui/src/routes/settings/` and `packages/ui/src/components/aws/`. Projects: `workspaces-projects.md`.
 
 ## Flow
 
-1. **Connect.** The user enters the 12-digit account ID, a stack region and the regions to trace. `POST /api/aws/accounts`
-   creates a *pending* connection with a random external ID (`ivy-<32 hex>`), an event secret, and a deterministic
-   role name `IvyTrace-<8 hex>` (so the role ARN is known before the stack exists). It returns a CloudFormation
-   quick-create URL, or `null` when no template URL is configured (see below).
-2. **Deploy.** The user opens the quick-create link in a new tab (signed in to the target account), ticks the IAM
-   acknowledgement and creates the stack. Without a template URL, the UI offers "Download template" (defaults for this
-   connection filled in) plus "Upload a template file" instructions.
-3. **Verify.** The UI calls `POST /api/aws/accounts/:id/verify` every 10 s once the user has opened the link or download,
-   and on "I've deployed it, verify". Verify calls `sts:AssumeRole` with the external ID. The first success marks the
-   account *connected* and starts the first sync. A failure keeps it *pending* and shows the STS error.
-4. **Sync.** For each region: `ListFunctions` (paginated) and `tag:GetResources` for tags, then a plan per function (below),
-   `PublishLayerVersion` if needed, `UpdateFunctionConfiguration` for functions that change, and one batch of status
-   rows into ClickHouse. Traces arrive after each function's next invocation, so the 5-minute target is mostly the
-   stack deploy (~1 min) plus the first sync (seconds).
-5. **Stay in sync.** A background loop in the API process re-syncs every connected account every
-   `IVY_AWS_SYNC_INTERVAL_SECONDS` (default 300). Optionally, EventBridge pushes function changes for an immediate sync.
-6. **Opt out.** The per-function toggle stores a setting and applies it to that function right away (detach or attach).
-   Disconnecting an account detaches the layer from all its functions first (unless `detach=false`) and then tells the
-   user to delete the stack.
+1. **Connect.** The user enters the 12-digit account ID, a stack region, the regions to scan and optionally the project
+   to preselect. `POST /api/w/:ws/aws/accounts` creates a *pending* connection with a random external ID
+   (`ivy-<32 hex>`), an event secret, and a deterministic role name `IvyTrace-<8 hex>` (so the role ARN is known before
+   the stack exists).
+2. **Deploy.** With the `publish-cfn-template` hook (`hooks.md`), the account has a quick-create link: the user opens it
+   in a new tab (signed in to the target account), ticks the IAM acknowledgement and creates the stack. Without the hook
+   (or when it fails), the UI offers "Download template" (the connection's values filled in) plus "Upload a template
+   file" steps.
+3. **Verify.** The UI calls `POST /api/w/:ws/aws/accounts/:id/verify` every 10 s once the user has opened the link or
+   download, and on "I've deployed it, verify". Verify calls `sts:AssumeRole` with the external ID. The first success
+   marks the account *connected*, fires `on-aws-account-connected`, and starts the first sync. A failure keeps it
+   *pending* and shows the STS error.
+4. **First sync: list.** For each region: `ListFunctions` (paginated) and `tag:GetResources` for tags. Every supported
+   function is stored as `available` with its runtime, CloudFormation stack (the `aws:cloudformation:stack-name` tag),
+   tags and last-modified time. Nothing is changed in the account yet.
+5. **Pick.** The account page groups functions by stack. The user traces a stack (a stack rule into a project, often a
+   new one named after the stack), filters by name/stack/tag/region and traces all matches (a rule) or a selection
+   (manual choices), and can exclude single functions. `POST …/aws/rules/dry-run` previews what a rule would select.
+6. **Sync: attach.** Each rule change, manual choice or interval sync plans every function (below): `PublishLayerVersion`
+   if needed, `UpdateFunctionConfiguration` for functions that change, one batch of status rows into ClickHouse. Traces
+   arrive after each function's next invocation.
+7. **Stay in sync.** A background loop in the API process re-syncs every connected account every
+   `IVY_AWS_SYNC_INTERVAL_SECONDS` (default 300). New functions that match an enabled rule are traced on the next sync;
+   the others stay `available` and count as "new" in the UI until the user has looked at the list
+   (`PATCH …/accounts/:id { reviewed: true }`). Optionally, EventBridge pushes function changes for an immediate sync.
+8. **Untrace.** When a function stops being selected (its rule is deleted or disabled, a tag changes, a manual exclude,
+   its project is archived), the next sync removes the layer and Ivy's variables. Disconnecting an account detaches the
+   layer from all its functions first (unless `detach=false`) and then tells the user to delete the stack.
+
+## Choosing functions and projects
+
+`lib/aws/assign.ts` (pure, unit-tested) decides per function whether it is traced and into which project:
+
+1. **Tags.** `ivy:trace=false` never traces (`opted_out`). `ivy:trace=true` traces.
+2. **Manual choice** in the dashboard (`aws_function_settings.mode`): `trace` into a project, or `exclude` (`opted_out`).
+3. **Rules** of the workspace (`aws_project_rules`), in order: the first enabled rule that matches, and whose project is
+   active, traces the function into its project.
+4. Otherwise not traced: `available`.
+
+Whenever a function is traced, an `ivy:project=<slug>` tag naming an active project of the workspace picks the project;
+otherwise the manual choice's project, the rule's project, or (for `ivy:trace=true` alone) the workspace's default
+project. `ivy:project` alone doesn't trace. Archived projects are skipped (a rule pointing at one matches nothing).
+
+A **rule** is a matcher plus a project plus `enabled`. Every non-empty matcher field must match: `account_id` and
+`region` exactly, `stack` (the CloudFormation stack name) and `name` (the function name) as globs (`*`, `?`;
+`orders-*` is a prefix match), `tag` as `key=value` (value may be a glob) or `key`. **Stacks are the main way to pick
+functions**: a stack is usually one app in one environment, which is one project (`examplary-api-prod` →
+project `examplary-api-prod`). Serverless Framework, SAM, CDK and SST all set the stack tag. A stack rule is just a
+rule whose matcher has only `stack` (the account page shows it on the stack's group).
+
+The account's `default_project_id` is only the project the UI preselects; it never causes tracing.
+
+Each traced function gets its **project's** ingest key as `IVY_API_KEY` (one auto-trace key per project, `tenancy.md`).
+When a function moves to another project, the next sync rewrites `IVY_API_KEY`; spans already ingested stay in the
+project they were sent to (data is immutable), and the UI says so.
+
+**Upgrading:** connections made before opt-in tracing had every supported function traced. After the upgrade those
+functions are `available` (no rule exists) and the next sync detaches them, unless the workspace adds a rule first,
+e.g. `{ "matcher": { "name": "*" } }` for the old behaviour.
+
+### For coding agents (llms.txt)
+
+The agent flow the website's llms.txt should describe: ask the user which functions to trace, by CloudFormation stack
+(preferred) or by name pattern/tag; preview the matches with `POST /api/w/:ws/aws/rules/dry-run` and show them; then
+create the rule with `POST /api/w/:ws/aws/rules` (with `new_project: { name, slug }` to trace a stack into a new
+project of the same name). Single functions: `PUT /api/w/:ws/aws/functions/:account/:region/:name` with
+`{ "mode": "trace" | "exclude" | "rules" }`. `api.md` has the shapes.
 
 ## Decisions
 
-### Where config lives: three small ClickHouse tables
+### Where config lives: four small ClickHouse tables
 
 No new datastore. `deploy/clickhouse/schema.sql` adds, in the control-plane database `ivy_control` (`tenancy.md`; all
 `CREATE TABLE IF NOT EXISTS`, `tenant_id` first in `ORDER BY`):
 
 | table | engine | key | |
 |---|---|---|---|
-| `aws_accounts` | `ReplacingMergeTree(updated_at)` | `(tenant_id, id)` | one row per connection: role ARN, external ID, event secret, regions, status, last error, timestamps, `deleted` flag |
-| `aws_functions` | `ReplacingMergeTree(updated_at)` | `(tenant_id, account_id, region, function_name)` | last known state per function: `traced`/`opted_out`/`unsupported`/`conflict`/`error`/`pending` + reason |
-| `aws_function_settings` | `ReplacingMergeTree(updated_at)` | `(tenant_id, account_id, region, function_name)` | the dashboard opt-out (`tracing_enabled`) |
+| `aws_accounts` | `ReplacingMergeTree(updated_at)` | `(tenant_id, id)` | one row per connection: role ARN, external ID, event secret, regions, preselected project, `reviewed_at`, status, last error, timestamps, `deleted` flag |
+| `aws_functions` | `ReplacingMergeTree(updated_at)` | `(tenant_id, account_id, region, function_name)` | last known state per function: `traced`/`available`/`opted_out`/`unsupported`/`conflict`/`error`/`pending` + reason, project and what decided it (`tag`/`manual`/`rule` + rule ID), stack, tags, last modified, `first_seen_at` |
+| `aws_function_settings` | `ReplacingMergeTree(updated_at)` | `(tenant_id, account_id, region, function_name)` | the manual choice: `mode` (`''`/`trace`/`exclude`) and its project; older rows' `tracing_enabled = false` reads as `exclude` |
+| `aws_project_rules` | `ReplacingMergeTree(updated_at)` | `(tenant_id, id)` | the workspace's rules: position, matcher fields, project, enabled, `deleted`. Reordering writes all rows in one insert |
 
 - Every update inserts a full row; reads use `FINAL` and `NOT deleted`. Deleting inserts a row with `deleted = 1`.
   The store gives each write a version strictly above its previous one, so two writes in the same millisecond keep
   their order.
-- Settings are keyed by AWS account ID (not connection ID) so opt-outs survive disconnecting and reconnecting.
-  They are kept apart from `aws_functions` so a sync that read a function before a toggle can't overwrite the toggle.
+- Settings are keyed by AWS account ID (not connection ID) so manual choices survive disconnecting and reconnecting.
+  They are kept apart from `aws_functions` so a sync that read a function before a manual choice can't overwrite the choice.
 - Read-modify-write races (a sync finishing while the user edits regions) are narrowed by re-reading the account right
   before saving sync results; the worst case is a lost `last_sync_at`/`error` update that the next sync rewrites.
 - Volumes are tiny (rows per function, rewritten once per sync interval), well within what ReplacingMergeTree merges away.
@@ -58,14 +108,14 @@ Ivy only uses the AWS SDK as a client; nothing of Ivy runs in AWS.
   Hosted uses Ivy's own principal; self-hosters bring an IAM user or role.
 - The **trusted principal** in the template comes from `IVY_AWS_PRINCIPAL_ARN`. If unset, Ivy derives it from
   `sts:GetCallerIdentity` (an assumed-role session ARN maps back to `arn:aws:iam::<acct>:role/<name>`). If neither works,
-  `GET /api/aws/setup` reports it as an issue and the template has no default for the parameter.
+  `GET /api/w/:ws/aws/setup` reports it as an issue and the template has no default for the parameter.
 - `AssumeRole` goes to the regional STS endpoint of `IVY_AWS_REGION`/`AWS_REGION` (default `us-east-1`); regional STS
   tokens are valid in opt-in regions too. Credentials are cached per role until 5 minutes before expiry.
 - The **external ID** is unique per connection (`randomBytes(16)`), and is a template parameter, as is the principal.
 
 ### The template
 
-`buildTemplate()` in `lib/aws/template.ts`, served as YAML by `GET /api/aws/template.yaml`.
+`buildTemplate()` in `lib/aws/template.ts`, served as YAML by `GET /api/w/:ws/aws/template.yaml`.
 
 - Parameters: `TrustedPrincipalArn`, `ExternalId`, `RoleName`, `EventsUrl` (optional), `EventSecret` (`NoEcho`).
   Without `?account=` the template is generic (only the principal has a default): that's the file to publish to S3.
@@ -74,11 +124,18 @@ Ivy only uses the AWS SDK as a client; nothing of Ivy runs in AWS.
   `UpdateFunctionConfiguration`, `ListLayerVersions` and `tag:GetResources` on `*`; `PublishLayerVersion` and
   `GetLayerVersion` only on `arn:…:lambda:*:<acct>:layer:ivy-trace-nodejs[:*]`. Trust: the principal, with an
   `sts:ExternalId` condition. The role is tagged `ivy:component`.
-- The template has to be at an S3 URL for a quick-create link. `IVY_CFN_TEMPLATE_URL` configures it; the API builds
-  `https://<stack-region>.console.aws.amazon.com/cloudformation/home?region=…#/stacks/quickcreate?templateURL=…&stackName=…&param_…`.
-  Hosted will publish the generic template to a public bucket. Self-hosters can do the same:
-  `curl https://ivy.example.com/api/aws/template.yaml > ivy-trace.yaml && aws s3 cp ivy-trace.yaml s3://bucket/ --acl public-read`
-  (or a bucket policy), then set `IVY_CFN_TEMPLATE_URL`. Without it the UI shows the download fallback.
+- One template per connection: every value (trusted principal, external ID, role name, events URL, event secret) is a
+  parameter whose default is this connection's value; the event secret is `NoEcho`. So the file can be uploaded as is,
+  and a quick-create link needs no `param_…` values, which keeps the external ID and the secret out of URLs.
+- **Quick-create needs the template at an S3 URL.** Ivy doesn't host it: the `publish-cfn-template` provider hook
+  (`hooks.md`) receives the rendered template and returns a URL CloudFormation can fetch (hosted: a short-lived
+  pre-signed S3 URL). The API builds `https://<region>.console.aws.amazon.com/cloudformation/home?region=…#/stacks/quickcreate?templateURL=…&stackName=…`
+  and caches it per connection until shortly before the URL expires. Without the hook, or when it fails, there is no
+  link (`quick_create_url: null`, plus `quick_create_error` on failure) and the UI offers the download, which needs the
+  user's token (`GET /api/w/:ws/aws/template.yaml?account=…`) because it contains the event secret.
+  Why a hook rather than a public template: a generic template would need the per-connection values (including
+  the secret) as link parameters, or a public unauthenticated route. Earlier versions did the former with
+  `IVY_CFN_TEMPLATE_URL`; that variable is gone.
 - Checked with `cfn-lint` in `template.test.ts` (runs when `cfn-lint` is on the PATH) and by structure assertions.
 
 ### Getting the layer into the account
@@ -101,7 +158,7 @@ Note: the zip is rebuilt per image build and `zip` stores mtimes, so each image 
   `RevisionId` the plan was based on, so a concurrent change makes the update fail with `PreconditionFailedException`;
   Ivy then re-reads the function and plans again once. Plans are idempotent, so a duplicate sync changes nothing.
 - **Optional: EventBridge.** When `IVY_PUBLIC_URL` is an `https://` URL, the template parameters `EventsUrl`
-  (`<public url>/api/aws/events`) and `EventSecret` are filled in and the stack also creates an EventBridge connection
+  (`<public url>/api/aws/events`) and `EventSecret` get defaults and the stack also creates an EventBridge connection
   (API key header `x-ivy-event-secret`), an API destination, a role for it and a rule on CloudTrail `CreateFunction*` /
   `UpdateFunctionConfiguration*` events from `lambda.amazonaws.com`. `POST /api/aws/events` looks the connection up by
   secret, checks the event's `account`, and syncs that region. Caveats:
@@ -116,39 +173,39 @@ In order:
 
 1. Tag `ivy:component` (anything Ivy's own stacks create) → `unsupported`, untouched.
 2. Container image functions, and runtimes other than `nodejs18.x` or later → `unsupported` (detached if Ivy's layer is somehow there).
-3. Tag `ivy:trace=false` or the dashboard toggle off → `opted_out`; if attached, remove the Ivy layer, `IVY_ENDPOINT`,
-   `IVY_API_KEY`, and `AWS_LAMBDA_EXEC_WRAPPER` only when it is `/opt/ivy-wrapper`. Other variables (including
-   other `IVY_*` such as `IVY_REDACT_KEYS`) and layers stay.
+3. Not selected by the assignment above (tag `ivy:trace=false`, a manual exclude → `opted_out`; nothing selects it →
+   `available`): if attached, remove the Ivy layer, `IVY_ENDPOINT`, `IVY_API_KEY`, and `AWS_LAMBDA_EXEC_WRAPPER` only
+   when it is `/opt/ivy-wrapper`. Other variables (including other `IVY_*` such as `IVY_REDACT_KEYS`) and layers stay.
 4. Environment unreadable (`Environment.Error`, e.g. a KMS key the role can't use) → `error`; never write variables Ivy
    couldn't read, since `UpdateFunctionConfiguration` replaces them all.
 5. `AWS_LAMBDA_EXEC_WRAPPER` set to something else → `conflict`. Five non-Ivy layers already → `conflict`.
 6. No ingest config → `pending`. Otherwise: desired layers = existing non-Ivy layers + the current Ivy layer version
    (older Ivy versions replaced), desired env = existing + `AWS_LAMBDA_EXEC_WRAPPER=/opt/ivy-wrapper`,
-   `IVY_ENDPOINT=$IVY_INGEST_PUBLIC_URL`, `IVY_API_KEY=<the tenant's auto-trace key>`. Equal to current → no call. → `traced`.
+   `IVY_ENDPOINT=$IVY_INGEST_PUBLIC_URL`, `IVY_API_KEY=<the function's project's auto-trace key>`. Equal to current → no call. → `traced`.
 
 Applying: `ResourceConflictException` (an update in progress) is retried after 2, 4, 8 and 16 s. If tags could not be
 read (`tag:GetResources` denied), Ivy does not attach to functions that would change, since one of them could carry
 the opt-out tag; they show as `pending`. In "all enabled regions" mode, regions that reject the credentials
 (`UnrecognizedClientException` etc., i.e. not enabled) are skipped silently; with explicit regions they're reported.
 
-`ingestConfig(tenant)` gives the endpoint and the tenant's auto-trace key: `IVY_INGEST_API_KEY` for `default`, otherwise a
-system-managed key stored hashed and encrypted with `IVY_SECRET_KEY` (`tenancy.md`, "Auto-trace key"). Revoking that key
-makes the next sync write a new one into every function.
+`ingestConfig(tenant, project)` gives the endpoint and the project's auto-trace key: `IVY_INGEST_API_KEY` for the default
+workspace's default project, otherwise a system-managed key stored hashed and encrypted with `IVY_SECRET_KEY`
+(`tenancy.md`, "Auto-trace key"). Revoking that key makes the next sync write a new one into the project's functions.
 
 ## API
 
-See `api.md` (`/api/aws/*`).
+See `api.md` (`/api/w/:workspace/aws/*`).
 
 ## Configuration (API)
 
 | variable | | |
 |---|---|---|
 | `IVY_INGEST_PUBLIC_URL` | required to attach | ingest router URL reachable from Lambda, e.g. `https://ingest.example.com` (the OTLP/HTTP base, without `/v1/traces`) |
-| `IVY_INGEST_API_KEY` | default tenant | the key written into the `default` tenant's functions (`dev-ingest-key` in compose) |
-| `IVY_SECRET_KEY` | other tenants | encrypts the per-tenant auto-trace keys |
+| `IVY_INGEST_API_KEY` | default project | the key written into functions of the default workspace's default project (`dev-ingest-key` in compose) |
+| `IVY_SECRET_KEY` | other projects | encrypts the per-project auto-trace keys; `GET …/aws/setup` lists it as an issue when unset |
 | `IVY_AWS_PRINCIPAL_ARN` | recommended | principal customers trust; derived from the credentials if unset |
 | AWS credentials | required | standard SDK chain: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_SESSION_TOKEN`, `AWS_PROFILE`, or a role |
-| `IVY_CFN_TEMPLATE_URL` | optional | S3 URL of the generic template; enables one-click quick-create links |
+| `IVY_HOOKS_DIR` | optional | with a `publish-cfn-template` hook in it, enables one-click quick-create links (`hooks.md`) |
 | `IVY_PUBLIC_URL` | optional | public `https://` URL of the API; enables the EventBridge part of the template |
 | `IVY_AWS_DEFAULT_REGION` | `us-east-1` | default stack region in the connect dialog |
 | `IVY_AWS_REGION` | `AWS_REGION` or `us-east-1` | region of the STS endpoint |
@@ -157,10 +214,16 @@ See `api.md` (`/api/aws/*`).
 
 ## Verification
 
-- `packages/api`: `attach.test.ts` (plan rules), `template.test.ts` (YAML round trip, structure, cfn-lint, quick-create URL),
-  `sync.test.ts` (layer reuse/publish, conflict retry, revision conflicts, unreadable tags, disabled regions, removed
-  functions, single-function toggle, detach) and `routes/aws/aws.test.ts` (all routes end to end with an in-memory
-  store), all with `aws-sdk-client-mock`; no AWS account involved.
+- `packages/api`: `assign.test.ts` (matchers, globs, the precedence of tags, manual choices and rules, disabled rules,
+  archived projects, `ivy:project`), `attach.test.ts` (plan rules, available vs opted out), `template.test.ts` (YAML
+  round trip, structure, cfn-lint, a quick-create URL without parameters), `sync.test.ts` (nothing traced on connect;
+  stack, tags and last modified recorded; a stack rule traces into its project with that project's own key; new
+  matching functions traced on the next sync; detach when a function stops matching; key rewritten when a function
+  moves project; layer reuse/publish, conflict retry, revision conflicts, unreadable tags, disabled regions, removed
+  functions, manual exclude, detach on disconnect) and `routes/aws/aws.test.ts` (all routes end to end with in-memory
+  stores: connect without/with the publish hook, hook failure, grouped list and new counts, dry run, rule
+  create/patch/reorder/delete with re-sync, manual choices, bulk, EventBridge), all with `aws-sdk-client-mock`; no AWS
+  account involved.
 - `clickhouseStore` was checked against the compose ClickHouse (upserts, FINAL reads, deletes, counts).
 - The API image builds with the layer zip inside and serves `/api/aws/*` from compose.
 - The UI was checked in mock mode (`VITE_MOCK=1`, plus `VITE_MOCK_EMPTY=1` and `VITE_MOCK_NO_TEMPLATE=1`).
