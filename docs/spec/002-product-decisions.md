@@ -96,6 +96,8 @@ live in `docs/implementation/`.
 ## Dashboard
 - First visit: a quick-start wizard (workspace, project, connect AWS and pick functions, wait for the first trace).
 - Keyboard shortcuts and a ⌘K command menu across the app.
+- A "Live" toggle on the Invocations page (`?live=1`) shows new invocations as they arrive and updates running ones in
+  place; it pauses on a hidden tab, while scrolled down or paging, and after 15 minutes idle.
 
 ## Performance
 - Cold-start overhead of the layer must be minimal: the Lambda extension is a small Rust binary (the one exception

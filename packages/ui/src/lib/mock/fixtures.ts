@@ -743,6 +743,34 @@ function initFailureSpan(inv: MockInvocation, resource: Record<string, string>, 
   };
 }
 
+/** What the extension exports for an invocation still running past the threshold: the root only, no children yet. */
+function inProgressSpan(inv: MockInvocation, resource: Record<string, string>, startMs: number): Span {
+  const lastSeen = inv.last_seen ? Date.parse(inv.last_seen) : startMs + inv.duration_ms;
+  return {
+    span_id: inv.span_id,
+    parent_span_id: "",
+    name: inv.function,
+    kind: "INTERNAL",
+    service: inv.function,
+    start: iso(startMs),
+    end: iso(lastSeen),
+    duration_ms: lastSeen - startMs,
+    status_code: "UNSET",
+    status_message: "",
+    attributes: {
+      "ivy.invocation": "true",
+      "ivy.in_progress": "true",
+      "faas.invocation_id": inv.request_id,
+      "faas.coldstart": String(inv.cold_start),
+      "cloud.resource_id": `arn:aws:lambda:${inv.region}:123456789012:function:${inv.function}`,
+      ...(inv.deadline ? { "ivy.deadline_ms": String(Date.parse(inv.deadline)) } : {}),
+      "ivy.last_seen_ms": String(lastSeen),
+    },
+    resource,
+    events: [],
+  };
+}
+
 export function buildTrace(inv: MockInvocation): Span[] {
   const r = rng(inv.seed + 1);
   const fn = FUNCTIONS.find((f) => f.name === inv.function) ?? FUNCTIONS[0];
@@ -761,6 +789,7 @@ export function buildTrace(inv: MockInvocation): Span[] {
   const failed = inv.status === "error";
   const kind = inv.failure_kind;
   if (kind === "init_failed") return [initFailureSpan(inv, resource, startMs)];
+  if (inv.status === "in_progress") return [inProgressSpan(inv, resource, startMs)];
   const isImport = fn.name === IMPORT_FUNCTION;
   const importScale = inv.duration_ms / IMPORT_TIMELINE_MS;
   const events: SpanEvent[] = isImport

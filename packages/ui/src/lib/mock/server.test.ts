@@ -14,7 +14,7 @@ import type {
   VerifyResponse,
   Workspace,
 } from "../api/types";
-import { describeSpan, droppedSpans, getLogs, llmUsage } from "../spans/services";
+import { describeSpan, droppedSpans, getLogs, inProgressState, llmUsage } from "../spans/services";
 
 function client(options: Parameters<typeof createMockHandler>[0] = {}) {
   const handle = createMockHandler(options);
@@ -114,9 +114,39 @@ describe("mock API: workspaces and data", () => {
     expect(describeSpan(spans.find((s) => s.name === "ai.streamText.doStream")!).llm?.ttftMs).toBeGreaterThan(200);
   });
 
+  it("serves in-progress invocations, refreshes them by ID and adds new ones while live", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const call = client();
+      const running = call<InvocationsResponse>("GET", `${P}/invocations?since=24h&status=in_progress`).body.items;
+      expect(running.map((i) => i.function).sort()).toEqual(["checkout-importOrders", "orders-processQueue"]);
+      const [importRow, stalled] = [running.find((i) => i.function === "checkout-importOrders")!, running.find((i) => i.function === "orders-processQueue")!];
+      expect(inProgressState(Date.parse(importRow.deadline!))).toBe("running");
+      expect(inProgressState(Date.parse(stalled.deadline!))).toBe("no_completion");
+      const root = call<Trace>("GET", `${P}/traces/${importRow.trace_id}`).body.spans[0];
+      expect(root.attributes["ivy.in_progress"]).toBe("true");
+      expect(root.status_code).toBe("UNSET");
+      const fns = call<{ items: FunctionSummary[] }>("GET", `${P}/functions?since=1h`).body.items;
+      const imports = call<InvocationsResponse>("GET", `${P}/invocations?since=1h&function=checkout-importOrders`).body.items;
+      expect(fns.find((f) => f.name === "checkout-importOrders")?.invocations).toBe(imports.filter((i) => i.status !== "in_progress").length);
+      expect(imports.some((i) => i.status === "in_progress")).toBe(true);
+
+      const from = new Date(Date.now() - 1000).toISOString();
+      expect(call<InvocationsResponse>("GET", `${P}/invocations?from=${from}`).body.items).toHaveLength(0);
+      vi.setSystemTime(Date.now() + 25_000);
+      const newer = call<InvocationsResponse>("GET", `${P}/invocations?from=${from}&limit=100`).body.items;
+      expect(newer.length).toBeGreaterThan(0);
+      const refreshed = call<InvocationsResponse>("GET", `${P}/invocations?since=15m&ids=${importRow.span_id},${stalled.span_id}`).body.items;
+      expect(refreshed.find((i) => i.span_id === importRow.span_id)?.status).toBe("ok");
+      expect(refreshed.find((i) => i.span_id === stalled.span_id)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("serves an import worker trace with summary spans and omitted spans", () => {
     const call = client();
-    const latest = call<InvocationsResponse>("GET", `${P}/invocations?since=1h&function=checkout-importOrders`).body.items[0];
+    const latest = call<InvocationsResponse>("GET", `${P}/invocations?since=1h&function=checkout-importOrders&status=ok`).body.items[0];
     expect(latest.trace_id).toBe("ca11ab1e00000000000000000000a1b2");
     const spans = call<Trace>("GET", `${P}/traces/${latest.trace_id}`).body.spans;
     const root = spans.find((s) => describeSpan(s).isInvocation)!;
