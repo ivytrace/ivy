@@ -1,5 +1,6 @@
 import type { ErrorGroup, Invocation, Span, SpanEvent, Trace } from "@ivy/spans";
 import * as AI from "./ai-traces.js";
+import * as Import from "./import-spans.js";
 
 /**
  * Realistic traces in the `GET /api/traces/:id` shape, modelled on the UI's mock fixtures and the
@@ -676,4 +677,27 @@ export const supportBotGenAi = build(traceIdAt(25_000, "f1e2d3c4b5a6978877665544
   { id: "g8", parent: "g7", name: "chat gpt-4o-mini", offset: 650, duration: 987.5, attributes: AI.genAiAttributes.chat(2) },
 ]);
 
-export const traces = [checkoutFailed, checkoutOk, queueFailed, plainOtel, initFailed, oomCrashed, supportBot, supportBotGenAi];
+/** See import-spans.ts: summary spans of collapsed calls and spans omitted at the span limit. */
+export const importWorker = build(traceIdAt(40_000, "c011a95edca11500000000aa"), 40_000, "eu-west-1", "checkout-importOrders", [
+  {
+    id: "i1",
+    name: "checkout-importOrders",
+    kind: "CONSUMER",
+    offset: 0,
+    duration: Import.IMPORT_DURATION_MS,
+    status: "OK",
+    attributes: {
+      "ivy.invocation": "true",
+      "faas.invocation_id": "1d2e3f40-5a6b-4c7d-8e9f-a0b1c2d3e4f5",
+      "faas.coldstart": "false",
+      "faas.trigger": "datasource",
+      "ivy.trigger.source": "aws:s3",
+      "ivy.memory_used_mb": "188",
+      ...Import.importRootAttributes,
+    },
+    events: Import.importLogs,
+  },
+  ...Import.importSpans.map((s): SpanSpec => ({ ...s, parent: "i1" })),
+]);
+
+export const traces = [checkoutFailed, checkoutOk, queueFailed, plainOtel, initFailed, oomCrashed, supportBot, supportBotGenAi, importWorker];

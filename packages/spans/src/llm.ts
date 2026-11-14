@@ -465,8 +465,8 @@ function build(span: Span): LlmSpan | undefined {
     ...(a["gen_ai.completion.0.finish_reason"] ? [a["gen_ai.completion.0.finish_reason"]] : []),
   ];
 
-  const inputTokens = num(a["gen_ai.usage.input_tokens"], a["ai.usage.inputTokens"], a["ai.usage.promptTokens"], a["gen_ai.usage.prompt_tokens"], a["llm.token_count.prompt"], a["ai.usage.tokens"]);
-  const outputTokens = num(a["gen_ai.usage.output_tokens"], a["ai.usage.outputTokens"], a["ai.usage.completionTokens"], a["gen_ai.usage.completion_tokens"], a["llm.token_count.completion"]);
+  const inputTokens = num(a["ivy.collapsed.input_tokens"], a["gen_ai.usage.input_tokens"], a["ai.usage.inputTokens"], a["ai.usage.promptTokens"], a["gen_ai.usage.prompt_tokens"], a["llm.token_count.prompt"], a["ai.usage.tokens"]);
+  const outputTokens = num(a["ivy.collapsed.output_tokens"], a["gen_ai.usage.output_tokens"], a["ai.usage.outputTokens"], a["ai.usage.completionTokens"], a["gen_ai.usage.completion_tokens"], a["llm.token_count.completion"]);
   const time = ttft(span);
 
   return {
@@ -533,13 +533,15 @@ export function llmUsage(spans: Span[]): LlmUsage | undefined {
   for (const s of withUsage) {
     if (hasUsageBelow.has(s.span_id)) continue;
     const l = describeLlm(s)!;
+    // A summary span stands for many calls (`ivy.collapsed.count`) and carries their summed tokens.
+    const calls = Number(s.attributes["ivy.collapsed.count"]) || 1;
     const key = `${l.provider}|${l.model}`;
     const row = rows.get(key) ?? { provider: l.provider, providerLabel: l.providerLabel, model: l.model, calls: 0, inputTokens: 0, outputTokens: 0 };
-    row.calls += 1;
+    row.calls += calls;
     row.inputTokens += l.inputTokens ?? 0;
     row.outputTokens += l.outputTokens ?? 0;
     rows.set(key, row);
-    usage.calls += 1;
+    usage.calls += calls;
     usage.inputTokens += l.inputTokens ?? 0;
     usage.outputTokens += l.outputTokens ?? 0;
   }

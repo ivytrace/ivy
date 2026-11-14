@@ -35,7 +35,7 @@ function ServiceNode({ data }: NodeProps<FlowNode>) {
       <Handle type="source" position={Position.Right} isConnectable={false} />
       {data.instances > 1 && (
         <div className="absolute -right-2 -top-2 min-w-5 rounded-full bg-primary px-1 text-center text-[10px] leading-5 text-primary-foreground">
-          {data.instances}
+          {data.instances >= 1000 ? `${(data.instances / 1000).toFixed(1).replace(/\.0$/, "")}k` : data.instances}
         </div>
       )}
       <div className="pointer-events-none absolute -left-12 -right-12 top-full mt-2 truncate text-center text-xs text-foreground">

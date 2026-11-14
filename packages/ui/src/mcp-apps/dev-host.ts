@@ -7,7 +7,7 @@
  */
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { McpUiDisplayMode } from "@modelcontextprotocol/ext-apps";
-import { checkoutFailed, queueFailed, supportBot, supportBotGenAi } from "@ivy/format/fixtures";
+import { checkoutFailed, importWorker, queueFailed, supportBot, supportBotGenAi } from "@ivy/format/fixtures";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -24,7 +24,7 @@ async function mcp(): Promise<Client> {
   return (client = c);
 }
 
-const FIXTURES: Record<string, typeof checkoutFailed> = { support: supportBot, "support-genai": supportBotGenAi };
+const FIXTURES: Record<string, typeof checkoutFailed> = { support: supportBot, "support-genai": supportBotGenAi, import: importWorker };
 
 function fixtureResult(tool: string, fixture: string): CallToolResult {
   const trace = FIXTURES[fixture] ?? (tool === "render_graph" ? queueFailed : checkoutFailed);

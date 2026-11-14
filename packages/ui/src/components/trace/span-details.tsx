@@ -1,17 +1,31 @@
 import { PayloadPreview } from "@/components/stats/payload-preview";
 import { ErrorBlock } from "@/components/trace/error-block";
 import { LlmDetails } from "@/components/trace/llm-details";
-import { describeSpan, getException } from "@/lib/spans/services";
+import { describeSpan, formatCount, getException, type CollapsedInfo } from "@/lib/spans/services";
 import type { Span } from "@/lib/spans/types";
 import { formatDuration, formatTimestamp } from "@/lib/utils/format";
+
+function collapsedFields(c: CollapsedInfo) {
+  return [
+    { label: "Calls", value: formatCount(c.count) },
+    { label: "Total", value: formatDuration(c.totalMs) },
+    { label: "Average", value: formatDuration(c.avgMs) },
+    { label: "Max", value: formatDuration(c.maxMs) },
+    { label: "Min", value: formatDuration(c.minMs) },
+    { label: "Errors (kept in full)", value: formatCount(c.errors) },
+    { label: "Kept in full", value: formatCount(c.kept) },
+    ...(c.signature ? [{ label: "Signature", value: c.signature }] : []),
+  ];
+}
 
 export function SpanFields({ span }: { span: Span }) {
   const d = describeSpan(span);
   const fields = [
     { label: "Service", value: d.serviceLabel },
     ...d.fields,
+    ...(d.collapsed ? collapsedFields(d.collapsed) : []),
     { label: "Started", value: formatTimestamp(span.start) },
-    { label: "Duration", value: formatDuration(span.duration_ms) },
+    { label: d.collapsed ? "First → last" : "Duration", value: formatDuration(span.duration_ms) },
     { label: "Span", value: span.span_id },
   ];
   return (
@@ -39,6 +53,12 @@ export function SpanDetails({ span }: { span: Span }) {
 
   return (
     <div className="flex flex-col gap-3">
+      {d.collapsed && (
+        <p className="text-xs text-muted-foreground">
+          {formatCount(d.collapsed.count)} similar calls were summarised in this span to keep the trace small. The first
+          and slowest calls, and every failing one, are kept as their own spans.
+        </p>
+      )}
       <SpanFields span={span} />
       {exception && !d.isInvocation && <ErrorBlock exception={exception} />}
       {d.llm && <LlmDetails llm={d.llm} />}

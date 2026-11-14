@@ -14,7 +14,7 @@ import type {
   VerifyResponse,
   Workspace,
 } from "../api/types";
-import { describeSpan, getLogs, llmUsage } from "../spans/services";
+import { describeSpan, droppedSpans, getLogs, llmUsage } from "../spans/services";
 
 function client(options: Parameters<typeof createMockHandler>[0] = {}) {
   const handle = createMockHandler(options);
@@ -41,7 +41,7 @@ describe("mock API: workspaces and data", () => {
   it("serves project-scoped data with cursor pagination and filters", () => {
     const call = client();
     const fns = call<{ items: FunctionSummary[] }>("GET", `${P}/functions?since=7d`).body.items;
-    expect(fns.map((f) => f.name).sort()).toEqual(["checkout-createOrder", "orders-processQueue"]);
+    expect(fns.map((f) => f.name).sort()).toEqual(["checkout-createOrder", "checkout-importOrders", "orders-processQueue"]);
 
     const page1 = call<InvocationsResponse>("GET", `${P}/invocations?since=7d&limit=10`).body;
     expect(page1.items).toHaveLength(10);
@@ -80,6 +80,19 @@ describe("mock API: workspaces and data", () => {
     const tool = spans.find((s) => s.name === "ai.toolCall")!;
     expect(spans.find((s) => s.name === "DynamoDB.GetItem")!.parent_span_id).toBe(tool.span_id);
     expect(describeSpan(spans.find((s) => s.name === "ai.streamText.doStream")!).llm?.ttftMs).toBeGreaterThan(200);
+  });
+
+  it("serves an import worker trace with summary spans and omitted spans", () => {
+    const call = client();
+    const latest = call<InvocationsResponse>("GET", `${P}/invocations?since=1h&function=checkout-importOrders`).body.items[0];
+    expect(latest.trace_id).toBe("ca11ab1e00000000000000000000a1b2");
+    const spans = call<Trace>("GET", `${P}/traces/${latest.trace_id}`).body.spans;
+    const root = spans.find((s) => describeSpan(s).isInvocation)!;
+    expect(droppedSpans(root.attributes)).toEqual({ count: 37, reason: "span limit" });
+    const summary = spans.find((s) => s.name === "DynamoDB.PutItem × 1,184")!;
+    expect(describeSpan(summary).collapsed).toMatchObject({ count: 1184, errors: 1, kept: 9 });
+    expect(Date.parse(summary.end)).toBeLessThanOrEqual(Date.parse(root.end));
+    expect(spans.filter((s) => s.status_code === "ERROR").map((s) => s.name)).toEqual(["DynamoDB.PutItem"]);
   });
 
   it("creates projects, keys and invitations", () => {

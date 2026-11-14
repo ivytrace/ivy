@@ -1,6 +1,11 @@
 import {
+  collapsedCalls,
+  collapsedInfo,
   describeLlm,
+  droppedSpans,
+  droppedSpansLabel,
   failureLabel,
+  formatCount,
   getException,
   invocationResources,
   isInvocationSpan,
@@ -118,6 +123,13 @@ function header(trace: Trace, spans: Span[]): Line[] {
   ];
   const note = missingTraceNote(kind, a["ivy.synthetic"] === "true");
   if (note) lines.push({ text: `(${note})`, keep: true });
+  const dropped = droppedSpans(a);
+  const collapsed = collapsedCalls(a);
+  const volume = [
+    dropped && droppedSpansLabel(dropped),
+    collapsed && `${formatCount(collapsed)} similar calls collapsed into summary spans (× lines)`,
+  ].filter(Boolean);
+  if (volume.length) lines.push({ text: volume.join(" · "), keep: true });
   return lines;
 }
 
@@ -241,7 +253,12 @@ function render(trace: Trace, settings: Settings): Line[] {
 /** Consecutive leaf siblings starting at `index` that make the same successful call. */
 function collapsibleRun(entries: Entry[], index: number): TraceNode[] {
   const simple = (e: Entry | undefined): e is { node: TraceNode; at: number } =>
-    !!e && !isLog(e) && e.node.children.length === 0 && e.node.span.status_code !== "ERROR" && logEvents(e.node.span).length === 0;
+    !!e &&
+    !isLog(e) &&
+    e.node.children.length === 0 &&
+    e.node.span.status_code !== "ERROR" &&
+    logEvents(e.node.span).length === 0 &&
+    !collapsedInfo(e.node.span);
   const first = entries[index];
   if (!simple(first)) return [];
   const key = callKey(first.node.span);

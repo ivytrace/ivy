@@ -1,5 +1,7 @@
 import {
+  collapsedInfo,
   describeLlm,
+  formatCount,
   describeSpan,
   isAwsSpan,
   isHttpSpan,
@@ -21,7 +23,8 @@ function httpTarget(span: Span): string {
       // fall through
     }
   }
-  return a["server.address"] ?? span.name.split(" ")[1] ?? "";
+  const host = a["server.address"] ?? span.name.split(" ")[1] ?? "";
+  return a["http.route"] ? `${host}${a["http.route"]}` : host;
 }
 
 /** The trigger part of an invocation, e.g. `API Gateway POST /orders → 402` or `SQS`. */
@@ -63,6 +66,20 @@ function llmKey(span: Span, l: LlmSpan): string {
  */
 export function spanLabel(span: Span): string {
   if (isInvocationSpan(span)) return `${span.name} [invocation] ${triggerText(span)}`;
+  const collapsed = collapsedInfo(span);
+  if (collapsed) {
+    const c = collapsed;
+    const stats = [
+      `first→last ${ms(span.duration_ms)}`,
+      `total ${ms(c.totalMs)}`,
+      `avg ${ms(c.avgMs)}`,
+      `min ${ms(c.minMs)}`,
+      `max ${ms(c.maxMs)}`,
+      `${c.errors} error${c.errors === 1 ? "" : "s"}`,
+      `${c.kept} kept`,
+    ];
+    return `${callKey(span)} × ${formatCount(c.count)} (${stats.join(", ")})`;
+  }
 
   const llm = describeLlm(span);
   if (llm) return llmLabel(span, llm);
