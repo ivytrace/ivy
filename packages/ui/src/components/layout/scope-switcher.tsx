@@ -6,7 +6,7 @@ import { NameDialog } from "@/components/workspaces/name-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useMultiWorkspace, useProjects, useWorkspaces } from "@/lib/api/hooks";
 import { createProject, createWorkspace, refreshWorkspace } from "@/lib/api/workspaces";
-import { ALL_PROJECTS, pageLink, settingsLink } from "@/lib/links/links";
+import { ALL_PROJECTS, pageLink, settingsLink, switchProjectLink } from "@/lib/links/links";
 import { cn } from "@/lib/utils/cn";
 
 function Item({ active, onClick, children, muted }: { active?: boolean; onClick: () => void; children: ReactNode; muted?: boolean }) {
@@ -27,11 +27,6 @@ function Item({ active, onClick, children, muted }: { active?: boolean; onClick:
 
 const Divider = () => <div className="-mx-1 my-1 border-t" />;
 
-/** The same page in another project: list pages stay, a trace goes back to Functions. */
-function projectPage(pathname: string): "functions" | "invocations" | "errors" {
-  const page = /^\/w\/[^/]+\/[^/]+\/(functions|invocations|errors)/.exec(pathname)?.[1];
-  return (page as "functions" | "invocations" | "errors" | undefined) ?? "functions";
-}
 
 /** `Workspace / Project ▾` breadcrumb with a switcher on each part. */
 export function ScopeSwitcher({ workspace, project }: { workspace: string; project: string | null }) {
@@ -52,7 +47,7 @@ export function ScopeSwitcher({ workspace, project }: { workspace: string; proje
     setProjectOpen(false);
     navigate(to);
   };
-  const toProject = (slug: string) => go(pageLink({ workspace, project: slug }, projectPage(pathname)));
+  const toProject = (slug: string) => go(switchProjectLink(pathname, { workspace, project: slug }));
 
   return (
     <div className="flex min-w-0 items-center gap-1 text-sm">
@@ -94,6 +89,12 @@ export function ScopeSwitcher({ workspace, project }: { workspace: string; proje
         </PopoverTrigger>
         <PopoverContent align="start" className="w-72 p-1">
           <div className="px-2 py-1.5 text-xs text-muted-foreground">Projects</div>
+          <Item active={project === ALL_PROJECTS} onClick={() => toProject(ALL_PROJECTS)}>
+            <span className="inline-flex items-center gap-2">
+              <Layers className="size-4" /> All projects
+            </span>
+          </Item>
+          <Divider />
           <div className="max-h-72 overflow-y-auto">
             {active.map((p) => (
               <Item key={p.id} active={p.slug === project} onClick={() => toProject(p.slug)}>
@@ -102,11 +103,6 @@ export function ScopeSwitcher({ workspace, project }: { workspace: string; proje
               </Item>
             ))}
           </div>
-          <Item active={project === ALL_PROJECTS} onClick={() => toProject(ALL_PROJECTS)}>
-            <span className="inline-flex items-center gap-2">
-              <Layers className="size-4" /> All projects
-            </span>
-          </Item>
           <Divider />
           <Item muted onClick={() => (setProjectOpen(false), setCreating("project"))}>
             <span className="inline-flex items-center gap-2">

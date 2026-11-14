@@ -146,6 +146,36 @@ trace 6af84ce61c2d3e4f5a6b7c8d9e0f1a2b · request 1b2c3d4e-5f60-4718-a9b0-c1d2e3
    +262ms             log info: Order ord_3Lm8p2Zq77 created"
 `;
 
+exports[`formatTrace > renders summary spans of collapsed calls and the spans omitted at the limit 1`] = `
+"checkout-importOrders · S3 · warm · 9812ms · ok (with failed calls)
+trace 6af84d68c011a95edca11500000000aa · request 1d2e3f40-5a6b-4c7d-8e9f-a0b1c2d3e4f5 · eu-west-1 · 2026-11-14T12:00:40.000Z · 188 MB used · 17 spans
+37 spans omitted (span limit) · 1,496 similar calls collapsed into summary spans (× lines)
+
+   +0.0ms   9812ms  checkout-importOrders [invocation] S3  ok
+                      req: {"Records":[{"eventSource":"aws:s3","s3":{"bucket":{"name":"acme-imports"},"object":{"key":"imports/2026-11-14/orders.csv"}}}]}
+                      res: {"imported":1192,"failed":1}
+   +2.0ms             log info: Importing s3://acme-imports/imports/2026-11-14/orders.csv
+  +12.0ms    184ms    S3.GetObject s3://acme-imports/imports/2026-11-14/orders.csv (2,481,930 bytes)  ok
+   +205ms    5.8ms    DynamoDB.PutItem orders  ok
+   +208ms   38.1ms    GET api.example.com/products/SKU-1001 → 200  ok
+   +212ms   19.2ms    DynamoDB.PutItem orders ×3 (each 4.9ms–6.1ms)  ok
+   +230ms   41.3ms    GET api.example.com/products/SKU-1002 → 200  ok
+   +233ms    4.7ms    DynamoDB.PutItem orders  ok
+   +240ms   9060ms    DynamoDB.PutItem orders × 1,184 (first→last 9060ms, total 6130ms, avg 5.2ms, min 2.1ms, max 29.8ms, 1 error, 9 kept)  ok
+   +252ms   36.4ms    GET api.example.com/products/SKU-1003 → 200  ok
+   +275ms   8990ms    GET api.example.com/products/{sku} × 312 (first→last 8990ms, total 11421ms, avg 36.6ms, min 21.4ms, max 88.2ms, 0 errors, 4 kept)  ok
+  +3120ms   48.2ms    DynamoDB.PutItem orders  ok
+  +4870ms    213ms    GET api.example.com/products/SKU-1187 → 200  ok
+  +5402ms   22.4ms    DynamoDB.PutItem orders → 400  ERROR
+                        ! ProvisionedThroughputExceededException: The level of configured provisioned throughput for the table was exceeded
+                        req: {"TableName":"orders","Item":{"pk":{"S":"ORDER#imp_611"},"status":{"S":"imported"}}}
+                        res: {"__type":"com.amazonaws.dynamodb.v20120810#ProvisionedThroughputExceededException","message":"The level of configured provisioned throughput for the table was exceeded"}
+  +5424ms             log warn: Row 611: ProvisionedThroughputExceededException, skipped
+  +6870ms   41.0ms    DynamoDB.PutItem orders  ok
+  +8410ms   38.7ms    DynamoDB.PutItem orders  ok
+  +9805ms             log info: Imported 1192 of 1193 orders"
+`;
+
 exports[`formatTrace > renders traces without an Ivy invocation span 1`] = `
 "GET /inventory/:sku · 42.5ms · ok
 trace 6af84d490102030405060708090a0b0c · 2026-11-14T12:00:09.000Z · 3 spans

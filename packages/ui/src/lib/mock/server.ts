@@ -30,11 +30,21 @@ const SINCE_MS: Record<string, number> = {
 export const PROJECT_OF: Record<string, string> = {
   "checkout-createOrder": "checkout-prod",
   "orders-processQueue": "checkout-prod",
+  "checkout-importOrders": "checkout-prod",
   "auth-getProfile": "billing-api-prod",
   "reports-nightlyExport": "billing-api-staging",
   "support-answerTicket": "support-api-prod",
   "email-sendReceipt": "billing-api-prod",
 };
+
+/**
+ * The project an invocation was sent to: its function's, except that a quarter of `checkout-createOrder`
+ * runs come from `checkout-staging`, so "All projects" shows one function name in two projects.
+ */
+export function projectOfInvocation(inv: MockInvocation): string {
+  if (inv.function === "checkout-createOrder" && inv.seed % 4 === 0) return "checkout-staging";
+  return PROJECT_OF[inv.function] ?? "checkout-prod";
+}
 
 /** Seconds after a rule or key is created in an empty workspace until the mock "receives" a first trace. */
 const FIRST_TRACE_MS = 6_000;
@@ -103,7 +113,8 @@ function functions(pool: Row[], throttles: ThrottleRow[], params: URLSearchParam
   });
 }
 
-function invocations(pool: Row[], params: URLSearchParams): InvocationsResponse {
+/** `ids` (slug → project ID) for workspace-wide lists, whose items carry `project_id` and `project`. */
+function invocations(pool: Row[], params: URLSearchParams, ids?: Map<string, string>): InvocationsResponse {
   const status = params.get("status");
   const q = params.get("q")?.toLowerCase();
   const limit = Math.min(Number(params.get("limit") ?? 50) || 50, 500);
@@ -113,7 +124,10 @@ function invocations(pool: Row[], params: URLSearchParams): InvocationsResponse 
   );
   const page = found.slice(offset, offset + limit);
   const next = offset + limit < found.length ? btoa(String(offset + limit)) : null;
-  return { items: page.map(strip), next_cursor: next };
+  return {
+    items: page.map((row) => (ids ? { ...strip(row), project_id: ids.get(row.project) ?? row.project, project: row.project } : strip(row))),
+    next_cursor: next,
+  };
 }
 
 function errors(pool: Row[], throttles: ThrottleRow[], params: URLSearchParams, byProject: boolean, ids: Map<string, string>): ErrorGroup[] {
@@ -223,7 +237,7 @@ export function createMockHandler(options: MockOptions = {}) {
 
   const poolOf = (ws: MockWorkspace, project: string | null): Row[] => {
     const rows: Row[] = seeded(ws)
-      ? INVOCATIONS.map((i) => ({ ...i, project: PROJECT_OF[i.function] ?? "checkout-prod" }))
+      ? INVOCATIONS.map((i) => ({ ...i, project: projectOfInvocation(i) }))
       : (live.get(ws.id) ?? []);
     return project ? rows.filter((r) => r.project === project) : rows;
   };
@@ -244,7 +258,13 @@ export function createMockHandler(options: MockOptions = {}) {
 
   const find = (ref: string) => workspaces.find((w) => w.slug === ref || w.id === ref);
   const projectOf = (ws: MockWorkspace, ref: string) => ws.projects.find((p) => p.slug === ref || p.id === ref);
-  const present = ({ projects: _p, members: _m, invitations: _i, keys: _k, ...w }: MockWorkspace) => w;
+  const present = ({ projects, members: _m, invitations: _i, keys: _k, ...w }: MockWorkspace) => ({
+    ...w,
+    default_project_id: projects.find((p) => p.default)?.id ?? "",
+  });
+  const makeDefault = (ws: MockWorkspace, id: string) => {
+    for (const x of ws.projects) x.default = x.id === id;
+  };
   const ids = (ws: MockWorkspace) => new Map(ws.projects.map((p) => [p.slug, p.id]));
 
   function data(ws: MockWorkspace, project: string | null, rest: string, params: URLSearchParams): MockResponse | null {
@@ -253,9 +273,16 @@ export function createMockHandler(options: MockOptions = {}) {
     const all = project === null;
     if (rest === "/functions") return json(200, { items: functions(pool, throttles, params, all, ids(ws)) });
     if (rest === "/errors") return json(200, { items: errors(pool, throttles, params, all, ids(ws)) });
+    if (rest === "/invocations") return json(200, invocations(pool, params, all ? ids(ws) : undefined));
+    if (rest === "/stats/timeseries") {
+      // Workspace-wide, `project` narrows to one project (a function name used in several projects).
+      const only = all && params.get("project");
+      if (!only) return json(200, { items: timeseries(pool, throttles, params) });
+      const p = projectOf(ws, only);
+      if (!p) return notFound("Project not found");
+      return json(200, { items: timeseries(poolOf(ws, p.slug), throttlePoolOf(ws, p.slug), params) });
+    }
     if (all) return null;
-    if (rest === "/invocations") return json(200, invocations(pool, params));
-    if (rest === "/stats/timeseries") return json(200, { items: timeseries(pool, throttles, params) });
     const trace = rest.match(/^\/traces\/([^/]+)$/);
     if (trace) {
       const inv = pool.find((i) => i.trace_id === trace[1]);
@@ -277,7 +304,16 @@ export function createMockHandler(options: MockOptions = {}) {
         p.slug = body.slug;
       }
       if (typeof body.archived === "boolean") {
-        if (body.archived && p.default) return json(409, { error: "The workspace's default project can't be archived" });
+        if (body.archived && !p.archived) {
+          const others = ws.projects.filter((x) => !x.archived && x.id !== p.id);
+          if (!others.length) return json(409, { error: "A workspace needs at least one project" });
+          if (p.default) {
+            const ref = body.new_default;
+            const next = ref ? others.find((x) => x.id === ref || x.slug === ref) : others[0];
+            if (!next) return json(400, { error: `new_default: unknown project ${String(ref)}` });
+            makeDefault(ws, next.id);
+          }
+        }
         p.archived = body.archived;
       }
       return json(200, p);
@@ -314,6 +350,11 @@ export function createMockHandler(options: MockOptions = {}) {
         if (!slugOk(body.slug)) return json(400, { error: "Invalid slug" });
         if (workspaces.some((w) => w.slug === body.slug)) return json(409, { error: `The workspace slug "${body.slug}" is taken` });
         ws.slug = body.slug;
+      }
+      if (body.default_project !== undefined) {
+        const next = ws.projects.find((x) => !x.archived && (x.id === body.default_project || x.slug === body.default_project));
+        if (!next) return json(400, { error: `default_project: unknown project ${String(body.default_project)}` });
+        makeDefault(ws, next.id);
       }
       return json(200, present(ws));
     }

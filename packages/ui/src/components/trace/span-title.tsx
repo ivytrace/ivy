@@ -1,4 +1,18 @@
-import type { SpanDescription } from "@/lib/spans/services";
+import { badgeVariants } from "@/components/ui/badge";
+import { Tooltipped } from "@/components/ui/tooltipped";
+import { formatCount, type CollapsedInfo, type SpanDescription } from "@/lib/spans/services";
+import { cn } from "@/lib/utils/cn";
+
+/** `× 1,184` on a summary span: similar calls the tracer collapsed into this one span. */
+export function CollapsedBadge({ collapsed, className }: { collapsed: CollapsedInfo; className?: string }) {
+  return (
+    <Tooltipped title={`${formatCount(collapsed.count)} similar calls summarised in one span`}>
+      <span className={cn(badgeVariants({ variant: "outline" }), "ml-1.5 px-1.5 py-0 align-middle font-mono text-muted-foreground", className)}>
+        × {formatCount(collapsed.count)}
+      </span>
+    </Tooltipped>
+  );
+}
 
 /**
  * Title of a span row. With `stackNote`, an LLM span's note (tokens, time to first token, provider) goes on
@@ -8,12 +22,15 @@ export function SpanTitle({
   description,
   count = 1,
   stackNote = false,
+  badge = true,
 }: {
   description: SpanDescription;
   count?: number;
   stackNote?: boolean;
+  /** Render the `× N` badge inline; off when the caller places it outside a truncated title. */
+  badge?: boolean;
 }) {
-  const { operation, target, note, isInvocation, llm } = description;
+  const { operation, target, note, isInvocation, llm, collapsed } = description;
   const title = (
     <>
       {count > 1 && <span className="text-muted-foreground">({count}) </span>}
@@ -30,6 +47,7 @@ export function SpanTitle({
               <code className="text-foreground/90">{target}</code>
             </>
           )}
+          {badge && collapsed && <CollapsedBadge collapsed={collapsed} />}
         </>
       )}
     </>

@@ -3,7 +3,7 @@ import { ChevronRight } from "lucide-react";
 
 import { ServiceIcon } from "@/components/common/service-icon";
 import { SpanDetails } from "@/components/trace/span-details";
-import { SpanTitle } from "@/components/trace/span-title";
+import { CollapsedBadge, SpanTitle } from "@/components/trace/span-title";
 import { describeSpan, type ServiceIcon as Icon } from "@/lib/spans/services";
 import type { WaterfallRow } from "@/lib/spans/tree";
 import { cn } from "@/lib/utils/cn";
@@ -24,6 +24,11 @@ const BAR_COLORS: Partial<Record<Icon, string>> = {
 };
 
 const TICKS = [0, 0.25, 0.5, 0.75, 1];
+
+/** Summary spans cover a run of calls from the first start to the last end: hatched, so they don't read as one long call. */
+const COLLAPSED_BAR = {
+  backgroundImage: "repeating-linear-gradient(135deg, transparent 0 3px, hsl(var(--background) / 0.6) 3px 6px)",
+};
 
 export function Waterfall({
   rows,
@@ -78,8 +83,9 @@ export function Waterfall({
                   />
                   <ServiceIcon icon={d.icon} label={d.serviceLabel} />
                   <span className={cn("min-w-0 flex-1 truncate", d.isError && "text-red-400")}>
-                    <SpanTitle description={d} stackNote />
+                    <SpanTitle description={d} stackNote badge={false} />
                   </span>
+                  {d.collapsed && <CollapsedBadge collapsed={d.collapsed} className="ml-0 shrink-0" />}
                 </div>
                 <div className="relative flex h-9 flex-1 items-center pr-20">
                   <div className="relative h-full w-full">
@@ -90,8 +96,9 @@ export function Waterfall({
                       className={cn(
                         "absolute top-1/2 h-2.5 -translate-y-1/2 rounded-sm",
                         d.isError ? "bg-red-400" : (BAR_COLORS[d.icon] ?? "bg-zinc-400"),
+                        d.collapsed && "opacity-70",
                       )}
-                      style={{ left: `${row.offsetPct}%`, width: `${row.widthPct}%` }}
+                      style={{ left: `${row.offsetPct}%`, width: `${row.widthPct}%`, ...(d.collapsed && COLLAPSED_BAR) }}
                     />
                   </div>
                   <span className="absolute right-3 text-xs tabular-nums text-muted-foreground">

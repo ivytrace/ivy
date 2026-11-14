@@ -37,6 +37,13 @@ live in `docs/implementation/`.
   signed-in user whose email matches and is verified by the identity provider.
 - Self-hosted without sign-in, or with `IVY_SINGLE_TENANT` on, has one workspace and no member management.
 - Moving a function to another project affects only new data; data already ingested stays where it is.
+- **The default project is a movable designation**, not a fixed project: any project can be made the default, and the
+  default project can be archived (not deleted: its data stays until retention) as long as another active project
+  exists, which then becomes the default. Keys without a project and functions traced without a project follow the
+  default; keys created for the archived project stop working. A workspace always keeps at least one project.
+- **"All projects"** is a scope of its own: Functions (with its charts), Invocations and Errors work across every
+  project of the workspace, each row labelled with its project and linking into it. It is the first entry of the
+  project switcher and can be the remembered last choice. A single trace always lives in one project.
 
 ## Authentication
 - Dashboard, API and MCP: **either no auth or OIDC**, never passwords or basic auth, not even temporarily.
@@ -75,7 +82,7 @@ live in `docs/implementation/`.
   built-in fallback). Hosted-only behaviour goes into hooks in `ivy-hosted`, not into `ivy`.
 
 ## Billing
-- Billing is per **workspace**. Free tier of **100,000 traces per month**, then **€2 per million traces**;
+- Billing is per **workspace**. Free tier of **100,000 traces per month**, then **€5 per million traces** (raised from €2 on 2026-11-14);
   one trace is one Lambda invocation.
 - Billing and Stripe code live in `ivy-hosted`. The open-source product only knows generic per-workspace limits:
   no limits set means unlimited, so self-hosted is unlimited. Hosted sets the free tier through the
@@ -93,6 +100,14 @@ live in `docs/implementation/`.
 ## Performance
 - Cold-start overhead of the layer must be minimal: the Lambda extension is a small Rust binary (the one exception
   to TypeScript everywhere).
+
+## Large invocations
+- An invocation always shows up in Ivy, even when its spans are too many to keep; repetitive calls are summarised.
+- The invocation span is exported first, on its own, so a failed or dropped export of its children never takes it
+  along. Children go in chunks; the time spent exporting after the response stays bounded (it is billed to the
+  customer). What is left out is said on the trace ("N spans omitted") and in one line in the function's logs.
+- Each invocation has a payload budget (1 MB): the invocation's own event and response first, then failing spans,
+  then the slowest; spans past it keep their timing and attributes but not their bodies.
 
 ## LLM spans
 - Ivy captures OpenTelemetry spans from libraries such as the Vercel AI SDK and renders LLM calls (messages,

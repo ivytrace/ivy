@@ -46,6 +46,8 @@ export interface Workspace {
   name: string;
   role: Role;
   default: boolean;
+  /** The default project: keys without a project and functions traced without one go there. */
+  default_project_id: string;
   created_at: string;
 }
 
@@ -132,7 +134,7 @@ export interface FunctionSummary extends ProjectRef {
   throttles: number;
 }
 
-export interface Invocation {
+export interface Invocation extends ProjectRef {
   trace_id: string;
   span_id: string;
   ts: string;

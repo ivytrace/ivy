@@ -12,7 +12,7 @@ export function registerErrorTools(server: McpServer, data: IvyData) {
       title: "List error groups",
       description:
         "Distinct errors across your workspaces (or one), grouped by function, error type and normalized message, most " +
-        "frequent first. Use it for an overview of what is breaking and how often. Each line: [workspace], count, " +
+        "frequent first. Use it for an overview of what is breaking and how often. Each line: [workspace/project], count, " +
         "function, the failure label for errors outside the handler (Init failed, Out of memory, Timed out, Crashed), error, " +
           "first and last seen (UTC), and a sample trace ID to pass to get_trace_summary. Init failures have no trace spans: " +
           "the sample trace holds only the platform report and the log tail. Lambda throttles appear as one \"Throttled\" " +
@@ -39,7 +39,7 @@ export function registerErrorTools(server: McpServer, data: IvyData) {
         const head = `${groups.length} error groups (${counts}) in ${where}, last ${args.since}${
           shown.length < groups.length ? `, top ${shown.length}` : ""
         }:`;
-        const lines = shown.map((g) => `${label(g.workspace)} ${formatErrorGroups([g.group])}`);
+        const lines = shown.map((g) => `${label(g.workspace, g.group.project)} ${formatErrorGroups([g.group])}`);
         return text(`${head}\n${lines.join("\n")}${failureNote(result.failed)}`);
       }),
   );

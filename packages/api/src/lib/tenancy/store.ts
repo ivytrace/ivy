@@ -1,6 +1,6 @@
 import { controlClient } from '../clickhouse/client.js';
 import { crossTenantQuery, insertRows, tenantQuery } from '../clickhouse/scoped.js';
-import { defaultProjectId } from './ids.js';
+import { workspaceDefaultProject } from './ids.js';
 
 /** A tenant is a workspace: members, AWS accounts, projects, and the shard holding its spans. */
 export interface TenantRecord {
@@ -9,6 +9,8 @@ export interface TenantRecord {
   slug: string;
   name: string;
   shard_id: string;
+  /** The workspace's default project; '' (rows from before it existed) means the derived ID, see workspaceDefaultProject. */
+  default_project_id?: string;
   created_at: number;
 }
 
@@ -26,7 +28,7 @@ export type KeyKind = 'user' | 'auto-trace' | 'bootstrap';
 
 export interface ApiKeyRecord {
   tenant_id: string;
-  /** '' for keys made before projects existed: they belong to the workspace's default project. */
+  /** '' for keys without a project (from before projects, and the bootstrap key): they follow the workspace's default project. */
   project_id: string;
   id: string;
   name: string;
@@ -106,7 +108,7 @@ function version(): string {
   return iso(lastVersion);
 }
 
-const TENANT_COLUMNS = 'id, slug, name, shard_id, toUnixTimestamp64Milli(created_at) AS created_at';
+const TENANT_COLUMNS = 'id, slug, name, shard_id, default_project_id, toUnixTimestamp64Milli(created_at) AS created_at';
 const PROJECT_COLUMNS = 'tenant_id, id, slug, name, archived = 1 AS archived, toUnixTimestamp64Milli(created_at) AS created_at';
 const KEY_COLUMNS = `tenant_id, project_id, id, name, kind, key_hash, prefix, encrypted_key,
   toUnixTimestamp64Milli(created_at) AS created_at, toUnixTimestamp64Milli(revoked_at) AS revoked_at`;
@@ -174,7 +176,7 @@ export const clickhouseTenancyStore: TenancyStore = {
     if (!key) return null;
     const tenant = await clickhouseTenancyStore.getTenant(key.tenant_id);
     if (!tenant) return null;
-    const projectId = key.project_id || defaultProjectId(tenant.id);
+    const projectId = key.project_id || workspaceDefaultProject(tenant);
     const projects = await crossTenantQuery<ProjectRecord>(
       control(),
       `SELECT ${PROJECT_COLUMNS} FROM projects FINAL WHERE tenant_id = {tenant_id:String} AND id = {id:String}`,
@@ -268,7 +270,7 @@ export function memoryTenancyStore(): TenancyStore {
       const key = [...keys.values()].find((k) => k.key_hash === hash && k.revoked_at === null);
       const tenant = key && tenants.get(key.tenant_id);
       if (!key || !tenant) return null;
-      const project = projects.get(`${tenant.id}/${key.project_id || defaultProjectId(tenant.id)}`);
+      const project = projects.get(`${tenant.id}/${key.project_id || workspaceDefaultProject(tenant)}`);
       return { key: copy(key), tenant: copy(tenant), project: project ? copy(project) : null };
     },
     async listInvitations(tenant) {

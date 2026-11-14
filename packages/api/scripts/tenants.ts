@@ -11,8 +11,7 @@
  *
  * In Docker: docker compose -f deploy/docker-compose.yml exec api node tenants.mjs list
  */
-import { defaultProjectId } from '../src/lib/tenancy/ids.js';
-import { findProject } from '../src/lib/tenancy/projects.js';
+import { defaultProjectOf, findProject } from '../src/lib/tenancy/projects.js';
 import { tenancyStore } from '../src/lib/tenancy/store.js';
 import { createApiKey, createTenant, revokeApiKey, setTenantShard } from '../src/lib/tenancy/tenants.js';
 
@@ -34,8 +33,9 @@ async function main() {
       const name = rest.join(' ');
       if (!name) throw new Error('Usage: create <name> [--shard <id>]');
       const tenant = await createTenant(name, shard);
-      const { key, record } = await createApiKey(tenant.id, defaultProjectId(tenant.id), 'Default key');
-      console.log(`tenant  ${tenant.id} (${tenant.shard_id}), slug ${tenant.slug}, default project ${defaultProjectId(tenant.id)}`);
+      const defaultId = await defaultProjectOf(tenant.id);
+      const { key, record } = await createApiKey(tenant.id, defaultId, 'Default key');
+      console.log(`tenant  ${tenant.id} (${tenant.shard_id}), slug ${tenant.slug}, default project ${defaultId}`);
       console.log(`key     ${record.id}`);
       console.log(`api key ${key}   (shown once; store it now)`);
       return;
@@ -57,7 +57,7 @@ async function main() {
       const tenantId = required(0, 'tenant');
       const project = projectRef ? await findProject(tenantId, projectRef) : null;
       if (projectRef && !project) throw new Error(`Unknown project ${projectRef}`);
-      const { key, record } = await createApiKey(tenantId, project?.id ?? defaultProjectId(tenantId), rest.slice(1).join(' ') || 'API key');
+      const { key, record } = await createApiKey(tenantId, project?.id ?? (await defaultProjectOf(tenantId)), rest.slice(1).join(' ') || 'API key');
       console.log(`key     ${record.id}`);
       console.log(`api key ${key}   (shown once; store it now)`);
       return;

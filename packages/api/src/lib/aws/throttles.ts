@@ -2,7 +2,7 @@ import { CloudWatchClient, GetMetricDataCommand, type MetricDataQuery } from '@a
 import { shardClient } from '../clickhouse/client.js';
 import { insertRows } from '../clickhouse/scoped.js';
 import { lookupTenant } from '../tenancy/context.js';
-import { defaultProjectId } from '../tenancy/ids.js';
+import { defaultProjectOf } from '../tenancy/projects.js';
 import { assumeRole } from './clients.js';
 import type { AwsAccount, FunctionStatus, ThrottleStatus } from './types.js';
 
@@ -155,12 +155,13 @@ export async function pollAccountThrottles(
   const errors: string[] = [];
   let denied = false;
   const rows: ThrottleRow[] = [];
+  const defaultId = await defaultProjectOf(account.tenant_id);
   for (const region of regions) {
     // Only traced functions, stored under the project they send to ('' is the workspace's default project).
     // Throttles of untraced or unassigned functions are dropped: they belong to no project.
     const traced = functions
       .filter((f) => f.region === region && f.state === 'traced')
-      .map((f) => ({ name: f.function_name, project_id: f.project_id || defaultProjectId(account.tenant_id) }));
+      .map((f) => ({ name: f.function_name, project_id: f.project_id || defaultId }));
     if (!traced.length) continue;
     try {
       const cw = new CloudWatchClient({ region, credentials, maxAttempts: 3 });

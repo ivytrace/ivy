@@ -106,11 +106,15 @@ An existing owner keeps the owner role.
 ## Workspace routes (`/api/w/:workspace`)
 
 ### `GET /api/w/:workspace`
-The workspace as in `GET /api/workspaces`, with the caller's role.
+The workspace as in `GET /api/workspaces`, with the caller's role, plus `default_project_id`: the workspace's default
+project.
 
-### `PATCH /api/w/:workspace` (owner)
-Body: any of `name`, `slug`. Renaming doesn't change the slug, so URLs stay stable; changing the slug is a separate,
-explicit edit ("Change URL"). 409 if the slug is taken; the `default` workspace's slug can't change.
+### `PATCH /api/w/:workspace`
+Body: any of `name`, `slug` (owner), `default_project` (any member). Renaming doesn't change the slug, so URLs stay
+stable; changing the slug is a separate, explicit edit ("Change URL"). 409 if the slug is taken; the `default`
+workspace's slug can't change. `default_project` (slug or ID of an active project, 400 otherwise) makes that project
+the default: keys without a project and functions traced without a project go there from now on (keys within the
+router's one-minute key cache, functions at the next sync).
 
 ### `DELETE /api/w/:workspace?confirm=<slug>` (owner)
 `confirm` must repeat the slug (400 otherwise). 409 while AWS accounts are connected (disconnect them first) and
@@ -158,15 +162,20 @@ is no per-project usage route.
 
 - `GET /api/w/:workspace/projects` (`?archived=1` includes archived) →
   `{ "items": [ { "id": "prj_…", "slug": "checkout-prod", "name": "Checkout (prod)", "archived": false, "default": false, "created_at": "…" } ] }`
-  `default` marks the project every workspace starts with (it can be renamed but not archived).
+  `default` (boolean) marks the workspace's default project, where keys without a project and functions traced
+  without a project go. Every workspace starts with one; the designation moves with `PATCH /api/w/:workspace`
+  (`default_project`) or when the default project is archived.
 - `POST /api/w/:workspace/projects`, body `{ "name": "Checkout (prod)" }` → 201 with the project. The slug is
   generated from the name like workspace slugs (`checkout-prod`; fallback `project`), unique within the workspace
   (`-2`, `-3`, … on collisions; `all` and `settings` are skipped). An optional `"slug"` is used as given instead (409 if
   it exists in the workspace).
 - `GET /api/w/:workspace/p/:project` → the project.
-- `PATCH /api/w/:workspace/p/:project`, body: any of `name`, `slug`, `archived` (boolean) → the project. Renaming
-  doesn't change the slug. Archiving
-  stops its keys from ingesting (401 at the router) and re-syncs AWS accounts so no function sends to it.
+- `PATCH /api/w/:workspace/p/:project`, body: any of `name`, `slug`, `archived` (boolean), `new_default` → the
+  project. Renaming doesn't change the slug. Archiving stops the keys created for it from ingesting (401 at the
+  router) and re-syncs AWS accounts so no function sends to it. Archiving the **default** project first makes
+  `new_default` (slug or ID of another active project; 400 otherwise) the default, or without it the oldest remaining
+  active project; keys without a project then send to the new default. 409 "A workspace needs at least one project"
+  for the last active project. `new_default` is ignored for other projects.
 
 ### Ingest keys of a project
 
@@ -199,7 +208,15 @@ Workspace-wide (every project of the workspace), under `/api/w/:workspace`:
 | route | |
 |---|---|
 | `GET …/functions` | function overview; each item also has `"project_id": "prj_…", "project": "checkout-prod"` |
+| `GET …/invocations` | invocations of every project, same filters and cursor pagination; each item also has `project_id` and `project` |
 | `GET …/errors` | error groups; each item also has `project_id` and `project` |
+| `GET …/stats/timeseries` | totals over time, summed over every project; `project` (slug or ID) narrows to one |
+
+These routes are mounted with `allProjects()`: they read the tenant explicitly without a project filter, and the query
+guard still requires the tenant filter on every table reference (`workspaces-projects.md`, "The query guard knows
+projects"). There is no workspace-wide trace route: open a trace under the project an invocation row names. A function
+name used in two projects is two rows in `functions`; `stats/timeseries?function=` sums both unless `project` is given.
+Failure fields (`failure_phase`, `failure_kind`, `synthetic`) and throttles behave as in the project routes.
 
 A trace or invocation from another project of the same workspace is not visible under a project's routes (404 /
 not listed).
@@ -234,7 +251,8 @@ Query: `function`, `status` (`ok`|`error`), `q` (free text: matches request ID, 
   "memory_limit_mb": 256, "failure_phase": null, "failure_kind": null, "synthetic": false, "init_duration_ms": null
 } ], "next_cursor": "…" | null }
 ```
-Sorted by `ts` descending.
+Sorted by `ts` descending. Pagination is keyset on `(ts, span_id)`, so workspace-wide pages run across projects
+without gaps or repeats.
 
 Failures outside the handler (reported by the Ivy extension from the Lambda Telemetry API, `platform-failures.md`)
 have `failure_phase` `init` or `invoke` and a `failure_kind`: `init_failed`, `out_of_memory`, `timed_out` or `crashed`
@@ -286,6 +304,8 @@ requests never reach the function, so there is no trace), `failure_kind: null`. 
 
 ### `GET …/stats/timeseries`
 Query: `function` (optional), `bucket` (`1m`|`5m`|`15m`|`1h`|`1d`, default picked from range to keep about 100 points or fewer).
+Workspace-wide also `project` (slug or ID; 404 when the workspace has no such project), to tell apart a function name
+that exists in several projects.
 ```json
 { "items": [ { "ts": "…", "invocations": 10, "errors": 1, "p95_ms": 300.1, "throttles": 0 } ] }
 ```
@@ -553,7 +573,9 @@ Remote MCP server (Streamable HTTP, stateless, JSON responses) with the tools `l
 `find_failing_invocations`, `search_invocations`, `list_error_groups`, `get_trace_summary`, `compare_invocations`,
 and the MCP Apps tools `render_waterfall` and `render_graph` (views served as `ui://ivy/*.html` resources). Tools
 cover every workspace the caller is a member of, one tenant-scoped read per workspace, unless given `workspace`;
-an optional `project` (slug or ID) narrows them to that project.
+an optional `project` (slug or ID) narrows them to that project. Without it they read through the same workspace-wide
+data functions as the routes above (`lib/data/*` with an all-projects scope), so results match the dashboard's
+"All projects", and each line is labelled `[workspace/project]`.
 With OIDC configured it needs a bearer token whose audience is `IVY_MCP_RESOURCE` (MCP clients registered under
 `IVY_OIDC_CLIENT_ID` are accepted there), and answers 401 with `WWW-Authenticate: Bearer resource_metadata="…"`
 otherwise. Details: `mcp.md`.

@@ -14,7 +14,7 @@ import type {
   VerifyResponse,
   Workspace,
 } from "../api/types";
-import { describeSpan, getLogs, llmUsage } from "../spans/services";
+import { describeSpan, droppedSpans, getLogs, llmUsage } from "../spans/services";
 
 function client(options: Parameters<typeof createMockHandler>[0] = {}) {
   const handle = createMockHandler(options);
@@ -41,7 +41,7 @@ describe("mock API: workspaces and data", () => {
   it("serves project-scoped data with cursor pagination and filters", () => {
     const call = client();
     const fns = call<{ items: FunctionSummary[] }>("GET", `${P}/functions?since=7d`).body.items;
-    expect(fns.map((f) => f.name).sort()).toEqual(["checkout-createOrder", "orders-processQueue"]);
+    expect(fns.map((f) => f.name).sort()).toEqual(["checkout-createOrder", "checkout-importOrders", "orders-processQueue"]);
 
     const page1 = call<InvocationsResponse>("GET", `${P}/invocations?since=7d&limit=10`).body;
     expect(page1.items).toHaveLength(10);
@@ -51,10 +51,42 @@ describe("mock API: workspaces and data", () => {
     expect(errors.items.every((i) => i.status === "error" && i.function === "checkout-createOrder")).toBe(true);
 
     // Other projects don't see it; all projects do, labelled.
-    expect(call<{ items: FunctionSummary[] }>("GET", "/api/w/acme/p/checkout-staging/functions?since=7d").body.items).toEqual([]);
+    expect(call<{ items: FunctionSummary[] }>("GET", "/api/w/acme/p/billing-api-prod/functions?since=7d").body.items.map((f) => f.name)).not.toContain(
+      "orders-processQueue",
+    );
     const all = call<{ items: FunctionSummary[] }>("GET", "/api/w/acme/functions?since=7d").body.items;
-    expect(new Set(all.map((f) => f.project))).toEqual(new Set(["checkout-prod", "billing-api-prod", "billing-api-staging", "support-api-prod"]));
+    expect(new Set(all.map((f) => f.project))).toEqual(
+      new Set(["checkout-prod", "checkout-staging", "billing-api-prod", "billing-api-staging", "support-api-prod"]),
+    );
+    // One function name in two projects: two rows.
+    expect(all.filter((f) => f.name === "checkout-createOrder").map((f) => f.project).sort()).toEqual(["checkout-prod", "checkout-staging"]);
     expect(call<{ items: ErrorGroup[] }>("GET", "/api/w/acme/errors?since=7d").body.items[0].project).toBeTruthy();
+  });
+
+  it("serves workspace-wide invocations and timeseries over every project", () => {
+    const call = client();
+    const page1 = call<InvocationsResponse>("GET", "/api/w/acme/invocations?since=7d&limit=50").body;
+    expect(page1.items).toHaveLength(50);
+    expect(page1.items.every((i) => i.project && i.project_id)).toBe(true);
+    expect(new Set(page1.items.map((i) => i.project)).size).toBeGreaterThan(1);
+    const page2 = call<InvocationsResponse>("GET", `/api/w/acme/invocations?since=7d&limit=50&cursor=${page1.next_cursor}`).body;
+    expect(page2.items[0].ts <= page1.items[49].ts).toBe(true);
+    expect(call<InvocationsResponse>("GET", `${P}/invocations?since=7d&limit=5`).body.items[0]).not.toHaveProperty("project");
+
+    const failed = call<InvocationsResponse>("GET", "/api/w/acme/invocations?since=7d&status=error").body.items;
+    expect(failed.length).toBeGreaterThan(0);
+    expect(failed.every((i) => i.status === "error")).toBe(true);
+
+    const sum = (path: string) => call<{ items: { invocations: number }[] }>("GET", path).body.items.reduce((n, p) => n + p.invocations, 0);
+    const ws = sum("/api/w/acme/stats/timeseries?since=7d&function=checkout-createOrder");
+    const prod = sum("/api/w/acme/stats/timeseries?since=7d&function=checkout-createOrder&project=checkout-prod");
+    const staging = sum("/api/w/acme/stats/timeseries?since=7d&function=checkout-createOrder&project=checkout-staging");
+    expect(prod).toBeGreaterThan(0);
+    expect(staging).toBeGreaterThan(0);
+    expect(ws).toBe(prod + staging);
+    expect(sum("/api/w/acme/stats/timeseries?since=7d")).toBeGreaterThan(ws);
+    expect(call("GET", "/api/w/acme/stats/timeseries?project=nope").status).toBe(404);
+    expect(call("GET", "/api/w/acme/traces/abc").status).toBe(404);
   });
 
   it("serves a rich trace for an error group sample, only in its project", () => {
@@ -82,6 +114,19 @@ describe("mock API: workspaces and data", () => {
     expect(describeSpan(spans.find((s) => s.name === "ai.streamText.doStream")!).llm?.ttftMs).toBeGreaterThan(200);
   });
 
+  it("serves an import worker trace with summary spans and omitted spans", () => {
+    const call = client();
+    const latest = call<InvocationsResponse>("GET", `${P}/invocations?since=1h&function=checkout-importOrders`).body.items[0];
+    expect(latest.trace_id).toBe("ca11ab1e00000000000000000000a1b2");
+    const spans = call<Trace>("GET", `${P}/traces/${latest.trace_id}`).body.spans;
+    const root = spans.find((s) => describeSpan(s).isInvocation)!;
+    expect(droppedSpans(root.attributes)).toEqual({ count: 37, reason: "span limit" });
+    const summary = spans.find((s) => s.name === "DynamoDB.PutItem × 1,184")!;
+    expect(describeSpan(summary).collapsed).toMatchObject({ count: 1184, errors: 1, kept: 9 });
+    expect(Date.parse(summary.end)).toBeLessThanOrEqual(Date.parse(root.end));
+    expect(spans.filter((s) => s.status_code === "ERROR").map((s) => s.name)).toEqual(["DynamoDB.PutItem"]);
+  });
+
   it("creates projects, keys and invitations", () => {
     const call = client();
     expect(call<Project>("POST", "/api/w/acme/projects", { name: "Billing (prod)" }).body.slug).toBe("billing-prod");
@@ -94,6 +139,22 @@ describe("mock API: workspaces and data", () => {
     expect(call<{ status: string }>("GET", `/api/invitations/${token}`).body.status).toBe("pending");
     expect(call("POST", `/api/invitations/${token}/accept`).status).toBe(200);
     expect(call("POST", `/api/invitations/${token}/accept`).status).toBe(410);
+  });
+
+  it("moves the default project, also when the default is archived, and keeps one project", () => {
+    const call = client();
+    const defaultOf = () => call<{ items: Project[] }>("GET", "/api/w/acme/projects").body.items.filter((p) => p.default).map((p) => p.slug);
+    expect(defaultOf()).toEqual(["default"]);
+    expect(call<Workspace>("PATCH", "/api/w/acme", { default_project: "checkout-prod" }).body.default_project_id).toMatch(/^prj_/);
+    expect(defaultOf()).toEqual(["checkout-prod"]);
+    expect(call("PATCH", "/api/w/acme/p/checkout-prod", { archived: true, new_default: "checkout-staging" }).status).toBe(200);
+    expect(defaultOf()).toEqual(["checkout-staging"]);
+
+    const solo = client({ empty: true });
+    expect(solo<{ error: string }>("PATCH", "/api/w/personal/p/default", { archived: true })).toEqual({
+      status: 409,
+      body: { error: "A workspace needs at least one project" },
+    });
   });
 
   it("receives a first trace in an empty workspace a few seconds after a key is created", () => {

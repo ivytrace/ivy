@@ -149,6 +149,13 @@ try {
   const aiV7 = startContainer('ai-v7', 9109, aiDir('v7'), 'index.handler');
   const importError = startContainer('importerror', 9110, 'failures', 'missing.handler');
   const oom = startContainer('oom', 9111, 'failures', 'oom.handler', { NODE_OPTIONS: '--max-old-space-size=32' });
+  // The extension's intake opens 400 ms after it registered (test-only switch): the tracer's hello at init
+  // fails, as in the production startup race, and spans must still reach the extension.
+  const lateIntake = startContainer('late-intake', 9112, 'cjs', 'index.handler', { IVY_TEST_INTAKE_DELAY_MS: '400' });
+  // Import workers: thousands of similar calls in one invocation. IVY_DEBUG off: the diagnostics line
+  // must show up anyway. The LLM case keeps 40 calls in full so that the 1 MB payload budget is hit.
+  const importDdb = startContainer('import-ddb', 9113, 'import', 'index.handler', { IVY_DEBUG: '0' });
+  const importLlm = startContainer('import-llm', 9114, 'import', 'index.handler', { IVY_DEBUG: '0', IVY_COLLAPSE_KEEP: '40' });
   const baseline = startContainer('baseline', 9106, 'cjs', 'index.handler', { AWS_LAMBDA_EXEC_WRAPPER: '', IVY_ENDPOINT: '' }, { layer: false });
 
   console.log('invoking…');
@@ -166,6 +173,9 @@ try {
   };
   results.importError = await invoke(importError, {});
   results.oom = await invoke(oom, {});
+  results.lateIntake = await invoke(lateIntake, apiGwV2);
+  results.importDdb = await invoke(importDdb, { mode: 'dynamodb', items: 3000 });
+  results.importLlm = await invoke(importLlm, { mode: 'llm', calls: 300 });
   for (const [k, r] of Object.entries(results)) console.log(`  ${k.padEnd(9)} ${String(r.ms).padStart(5)}ms  ${r.body.slice(0, 110)}`);
 
   check(JSON.parse(results.warm.body).statusCode === 200, 'handler result passed through unchanged');
@@ -253,6 +263,57 @@ try {
       !!bundledDdb && bundledDdb.name === 'DynamoDB.GetItem' && attr(bundledDdb, 'rpc.service') === 'DynamoDB' && attr(bundledDdb, 'aws.dynamodb.table_names')?.[0] === 'bundled-table' && attr(bundledDdb, 'aws.request_id') === 'FAKE-REQ-1',
       'bundled SDK: AWS span derived from the signed HTTP request',
     );
+    const lateLog = logs.get('late-intake').join('');
+    check(
+      rootsBy('late-intake').length === 1 && /extension not reachable yet/.test(lateLog) && !/exporting directly/.test(lateLog),
+      'intake opened late: spans still went through the extension (no direct export)',
+    );
+    {
+      const traceOf = (fn) => {
+        const r = rootsBy(fn)[0];
+        return { r, children: r ? spans.filter((s) => s.traceId === r.traceId && s.spanId !== r.spanId) : [] };
+      };
+      const exportLine = (name) => {
+        const m = logs.get(name).join('').match(/\[ivy\] exported (\d+) invocations?, (\d+) chunks?, collapsed ([\d,]+) calls, dropped ([\d,]+) spans \((\d+) ms\)/);
+        return m && { invocations: +m[1], chunks: +m[2], collapsed: Number(m[3].replace(/,/g, '')), dropped: Number(m[4].replace(/,/g, '')), ms: +m[5] };
+      };
+      const budgetFor = (chunks) => Math.min(5000, 2000 + 500 * chunks);
+      const bytes = (s) => s.attributes.filter((a) => /^ivy\.payload\./.test(a.key)).reduce((n, a) => n + Buffer.byteLength(a.value.stringValue ?? ''), 0);
+
+      const ddbResult = JSON.parse(results.importDdb.body);
+      const { r: ddbRoot, children: ddbChildren } = traceOf('import-ddb');
+      const ddbSummary = ddbChildren.find((s) => /^DynamoDB\.PutItem × /.test(s.name));
+      check(ddbResult.imported === 3000 && ddbResult.failed === 2, 'import worker (3,000 DynamoDB calls): result unchanged');
+      check(!!ddbRoot && attr(ddbRoot, 'ivy.collapsed_calls') === '2987' && attr(ddbRoot, 'ivy.dropped_spans') === undefined, 'import worker: invocation span arrived, 2,987 calls collapsed, nothing dropped');
+      check(
+        !!ddbSummary && ddbSummary.name === 'DynamoDB.PutItem × 2,987' && attr(ddbSummary, 'ivy.collapsed.count') === '2987' && attr(ddbSummary, 'ivy.collapsed.errors') === '2' &&
+          attr(ddbSummary, 'ivy.collapsed.kept') === '15' && Number(attr(ddbSummary, 'ivy.collapsed.duration_total_ms')) > 0,
+        `import worker: one summary span with the run's stats (${ddbChildren.length} child spans in all)`,
+      );
+      check(ddbChildren.filter((s) => s.status.code === 2).length === 2, 'import worker: both failing calls kept in full');
+      const ddbLine = exportLine('import-ddb');
+      check(!!ddbLine && ddbLine.collapsed === 2987 && ddbLine.ms <= budgetFor(ddbLine.chunks), `import worker: diagnostics line without IVY_DEBUG, export ${ddbLine?.ms} ms within budget`);
+
+      const llmResult = JSON.parse(results.importLlm.body);
+      const { r: llmRoot, children: llmChildren } = traceOf('import-llm');
+      const llmSummary = llmChildren.find((s) => / × /.test(s.name));
+      const all = llmRoot ? [llmRoot, ...llmChildren] : [];
+      const payloadBytes = all.reduce((n, s) => n + bytes(s), 0);
+      check(llmResult.classified === 300 && !!llmRoot, 'LLM import (300 calls, 16 KB bodies): invocation span arrived');
+      check(
+        !!llmSummary && attr(llmSummary, 'ivy.collapsed.count') === '257' && attr(llmSummary, 'ivy.collapsed.input_tokens') === String(257 * 1200) && attr(llmSummary, 'ivy.collapsed.output_tokens') === String(257 * 80),
+        `LLM import: summary of 257 calls with summed tokens (${attr(llmSummary ?? { attributes: [] }, 'ivy.collapsed.input_tokens')} → ${attr(llmSummary ?? { attributes: [] }, 'ivy.collapsed.output_tokens')})`,
+      );
+      check(
+        payloadBytes <= 1024 * 1024 && Number(attr(llmRoot ?? { attributes: [] }, 'ivy.trimmed_payload_bytes')) > 0 && llmChildren.some((s) => attr(s, 'ivy.payload.trimmed')) && !!attr(llmRoot ?? { attributes: [] }, 'ivy.payload.request'),
+        `LLM import: payload budget held (${Math.round(payloadBytes / 1024)} KB kept, ${Math.round(Number(attr(llmRoot ?? { attributes: [] }, 'ivy.trimmed_payload_bytes')) / 1024)} KB trimmed, event kept)`,
+      );
+      const llmLine = exportLine('import-llm');
+      check(!!llmLine && llmLine.ms <= budgetFor(llmLine.chunks), `LLM import: export ${llmLine?.ms} ms in ${llmLine?.chunks} chunks, within budget`);
+      const names = Object.entries(ddbChildren.reduce((m, s) => ({ ...m, [s.name + (s.status.code === 2 ? ' (error)' : '')]: (m[s.name + (s.status.code === 2 ? ' (error)' : '')] ?? 0) + 1 }), {}));
+      console.log(`  import worker spans: ${names.map(([n, c]) => `${c}× ${n}`).join(', ')}`);
+      console.log(`  import worker: ${ddbChildren.length} child spans for 3,002 calls; LLM import: ${llmChildren.length} child spans, ${Math.round(payloadBytes / 1024)} KB payloads`);
+    }
     const timeoutRoot = rootsBy('timeout')[0];
     check(!!timeoutRoot && attr(timeoutRoot, 'error.type') === 'Timeout', 'timeout recorded with error.type=Timeout');
 

@@ -95,15 +95,15 @@ export function sparklineBucket(range: TimeRange): string {
 }
 
 /**
- * Totals over time in a project. `project` overrides the URL's project (sparklines on the
- * all-projects page); without a project (all projects) there is no timeseries.
+ * Totals over time in the current scope (summed over every project under `all`). `project` overrides
+ * the URL's project (sparklines on the all-projects page, where a row belongs to one project).
  */
 export function useTimeseries(range: TimeRange, params: { function?: string; bucket?: string; project?: string | null } = {}) {
   const scope = useScope();
   const { project, ...rest } = params;
   const p = project ?? scope.project;
   return useApi<ListResponse<TimeseriesPoint>>(
-    p === ALL_PROJECTS ? null : buildUrl(`${scopePath({ workspace: scope.workspace, project: p })}/stats/timeseries`, { ...rangeParams(range), ...rest }),
+    buildUrl(`${scopePath({ workspace: scope.workspace, project: p })}/stats/timeseries`, { ...rangeParams(range), ...rest }),
   );
 }
 
@@ -115,12 +115,22 @@ export interface InvocationFilters {
   limit?: number;
 }
 
+/** Invocations of the current scope; under `all`, of every project (items then carry `project`). */
 export function useInvocations(range: TimeRange, filters: InvocationFilters, options?: SWRConfiguration<InvocationsResponse>) {
   const scope = useScope();
-  return useApi<InvocationsResponse>(
-    scope.project === ALL_PROJECTS ? null : buildUrl(`${scopePath(scope)}/invocations`, { ...rangeParams(range), ...(filters as QueryParams) }),
-    options,
+  return useApi<InvocationsResponse>(buildUrl(`${scopePath(scope)}/invocations`, { ...rangeParams(range), ...(filters as QueryParams) }), options);
+}
+
+/**
+ * The project a trace belongs to, for a trace opened under `all`: its invocation from the workspace-wide
+ * list (`q` matches trace IDs exactly), over a range longer than any retention. null when there's none.
+ */
+export function useTraceProject(workspace: string, traceId: string | undefined, range: TimeRange) {
+  const { data, error } = useApi<InvocationsResponse>(
+    traceId ? buildUrl(`${wsPath(workspace)}/invocations`, { ...rangeParams(range), q: traceId, limit: 1 }) : null,
+    { keepPreviousData: false, revalidateIfStale: false },
   );
+  return { project: data ? (data.items[0]?.project ?? null) : undefined, error };
 }
 
 export function useErrors(range: TimeRange, fn?: string) {

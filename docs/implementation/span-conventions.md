@@ -63,6 +63,22 @@ One per invocation. It is the span the `invocations` table is built from.
 - `ivy.init_duration_ms` (double): on cold starts, the init phase duration from the Lambda platform
   (`platform.initReport`). `ivy.restore_duration_ms` likewise for SnapStart restores.
 
+### Span limits, collapsing and payload budget
+
+Set on the invocation span when the layer had to leave something out (`layer.md`, "Large invocations"):
+
+- `ivy.collapsed_calls` (int): calls folded into summary spans (below).
+- `ivy.dropped_spans` (int): child spans of this invocation that are not stored, and `ivy.dropped_spans.reason`
+  (string, comma-separated): `span limit` (more than `IVY_MAX_SPANS` after collapsing), `queue full` or
+  `export failed` (lost in the extension's export queue). When the invocation span had already been exported, the
+  extension sends the new total in an update span (below), which readers merge.
+- `ivy.trimmed_payload_bytes` (int) and `ivy.trimmed_payloads` (int): payload attributes left out because the
+  invocation's payload budget ran out. Spans that lost payloads carry `ivy.payload.trimmed = true` (also used when a
+  single span was larger than an export chunk).
+- `ivy.dropped_logs` (int): console log events past 500.
+
+Readers show "N spans omitted (reason)" for `ivy.dropped_spans`.
+
 ### Failures outside the handler (from the extension)
 
 The extension reads the Lambda Telemetry API (`platform-failures.md`) and adds these to the invocation span, or
@@ -116,6 +132,29 @@ HTTP (fetch/undici, node:http, node:https), excluding calls to the Ivy endpoint 
 - `http.request.method`, `url.full` (query string redacted per config), `server.address`, `server.port`, `http.response.status_code`
 - `ivy.payload.request`, `ivy.payload.response`: bodies (text/JSON only, capped)
 - `ivy.http.request.headers`, `ivy.http.response.headers`: JSON object strings, sensitive headers redacted
+
+### Collapsed summary spans
+
+When one invocation makes more than `IVY_COLLAPSE_THRESHOLD` (50) calls with the same signature under the same
+parent, the tracer keeps the first `IVY_COLLAPSE_KEEP` (10), the `IVY_COLLAPSE_KEEP_SLOWEST` (3) slowest and every
+failing call as ordinary spans, and replaces the rest with one summary span per signature. A collapsed call takes its
+nested spans with it. Signatures: AWS service + operation + target (table, bucket, queue, topic, function, bus);
+LLM operation + provider + model (bridge spans); HTTP method + host + route template (`/users/{id}`: numeric, UUID,
+long hex and long mixed segments become `{id}`); otherwise the span name.
+
+- name: `<name of the calls> × <count>`, e.g. `DynamoDB.PutItem × 1,184` (thousands separator `,`)
+- kind and parent of the calls; start = start of the first collapsed call, end = end of the last one
+- `ivy.collapsed.count` (int): calls the summary stands for (not the ones kept in full)
+- `ivy.collapsed.duration_total_ms`, `ivy.collapsed.duration_max_ms`, `ivy.collapsed.duration_min_ms` (double)
+- `ivy.collapsed.errors` (int): failing calls with this signature (all kept in full, never inside the summary)
+- `ivy.collapsed.kept` (int): calls with this signature kept in full, failing ones included
+- `ivy.collapsed.signature` (string), e.g. `DynamoDB.PutItem orders`, `POST api.openai.com /v1/chat/completions`
+- `ivy.collapsed.spans` (int, optional): spans removed including nested ones, when more than the calls
+- `ivy.collapsed.input_tokens`, `ivy.collapsed.output_tokens` (int, optional): summed tokens of collapsed LLM calls,
+  from bridge usage attributes or, for plain HTTP calls to a model provider, from the `usage` in the response body.
+  Readers count them in the trace's token totals (`llmUsage` counts the summary as `ivy.collapsed.count` calls).
+- the calls' identifying attributes (`rpc.*`, `aws.*`, `messaging.*`, `http.request.method`, `server.address`,
+  `gen_ai.*`/`ai.model.*`, …); no payloads.
 
 ## Logs
 

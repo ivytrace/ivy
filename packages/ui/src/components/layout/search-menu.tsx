@@ -28,7 +28,6 @@ export function SearchMenu() {
   const route = useRouteScope();
   const scope = route ? { workspace: route.workspace, project: route.project ?? ALL_PROJECTS } : null;
   const { data } = useFunctions(range);
-  const inProject = !!scope && scope.project !== ALL_PROJECTS;
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -67,13 +66,13 @@ export function SearchMenu() {
           <CommandEmpty>No results found.</CommandEmpty>
           {trimmed && (
             <CommandGroup heading="Search">
-              {inProject && TRACE_ID.test(trimmed) && (
+              {scope && TRACE_ID.test(trimmed) && (
                 <CommandItem value={`trace ${trimmed}`} onSelect={() => go(traceLink(scope, trimmed.toLowerCase()))}>
                   <WaypointsIcon className="mr-2 size-4" />
                   Open trace <code className="ml-1 text-xs">{trimmed}</code>
                 </CommandItem>
               )}
-              {inProject && (
+              {scope && (
                 <CommandItem value={`invocations ${trimmed}`} onSelect={() => go(invocationsLink(scope, { q: trimmed }))}>
                   <ListIcon className="mr-2 size-4" />
                   Search invocations for “{trimmed}”

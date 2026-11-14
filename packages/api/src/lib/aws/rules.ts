@@ -1,6 +1,6 @@
 import { HTTPException } from 'hono/http-exception';
-import { defaultProjectId, randomBase62 } from '../tenancy/ids.js';
-import { findProject, listProjects } from '../tenancy/projects.js';
+import { randomBase62 } from '../tenancy/ids.js';
+import { defaultProjectOf, findProject, listProjects } from '../tenancy/projects.js';
 import { assignmentContext, assignProject, matchesRule } from './assign.js';
 import { isRegion } from './regions.js';
 import { triggerSync } from './scheduler.js';
@@ -38,9 +38,12 @@ export function parseMatcher(input: unknown): RuleMatcher {
   return matcher;
 }
 
-/** A project of the workspace by slug or ID that can receive functions; 400 otherwise. */
+/**
+ * A project of the workspace by slug or ID that can receive functions; 400 otherwise. No ref means the
+ * workspace's current default project, resolved now and stored as its ID.
+ */
 export async function targetProject(tenantId: string, ref: unknown): Promise<string> {
-  if (ref === undefined || ref === null || ref === '') return defaultProjectId(tenantId);
+  if (ref === undefined || ref === null || ref === '') return defaultProjectOf(tenantId);
   const project = typeof ref === 'string' ? await findProject(tenantId, ref) : null;
   if (!project) throw bad(`Unknown project: ${String(ref)}`);
   if (project.archived) throw bad(`Project ${project.slug} is archived`);
@@ -135,15 +138,16 @@ export interface DryRunItem {
  */
 export async function dryRun(tenantId: string, matcher: RuleMatcher, projectId: string): Promise<DryRunItem[]> {
   const store = awsStore();
-  const [functions, rules, settings, projects] = await Promise.all([
+  const [functions, rules, settings, projects, defaultId] = await Promise.all([
     store.listFunctions(tenantId),
     store.listRules(tenantId),
     store.listSettings(tenantId),
     listProjects(tenantId),
+    defaultProjectOf(tenantId),
   ]);
   const probe: ProjectRule = { tenant_id: tenantId, id: '__dry_run__', ...matcher, project_id: projectId, enabled: true, position: rules.length, created_at: Date.now() };
   const withTarget = projects.some((p) => p.id === projectId) ? projects : [...projects, { id: projectId, slug: projectId, archived: false }];
-  const ctx = assignmentContext(withTarget, [...rules, probe], defaultProjectId(tenantId));
+  const ctx = assignmentContext(withTarget, [...rules, probe], defaultId);
   const manual = new Map(settings.map((s) => [settingKey(s.account_id, s.region, s.function_name), s]));
   const out: DryRunItem[] = [];
   for (const fn of functions) {

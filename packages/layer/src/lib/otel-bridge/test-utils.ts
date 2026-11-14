@@ -37,8 +37,7 @@ export function setupBridge(env: Record<string, string> = {}) {
     }
     tracer.endInvocation(inv, error, { ok: true });
     await new Promise((r) => setImmediate(r));
-    const batch = batches.find((b) => b.requestId === `req-${n}` && b.final)!;
-    const [root, ...children] = batch.spans;
+    const [root, ...children] = batches.filter((b) => b.requestId === `req-${n}`).flatMap((b) => b.spans);
     const byName = (name: string | RegExp) => children.filter((s) => (typeof name === 'string' ? s.name === name : name.test(s.name)));
     return { root, children, byName };
   };

@@ -1,5 +1,5 @@
 import { loadConfig } from './lib/config/config.js';
-import { helloExtension, sendToExtension } from './lib/extension/client.js';
+import { ExtensionLink, extensionInstalled, sendToExtension } from './lib/extension/client.js';
 import { ExportQueue } from './lib/export/queue.js';
 import { instrumentAwsSdk } from './lib/instrumentation/aws-sdk.js';
 import { instrumentConsole } from './lib/instrumentation/console.js';
@@ -37,10 +37,7 @@ async function setup(): Promise<Function> {
 }
 
 function createTracer(): Tracer {
-  const viaExtension = helloExtension(config.extensionPort).then((ok) => {
-    log(ok ? 'connected to ivy extension' : 'extension not reachable, exporting directly');
-    return ok;
-  });
+  const link = new ExtensionLink({ port: config.extensionPort, expected: extensionInstalled(), log });
   let queue: ExportQueue | undefined;
   const exportDirectly = (batch: SpanBatch) => {
     queue ??= new ExportQueue({
@@ -51,19 +48,27 @@ function createTracer(): Tracer {
       log,
     });
     queue.add(batch);
-    if (batch.final) queue.flush(config.flushBudgetMs).catch(() => {});
+    if (batch.final) {
+      const budget = Math.min(config.flushBudgetMaxMs, config.flushBudgetMs + config.flushBudgetPerChunkMs * Math.max(0, queue.pending - 1));
+      queue.flush(budget).catch(() => {});
+    }
   };
+  // Batches go out one after another, in order: the invocation span first, then its chunks.
+  let handoff: Promise<unknown> = link.viaExtension;
   const sink = (batch: SpanBatch) => {
-    viaExtension.then((ok) => {
-      if (!ok) return exportDirectly(batch);
-      sendToExtension(config.extensionPort, batch).then((sent) => {
-        if (!sent) log(`could not hand spans for ${batch.requestId} to the extension`);
-      });
+    handoff = handoff.then(async () => {
+      if (!(await link.viaExtension)) return exportDirectly(batch);
+      const sent = await sendToExtension(config.extensionPort, batch);
+      if (!sent) originalWarn(`[ivy] could not hand ${batch.spans.length} spans for ${batch.requestId} to the Ivy extension`);
     });
   };
 
   const tracer = new Tracer(config, sink, log);
-  tracer.onInvocationStart = instrumentHttp(tracer);
+  const checkHttps = instrumentHttp(tracer);
+  tracer.onInvocationStart = () => {
+    link.onInvocationStart();
+    checkHttps();
+  };
   instrumentFetch(tracer);
   instrumentAwsSdk(tracer);
   if (config.captureLogs) instrumentConsole(tracer);

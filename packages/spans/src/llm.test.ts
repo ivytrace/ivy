@@ -187,6 +187,15 @@ describe("LLM spans in traces", () => {
     expect(llmUsage([root, ddb])).toBeUndefined();
   });
 
+  it("counts a summary of collapsed model calls as its calls and summed tokens", () => {
+    const summary = span(
+      "ai.generateText × 67",
+      { "ai.operationId": "ai.generateText", "ai.model.provider": "openai.chat", "ai.model.id": "gpt-4o-mini", "ivy.collapsed.count": "67", "ivy.collapsed.input_tokens": "6700", "ivy.collapsed.output_tokens": "670" },
+      { span_id: "sum", parent_span_id: "root" },
+    );
+    expect(llmUsage([...spans, summary])).toMatchObject({ calls: 69, inputTokens: 1713 + 6700, outputTokens: 65 + 670 });
+  });
+
   it("describes LLM spans for rows: AI icon, operation, model, token note", () => {
     expect(describeSpan(call1)).toMatchObject({ icon: "ai", serviceLabel: "OpenAI", operation: "doGenerate", target: "gpt-4o-mini", note: "812 → 24 tokens · OpenAI" });
     expect(describeSpan(tool)).toMatchObject({ icon: "ai", operation: "tool", target: "getOrder" });

@@ -32,7 +32,7 @@ library needs:
   off unless something starts an active span. Contexts are the API's `BaseContext` shape; the active span
   is read from `Symbol.for('OpenTelemetry Context Key SPAN')`, the key every API copy uses.
 - **Spans** (`provider.ts`, `span.ts`). `startSpan` creates an Ivy child span through `Tracer.startChild`
-  (so the 1000-span cap applies). A parent from the bridge in the same invocation keeps the hierarchy;
+  (so collapsing and the span limit apply, `layer.md` "Large invocations"). A parent from the bridge in the same invocation keeps the hierarchy;
   anything else (no parent, a remote parent, a span from an earlier invocation) hangs off the invocation
   span. Outside an invocation (module init) spans are non-recording. Kinds are shifted to OTLP numbering,
   `TimeInput` (hrtime, epoch ms, `performance.now()` ms, `Date`) is converted, status follows OTel (OK is

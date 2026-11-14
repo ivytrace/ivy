@@ -50,7 +50,10 @@ export function registerTraceTools(server: McpServer, data: IvyData) {
         "start and duration in ms, indentation for nesting, a description of the call (e.g. `DynamoDB.GetItem orders (1 item " +
         "returned)`, `POST api.stripe.com/v1/charges → 402`) and status. Errors (`!`) come with type, message and the top " +
         "stack frames; logs appear at their time; `req:`/`res:` lines are trimmed payloads (secrets were redacted at the " +
-        "source). Repeated identical calls are folded into one `×N` line.",
+        "source). Repeated identical calls are folded into one `×N` line. When the tracer itself summarised a run of " +
+        "similar calls, the summary span reads e.g. `DynamoDB.PutItem orders × 1,184 (first→last …, total …, avg …, min …, " +
+        "max …, 1 error, 9 kept)`: N calls in the summary, while the failing ones and `kept` others are separate lines. " +
+        "A header line like `37 spans omitted (span limit)` means the trace is incomplete.",
       inputSchema: {
         workspace,
         project,

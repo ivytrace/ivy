@@ -4,6 +4,7 @@ import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { errorGroups } from '../data/errors.js';
 import { listInvocations } from '../data/invocations.js';
+import { projectNames } from '../data/projects.js';
 import { getTrace } from '../data/traces.js';
 import type { DataScope } from '../tenancy/context.js';
 import { findProject } from '../tenancy/projects.js';
@@ -19,6 +20,9 @@ async function scopeOf(w: ApiWorkspace, project: string | undefined): Promise<Da
   const match = await findProject(w.tenant.id, project);
   return match ? { tenant: w.tenant, projectId: match.id } : null;
 }
+
+/** Project slugs for labelling rows of a workspace-wide read (as the API's workspace-wide routes do). */
+const namesFor = (scope: DataScope) => (scope.projectId === null ? projectNames(scope.tenant.id) : Promise.resolve(undefined));
 
 const range = (q: { since?: string; from?: string; to?: string }) =>
   parseTimeRange(Object.fromEntries(Object.entries(q).filter(([, v]) => v !== undefined)) as Record<string, string>);
@@ -46,7 +50,8 @@ export function apiData(c: Context, workspaces: WorkspaceSource): IvyData<ApiWor
       api(async () => {
         const scope = await scopeOf(w, query.project);
         if (!scope) return [];
-        const { items } = await listInvocations(scope, range(query), { function: query.function, status: query.status, q: query.q, limit: query.limit });
+        const filters = { function: query.function, status: query.status, q: query.q, limit: query.limit };
+        const { items } = await listInvocations(scope, range(query), filters, await namesFor(scope));
         return items as Invocation[];
       }),
     trace: (w, traceId, project) =>
@@ -57,7 +62,7 @@ export function apiData(c: Context, workspaces: WorkspaceSource): IvyData<ApiWor
     errors: (w, query) =>
       api(async () => {
         const scope = await scopeOf(w, query.project);
-        return scope ? ((await errorGroups(scope, range(query), query.function)) as ErrorGroup[]) : [];
+        return scope ? ((await errorGroups(scope, range(query), query.function, await namesFor(scope))) as ErrorGroup[]) : [];
       }),
   };
 }

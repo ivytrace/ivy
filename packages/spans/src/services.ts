@@ -1,3 +1,4 @@
+import { collapsedBaseName, collapsedInfo, type CollapsedInfo } from "./collapsed.js";
 import { failureLabel, invocationResources, spanFailureKind } from "./failures.js";
 import { describeLlm, formatTokens, llmNote, type LlmSpan } from "./llm.js";
 import type { Span } from "./types.js";
@@ -46,6 +47,8 @@ export interface SpanDescription {
   isError: boolean;
   /** LLM, agent, embedding and tool-call spans (see llm.ts). */
   llm?: LlmSpan;
+  /** Summary spans of a run of similar calls (see collapsed.ts). */
+  collapsed?: CollapsedInfo;
 }
 
 const TRUNCATION_MARKER = /…\[truncated \d+ bytes\]$/;
@@ -422,7 +425,7 @@ function describeHttp(span: Span) {
     icon: known?.icon ?? ("external" as ServiceIcon),
     serviceLabel: known?.label ?? "HTTP",
     operation: method,
-    target: a["url.full"] || host,
+    target: a["url.full"] || (a["http.route"] ? `${host}${a["http.route"]}` : host),
     note: status ? `status ${status}` : undefined,
     graphLabel: known?.label ?? host,
     groupingKey: ["http", host, method, path].join("|"),
@@ -512,7 +515,9 @@ export const isAwsSpan = (span: Span) => span.attributes["rpc.system"] === "aws-
 export const isHttpSpan = (span: Span) =>
   span.kind === "CLIENT" && !!(span.attributes["http.request.method"] || span.attributes["url.full"]);
 
-export function describeSpan(span: Span): SpanDescription {
+export function describeSpan(original: Span): SpanDescription {
+  const collapsed = collapsedInfo(original);
+  const span = collapsed ? { ...original, name: collapsedBaseName(original.name) } : original;
   const a = span.attributes;
   const request = parsePayload(a["ivy.payload.request"]);
   const response = parsePayload(a["ivy.payload.response"]);
@@ -546,6 +551,7 @@ export function describeSpan(span: Span): SpanDescription {
     isInvocation: isInvocationSpan(span),
     isError: span.status_code === "ERROR",
     llm,
+    collapsed,
   };
 }
 

@@ -98,7 +98,8 @@ A 429 is drop-and-count, without hammering (`layer.md`, Delivery):
 
 - The transport stops retrying at once on a 429 or 503 that carries `Retry-After` (it used to retry twice within the
   flush) and hands the delay to the queue.
-- The queue drops the batch, counts it in `ivy.dropped_spans`, and sends nothing until the delay has passed (capped
+- The queue drops the request, records lost child spans in `ivy.dropped_spans` on their invocation span (see
+  `layer.md`, Delivery), and sends nothing until the delay has passed (capped
   at 1 hour), not even the forced flush at `SHUTDOWN`. Spans in that window are buffered up to `IVY_MAX_QUEUE_SPANS`
   and the oldest are dropped and counted.
 - So an execution environment over quota sends at most one request per `Retry-After` (5 minutes), not one per
