@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkoutFailed, checkoutOk, plainOtel, queueFailed } from "../fixtures/traces.js";
+import { checkoutFailed, checkoutOk, plainOtel, queueFailed, supportBot, supportBotGenAi } from "../fixtures/traces.js";
 import { estimateTokens } from "../text/text.js";
 import { formatTrace } from "./format-trace.js";
 
@@ -46,6 +46,24 @@ describe("formatTrace", () => {
     expect(text).toContain("checkout-createOrder [invocation]");
     expect(text).toContain("! TypeError: Cannot read properties of undefined (reading 'id')");
     expect(text).toMatchSnapshot();
+  });
+
+  it("renders LLM spans with model, tokens, time to first token, tool calls, prompt and response", () => {
+    const text = formatTrace(supportBot, { maxTokens: 0 });
+    expect(text).toMatchSnapshot();
+    expect(text).toContain("3 LLM calls 1877→103 tok");
+    expect(text).toContain("ai.generateText.doGenerate gpt-4o-mini 812→24 tok tool:getOrder");
+    expect(text).toContain("ai.streamText.doStream claude-haiku-4-5 164→38 tok (ttft 318ms)");
+    expect(text).toMatch(/ai\.toolCall getOrder {2}ok\n.*args: \{"orderId":"ord_8812"\}/);
+    expect(formatTrace(supportBot, { detail: "summary" })).not.toContain("prompt:");
+    expect(formatTrace(supportBot, { detail: "full", maxTokens: 0 })).toMatch(/system: You are the support assistant/);
+  });
+
+  it("renders GenAI semantic-convention spans", () => {
+    const text = formatTrace(supportBotGenAi, { maxTokens: 0 });
+    expect(text).toMatchSnapshot();
+    expect(text).toContain("chat gpt-4o-mini 812→24 tok tool:getOrder");
+    expect(text).toContain("execute_tool getOrder");
   });
 
   it("trims payloads to payloadChars", () => {

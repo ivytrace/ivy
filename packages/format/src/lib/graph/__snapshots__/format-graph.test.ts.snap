@@ -18,3 +18,11 @@ checkout-createOrder → checkout-orders [DynamoDB PutItem, 13.1ms]
 checkout-createOrder → checkout-receipts-prod [S3 PutObject, 38.2ms]
 checkout-createOrder → order-events [SQS SendMessage, 16.4ms]"
 `;
+
+exports[`formatServiceGraph > shows LLM providers as nodes 1`] = `
+"Service graph of support-answerTicket (trace 6af84d54a1b2c3d4e5f6a7b8c9d0e1f2): 5 nodes, 4 edges
+API Gateway → support-answerTicket [Lambda, 2141ms]
+support-answerTicket → OpenAI [LLM generateText, 2 calls, 1630ms]
+support-answerTicket → orders-prod [DynamoDB GetItem, 17.6ms]
+support-answerTicket → Anthropic [LLM streamText, 489ms]"
+`;
