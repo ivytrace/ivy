@@ -168,6 +168,9 @@ Only the dashboard has this page: the MCP views and the website demo show traces
   switching to `allow`, the first request still got 429 (stale snapshot, refresh started) and the next ones 200;
   ClickHouse held exactly 17 invocations for the tenant (10 + 5 + 2). `/internal/*` answered 401 without or with a wrong
   token, `/api/internal/*` 404, `limits=unset` listed only `default`, `/api/config` carried `billing.url`.
+- After merging workspaces and projects, again on a compose stack: the `default` workspace with two projects took 4 + 3
+  invocations, `/api/w/default/usage` and the internal API both said 7; with `quota 9, block`, 2 more were accepted
+  and the next request was 429 from either project, linking to `/w/default/settings/usage`; ClickHouse held 9.
 - Dashboard in mock mode: the states and the Upgrade round trip, checked in the browser (before the workspaces merge,
   and again after it on `/w/acme/settings/usage` as owner and `/w/side-project/settings/usage` as member).
 

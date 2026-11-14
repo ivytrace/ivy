@@ -72,7 +72,7 @@ describe('internal API auth', () => {
 describe('internal API', () => {
   it('limits CRUD: unset by default, PUT, GET, DELETE', async () => {
     const before = await (await call('GET', `/internal/workspaces/${acme.id}`)).json();
-    expect(before).toMatchObject({ workspace: acme.id, name: 'Acme', traces: 0, blocked: false, limits: { source: 'unset', monthly_trace_quota: null } });
+    expect(before).toMatchObject({ workspace: acme.id, name: 'Acme', slug: 'acme', traces: 0, blocked: false, limits: { source: 'unset', monthly_trace_quota: null } });
 
     const put = await call('PUT', `/internal/workspaces/${acme.id}/limits`, { plan: 'Free', monthly_trace_quota: 100_000, over_quota: 'block' });
     expect(put.status).toBe(200);
@@ -101,7 +101,7 @@ describe('internal API', () => {
     expect(list.month).toBe('2026-10');
     expect(list.items).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ workspace: acme.id, name: 'Acme', traces: 0, limits: expect.objectContaining({ source: 'unset' }) }),
+        expect.objectContaining({ workspace: acme.id, name: 'Acme', slug: 'acme', traces: 0, limits: expect.objectContaining({ source: 'unset' }) }),
         expect.objectContaining({ workspace: beta.id, traces: 250_000, blocked: false, limits: expect.objectContaining({ plan: 'Pro' }) }),
       ]),
     );

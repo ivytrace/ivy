@@ -32,6 +32,7 @@ export async function getInternalWorkspaces(c: Context) {
       .filter((t) => !onlyUnset || !limitsByTenant.has(t.id))
       .map((t) => ({
         name: t.name,
+        slug: t.slug,
         ...usageBody(t.id, month, traces.get(t.id) ?? 0, effectiveLimits(limitsByTenant.get(t.id) ?? null)),
       })),
   });
@@ -42,5 +43,5 @@ export async function getInternalWorkspace(c: Context) {
   const now = Date.now();
   const month = parseMonth(c.req.query('month'), now);
   const tenant = await findWorkspace(c);
-  return c.json({ name: tenant.name, ...(await workspaceUsage({ id: tenant.id, shardId: tenant.shard_id }, month, { now })) });
+  return c.json({ name: tenant.name, slug: tenant.slug, ...(await workspaceUsage({ id: tenant.id, shardId: tenant.shard_id }, month, { now })) });
 }

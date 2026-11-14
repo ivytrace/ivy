@@ -502,13 +502,13 @@ workspace membership don't apply. Keep the prefix off public proxies (ivytrace.d
 paths to the API). Errors are `{ "error": "…" }` (400 invalid body or month, 404 unknown workspace).
 
 `:id` is the workspace (tenant) ID. `month` is `YYYY-MM` (UTC), default the current month. Usage objects are as in
-`GET /api/w/:workspace/usage`, plus the workspace's `name`; the count is never cached here.
+`GET /api/w/:workspace/usage`, plus the workspace's `name` and `slug`; the count is never cached here.
 
 ### `GET /internal/workspaces?month=&limits=unset`
 Every workspace with its traces in the month and its limits. `limits=unset` keeps only workspaces without a limits
 row (for a reconcile job that gives new workspaces a free tier).
 ```json
-{ "month": "2026-11", "items": [ { "name": "Acme", "workspace": "ten_…", "month": "2026-11", "period": { … },
+{ "month": "2026-11", "items": [ { "name": "Acme", "slug": "acme", "workspace": "ten_…", "month": "2026-11", "period": { … },
   "traces": 2481904, "limits": { "plan": "Pro", "monthly_trace_quota": 100000, "over_quota": "allow", "source": "workspace" },
   "blocked": false } ] }
 ```
