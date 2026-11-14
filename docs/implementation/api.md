@@ -7,7 +7,7 @@ Errors are `{ "error": "…" }` with a 4xx/5xx status.
 ## Auth
 
 `auth.md`: with OIDC configured (`IVY_OIDC_ISSUER`), every `/api/*` route except `GET /api/health`,
-`GET /api/config` and `POST /api/aws/events` needs `Authorization: Bearer <access token>` (a JWT from the configured
+`GET /api/config`, `GET /api/aws/template.yaml` and `POST /api/aws/events` needs `Authorization: Bearer <access token>` (a JWT from the configured
 issuer, for `IVY_OIDC_AUDIENCE`, issued to the dashboard's client or one of its agents). Without it: 401
 `{ "error": "Authentication required" }`; invalid or expired: 401 with `WWW-Authenticate: Bearer error="invalid_token"`;
 provider unreachable: 503. Without OIDC configured nothing is checked.
@@ -58,6 +58,13 @@ the dashboard's (`/w/:workspace/:project/…`); and agents/MCP tools can build t
 ```
 With auth off: `"auth": { "enabled": false }` and `"workspaces": { "multi": false }`. `email.enabled` is true when
 `IVY_SMTP_URL` and `IVY_EMAIL_FROM` are set (invitations are then also emailed).
+
+### `GET /api/aws/template.yaml`
+The generic CloudFormation template (`text/yaml`), public and free of secrets: every per-connection value is a
+parameter with no default (`ExternalId`, `EventsUrl`, `EventSecret` with `NoEcho: true`); `TrustedPrincipalArn`
+defaults to the server's principal and `RoleName` to a generic name. This is the file to publish to S3 as
+`IVY_CFN_TEMPLATE_URL`; each connection's quick-create link passes its values as `param_…`. `download=1` adds
+`content-disposition: attachment`.
 
 ## Account-level routes
 
@@ -256,8 +263,9 @@ Server-side configuration the connect flow needs.
 ```
 
 ### `GET /api/w/:workspace/aws/template.yaml`
-The CloudFormation template (`text/yaml`). `account=<connection id>` fills in that connection's parameters as
-defaults; `download=1` adds `content-disposition: attachment`.
+The template with `account=<connection id>`'s values (external ID, role name, events URL, event secret) filled in
+as parameter defaults, for the "download and upload in the console" fallback. Needs auth like every workspace
+route. Without `account` it is the generic template. `download=1` adds `content-disposition: attachment`.
 
 ### `POST /api/w/:workspace/aws/accounts` (connect)
 Body: `{ "account_id": "123456789012", "name"?: "Production", "regions": ["eu-west-1"], "all_regions"?: false, "stack_region"?: "eu-west-1", "default_project"?: "checkout-prod" }`.
@@ -399,7 +407,7 @@ can't be traced. Matches are against the functions found by each account's last 
 
 ### `POST /api/aws/events`
 EventBridge API destination target, authenticated with the `x-ivy-event-secret` header (per connection), not user
-auth, so it is not under a workspace. Syncs the event's region. 202, or 401/403.
+auth, so it is not under a workspace (see also the public `GET /api/aws/template.yaml` above). Syncs the event's region. 202, or 401/403.
 
 ## Ingest (separate service, port 4318)
 

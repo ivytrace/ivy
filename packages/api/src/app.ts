@@ -20,7 +20,7 @@ import { putRuleOrder } from './routes/aws/rules/order.js';
 import { patchRule } from './routes/aws/rules/patch.js';
 import { postRule } from './routes/aws/rules/post.js';
 import { getAwsSetup } from './routes/aws/setup.js';
-import { getAwsTemplate } from './routes/aws/template.js';
+import { getAwsTemplate, getPublicAwsTemplate } from './routes/aws/template.js';
 import { getConfig } from './routes/config/get.js';
 import { getErrors } from './routes/errors/get.js';
 import { getFunctions } from './routes/functions/get.js';
@@ -52,6 +52,7 @@ export function createApp(options: { uiDir: string; access?: WorkspaceAccess }) 
   app.get('/api/health', getHealth);
   app.get('/api/config', getConfig);
   app.post('/api/aws/events', postAwsEvent);
+  app.get('/api/aws/template.yaml', getPublicAwsTemplate);
 
   // The caller's account: workspaces and invite links (no workspace context).
   app.get('/api/workspaces', getWorkspaces(access));
