@@ -170,6 +170,18 @@ long hex and long mixed segments become `{id}`); otherwise the span name.
 - Keys matching `IVY_REDACT_KEYS` (comma-separated, case-insensitive, default
   `password,secret,token,authorization,cookie,apikey,api_key,accesskey,secretaccesskey,sessiontoken,creditcard,cardnumber,cvv`)
   are replaced with `"[redacted]"` at any depth before serialization.
+- Token counts are exempt, although they contain `token`: a key whose normalized form (lowercase, `-`/`_`
+  removed) ends in `tokens`, `tokencount(s)`, `tokensdetails` or `tokenusage` is a count, unless the part
+  before names a credential (`access`, `refresh`, `session`, `id`, `api`, `auth`, `bearer`, `oauth`, `csrf`,
+  `client`, `secret`, `security`, …). So `max_tokens`, `maxTokens`, `input_tokens`, `inputTokens`,
+  `prompt_tokens`, `completion_tokens_details`, `cache_read_input_tokens`, `budget_tokens`, `maxTokenCount`
+  and `x-amzn-bedrock-input-token-count` are kept; `token`, `accessToken`, `id_token`, `refreshTokens`,
+  `sessionToken`, `X-Amz-Security-Token`, `apiTokens` and `x-auth-token` are redacted.
+- Numbers and booleans are kept when the key matched only through an entry containing `token`
+  (`tokenLimit: 4096`): secrets are strings. Other entries redact numbers too (`cardnumber`, `cvv`,
+  `password`). The same rules apply to headers, query parameters, OTel bridge attributes and the extension's
+  log redaction. Layers before this rule redacted token counts; readers treat `"[redacted]"` counts as missing
+  and fall back to other sources (Bedrock's token-count headers).
 
 ## Library spans (OpenTelemetry API)
 
@@ -178,8 +190,8 @@ The layer registers a minimal global tracer provider on the `@opentelemetry/api`
 invocation span, keeping their own hierarchy. They keep their name, kind, attributes, events and status,
 plus `otel.scope.name` (the library's tracer name, e.g. `ai`, `gen_ai`). Their string attributes follow the
 payload rules: capped at `IVY_MAX_PAYLOAD_BYTES` each (with the `…[truncated N bytes]` suffix and
-`ivy.payload.truncated = true`), JSON strings redacted by key at any depth, string values whose own key
-matches `IVY_REDACT_KEYS` replaced (numbers such as token counts are kept). String arrays are capped per
+`ivy.payload.truncated = true`), JSON strings redacted by key at any depth, values whose own key
+matches `IVY_REDACT_KEYS` replaced (token counts are kept, see above). String arrays are capped per
 element within 4 × `IVY_MAX_PAYLOAD_BYTES`. Spans of the layer's own instrumentation (fetch, http, AWS SDK)
 started inside an active library span become its children.
 
@@ -234,6 +246,18 @@ OpenAI, Anthropic, Bedrock and LangChain instrumentations, OpenLLMetry):
 `llm.provider`/`llm.system`, `llm.input_messages.{i}.message.role|content`, `llm.output_messages.{i}.message.*`
 (with `tool_calls.{j}.tool_call.function.name|arguments`), `llm.token_count.prompt|completion|total`,
 `llm.invocation_parameters`, `tool.name`, `input.value`, `output.value`.
+
+**Amazon Bedrock Runtime** (direct AWS SDK calls; `llm-spans.md`, "Amazon Bedrock"): AWS spans with
+`rpc.service` `BedrockRuntime` (also `Bedrock Runtime`, `bedrock-runtime`, or `Bedrock` with a
+`bedrock-runtime.*.amazonaws.com/model/{id}/{invoke|converse|…}` URL) and `rpc.method` `InvokeModel`,
+`InvokeModelWithResponseStream`, `Converse` or `ConverseStream` are model calls. The layer sets at capture:
+`gen_ai.system = aws.bedrock`, `gen_ai.operation.name` (`chat`, `embeddings` for embedding models),
+`gen_ai.request.model` (the model ID), `gen_ai.request.max_tokens`/`temperature`/`top_p`,
+`gen_ai.usage.input_tokens`/`output_tokens`, `gen_ai.response.finish_reasons`, `gen_ai.response.model`/`id`
+and, for streams, `gen_ai.response.time_to_first_chunk` (seconds). Messages are read from `ivy.payload.request`
+(the SDK input: `{modelId, body}` for InvokeModel, the whole input for Converse; the raw body for HTTP-level
+spans) and `ivy.payload.response`, and tokens also from the `x-amzn-bedrock-input-token-count`/
+`-output-token-count` response headers.
 
 The normalized view (`LlmSpan`) uses GenAI names where they exist: kind, operation, provider (`openai`,
 `anthropic`, `bedrock`, `vertex`, `google`, `azure-openai`, `mistral`, …, from `gen_ai.provider.name`,

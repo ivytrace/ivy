@@ -115,3 +115,8 @@ live in `docs/implementation/`.
 - The layer captures them without an OpenTelemetry SDK and steps aside when the app registers its own tracer
   provider. LLM attributes are normalized when read (`@ivy/spans`), not at ingest, so stored spans stay as the
   producer sent them. Implementation: `docs/implementation/llm-spans.md`.
+- Direct Amazon Bedrock calls render as LLM calls: AWS SDK `BedrockRuntime` `InvokeModel`/`Converse` (and their
+  streaming variants) show the conversation, response, tool calls, tokens and stop reason like AI SDK and GenAI
+  spans, also for spans already stored by older layers. A generic AWS span is never titled by its region.
+- Token counts are not secrets: redaction keeps `max_tokens`, `input_tokens`, `inputTokens`, … while `token`,
+  `accessToken`, `sessionToken` and the like stay redacted.

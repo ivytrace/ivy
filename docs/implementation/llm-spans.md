@@ -39,8 +39,9 @@ library needs:
   final, UNSET ignored), `recordException` adds an `exception` event, and `error.type` is set on error.
 - **Payload rules** (`attributes.ts`). Applied in the span's `finalize` hook, i.e. at flush time after the
   response: JSON strings are parsed, redacted by key and re-serialized; all strings are capped per attribute.
-  String attributes whose own key matches `IVY_REDACT_KEYS` are replaced, but numbers are kept, because
-  `token` is a default redaction key and token counts (`ai.usage.promptTokens`) must survive.
+  Attributes whose own key matches `IVY_REDACT_KEYS` are replaced, except token counts
+  (`ai.usage.promptTokens`, `gen_ai.usage.input_tokens`) and numbers of keys that only match `token`
+  (`span-conventions.md`, "Payload capping and redaction").
 - **Nesting the layer's spans.** After registration `tracer.startChild` is wrapped: when the active context
   holds a bridge span of the current invocation, new fetch/http/AWS SDK spans become its children, so the
   provider's `POST api.openai.com` sits under the model-call span and a tool's DynamoDB call under the tool.
@@ -74,6 +75,45 @@ non-recording spans, an existing provider and the off switch. The e2e harness ru
 the Lambda image (`example/ai/v6.mjs` fully bundled, `v7.mjs` with `@opentelemetry/api` left in
 `node_modules`), with the tool's DynamoDB lookup going through the bundled AWS SDK. No LLM API is called.
 
+## Amazon Bedrock
+
+Apps that call Bedrock directly with the AWS SDK (`BedrockRuntimeClient`) create no OpenTelemetry spans; the
+layer's AWS SDK middleware records them as AWS spans (`BedrockRuntime.InvokeModel`) with the command input and
+output as payloads. Those become LLM calls in two places.
+
+**Capture** (`packages/layer/src/lib/instrumentation/bedrock.ts`). For `InvokeModel`,
+`InvokeModelWithResponseStream`, `Converse` and `ConverseStream` the middleware adds the GenAI attributes
+(`span-conventions.md`, "LLM spans"): at the start `gen_ai.system = aws.bedrock`, operation, request model and
+settings, so collapsing groups calls by provider + model like any LLM call (`signatureOf`); at the end usage,
+finish reasons and response model, read from the body (Anthropic `usage.input_tokens`, Converse/Nova
+`usage.inputTokens`, Llama `prompt_token_count`, Cohere `meta.billed_units`, Titan `inputTextTokenCount`,
+OpenAI-style `usage.prompt_tokens`) or the `x-amzn-bedrock-*-token-count` response headers, so summary spans
+sum their tokens. Streams are wrapped (`tapBedrockStream`): the app reads the same events, and when the
+stream ends the span gets its end time, `gen_ai.response.time_to_first_chunk`, the final usage (Anthropic
+`message_start`/`message_delta`, ConverseStream `metadata`, `amazon-bedrock-invocationMetrics`) and the
+assembled response in the family's non-streaming shape as `ivy.payload.response`. Assembled text is capped at
+256 KB per block. SDK copies the layer cannot patch (bundled) are seen as HTTP requests to
+`bedrock-runtime.<region>.amazonaws.com/model/{id}/{invoke|converse|…}`: the HTTP span is named and tagged from
+the URL at start and gets usage from the body and headers when finalized.
+
+**Rendering** (`packages/spans/src/bedrock.ts`, called first by `describeLlm`). Works from the payloads, so
+spans stored by older layers (HTTP-level ones too, whose `rpc.service` is `Bedrock` and title used to be the
+region) render the same. The model comes from `gen_ai.request.model`, the SDK input's `modelId` or the URL,
+else the response's `model`; it is shown short (`eu.anthropic.claude-haiku-5-5-20261001-v1:0` →
+`claude-haiku-5-5`, the full ID as "Model ID"). Bodies are parsed by shape rather than by model ID: Anthropic
+messages (system, content blocks, `tool_use`/`tool_result`, thinking), Converse and Amazon Nova content blocks
+(`text`, `toolUse`, `toolResult`, `reasoningContent`, media), OpenAI-style `choices`, Llama
+`prompt`/`generation`, Mistral `outputs`, Cohere `message`/`chat_history`/`preamble`/`text`, Titan
+`inputText`/`results`. Settings: max tokens, temperature, top P/K, stop sequences, thinking budget, tool choice.
+Provider is "Amazon Bedrock"; the model maker (`vendor`: Anthropic, Amazon, Meta, Mistral, Cohere, …) names the
+graph node, `Bedrock · Anthropic`, one node per maker. A Bedrock request under an AI SDK model call (the
+`@ai-sdk/amazon-bedrock` provider's fetch) belongs to that call's node and its tokens aren't counted twice.
+
+**Gaps.** A stream the app never reads to the end leaves the span without an end (it is flushed as
+`ivy.incomplete`). Streams of SDK copies the layer cannot patch are binary event streams at the HTTP level and
+are not parsed, so those spans have no response or tokens. Token counts in bodies stored before the redaction
+fix are `[redacted]`; the describer then falls back to the token-count headers when those were captured.
+
 ## Rendering (`@ivy/spans`, dashboard, MCP App views, `@ivy/format`)
 
 - `describeLlm(span)` (`packages/spans/src/llm.ts`) normalizes the three attribute families into
@@ -95,9 +135,11 @@ the Lambda image (`example/ai/v6.mjs` fully bundled, `v7.mjs` with `@opentelemet
   `chat gpt-4o-mini 812→24 tok tool:getOrder`; the header gets `3 LLM calls 1877→103 tok`. `normal` detail
   adds the last input message and the response of each model call and the arguments/result of each tool
   span; `full` adds every message, including those of operations; `summary` none.
-- Fixtures: `@ivy/format/fixtures` has `supportBot` (AI SDK 6 `ai.*`) and `supportBotGenAi` (AI SDK 7
-  GenAI); their attribute values (`@ivy/format/ai-fixtures`) also feed the UI mock's `support-answerTicket`
-  function. Loadgen has `support-api-prod-answerTicket`.
+- Fixtures: `@ivy/format/fixtures` has `supportBot` (AI SDK 6 `ai.*`), `supportBotGenAi` (AI SDK 7
+  GenAI) and `ticketTriage` (direct Bedrock: Anthropic on InvokeModel, Converse with a tool call, Nova); their
+  attribute values (`@ivy/format/ai-fixtures`, including `bedrockAttributes.invokeModelHttp`, an older layer's
+  HTTP-level capture) also feed the UI mock's `support-answerTicket` and `support-triageTicket` functions.
+  Loadgen has `support-api-prod-answerTicket`.
 
 ## Gaps
 

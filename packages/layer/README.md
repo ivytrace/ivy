@@ -80,7 +80,7 @@ extension idles.
 | `IVY_API_KEY` | | sent as `Authorization: Bearer <key>` |
 | `IVY_DISABLE` | `false` | turn tracing off without detaching the layer |
 | `IVY_MAX_PAYLOAD_BYTES` | `16384` | cap for each `ivy.payload.*` attribute |
-| `IVY_REDACT_KEYS` | see span conventions | comma-separated; a key is redacted if it contains one of these (case-insensitive, `-`/`_` ignored) |
+| `IVY_REDACT_KEYS` | see span conventions | comma-separated; a key is redacted if it contains one of these (case-insensitive, `-`/`_` ignored). Token counts (`max_tokens`, `input_tokens`, `inputTokens`, `x-amzn-bedrock-input-token-count`, …) are kept, and numbers are kept for keys that only match `token`; `token`, `accessToken`, `sessionToken`, `x-auth-token` stay redacted |
 | `IVY_CAPTURE_LOGS` | `true` | record `console.*` calls as span events |
 | `IVY_CAPTURE_OTEL` | `true` | capture spans that libraries create through `@opentelemetry/api` (Vercel AI SDK, …) |
 | `IVY_TIMEOUT_MARGIN_MS` | `100` | how long before the deadline to snapshot spans for a possible timeout |
@@ -111,8 +111,9 @@ responses, tool calls, tokens and time to first token. No OpenTelemetry SDK is n
 - AI SDK 7: `registerTelemetry(new OpenTelemetry())` from `ai` and `@ai-sdk/otel`, once at the top of the handler module.
 
 Other libraries that use `@opentelemetry/api` (OpenAI, Anthropic, LangChain instrumentations) are captured the
-same way. If the app registers its own tracer provider, the layer leaves it alone. Details:
-`docs/implementation/llm-spans.md`.
+same way. If the app registers its own tracer provider, the layer leaves it alone. Direct Amazon Bedrock calls
+with the AWS SDK (`InvokeModel`, `Converse` and their streaming variants) are LLM calls too, with no setup.
+Details: `docs/implementation/llm-spans.md`.
 
 ## Local end-to-end test
 
