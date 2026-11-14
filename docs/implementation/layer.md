@@ -44,8 +44,9 @@ the cost is its process start during init (see numbers below).
 The wrapper arms a timer at `remaining − IVY_TIMEOUT_MARGIN_MS` (default 100 ms). When it fires
 it sends a provisional (non-final) snapshot with the root span marked `error.type = "Timeout"`.
 If the handler finishes after all, the final batch replaces those spans by span ID in the
-extension's store. If the function really times out, Lambda resets the environment, the
-extension gets `SHUTDOWN` (reason `timeout`) and exports what it has.
+extension's store. If the function really times out, the extension's wait for the final batch
+expires at the deadline (+200 ms), it exports the snapshot, and then receives `SHUTDOWN`
+(reason `timeout`) as Lambda resets the environment, flushing anything left.
 
 ## Delivery
 
@@ -114,6 +115,14 @@ both (callback deprecation warning, "event loop empty but promise pending" handl
 handlers keep `callbackWaitsForEmptyEventLoop` behaviour. Streaming handlers
 (`awslambda.streamifyResponse`) are returned unwrapped (not traced yet). Layer frames are
 stripped from error stacks.
+
+## Verification
+
+`pnpm --filter @ivy/layer e2e` asserts on the received spans (triggers, payloads, redaction,
+SDK/fetch/http spans, bundled SDK, errors, timeout, unreachable endpoint). Run with
+`IVY_ENDPOINT=http://host.docker.internal:4318` it was checked against the compose stack: the
+spans land in `ivy.otel_traces` and the `ivy.invocations` view (status, trigger, HTTP fields,
+cold start, `error_type = Timeout`).
 
 ## Size and overhead
 
