@@ -16,9 +16,9 @@ export function throttleSource(opts: { scope: QueryScope; range: TimeRange; buck
       FROM function_throttles FINAL
       WHERE tenant_id = {tenant:String} ${projectFilter(opts.scope, 'project_id')}
         AND minute >= toDateTime(intDiv({from:Int64}, 1000)) AND minute < toDateTime(intDiv({to:Int64}, 1000))
-        AND throttles > 0
         ${opts.functionName ? 'AND function = {function:String}' : ''}
-      GROUP BY ${project}function, region${bucket ? ', bucket' : ''}`;
+      GROUP BY ${project}function, region${bucket ? ', bucket' : ''}
+      HAVING throttles > 0`;
   return {
     sql,
     params: { from: opts.range.from, to: opts.range.to, function: opts.functionName ?? '', bucket_seconds: opts.bucketSeconds ?? 60 },
