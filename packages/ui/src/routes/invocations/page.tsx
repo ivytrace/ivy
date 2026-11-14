@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Search, X } from "lucide-react";
@@ -14,16 +14,18 @@ import { Tooltipped } from "@/components/ui/tooltipped";
 import { useTimeRange } from "@/components/layout/time-range";
 import { useFunctions, useInvocations, useTimeseries } from "@/lib/api/hooks";
 import type { Invocation } from "@/lib/api/types";
-import { invocationsLink, traceLink } from "@/lib/links/links";
+import { PickProject } from "@/components/common/pick-project";
+import { ALL_PROJECTS, invocationsLink, traceLink, type Scope } from "@/lib/links/links";
+import { useScope } from "@/lib/links/use-scope";
 import { triggerLabel } from "@/lib/spans/services";
 import { formatAgo, formatDuration, formatTimestamp } from "@/lib/utils/format";
 
 const PAGE_SIZE = 50;
 const ALL = "__all";
 
-const linkTo = (inv: Invocation) => traceLink(inv.trace_id, inv.span_id);
-
-const columns: ColumnDef<Invocation, unknown>[] = [
+function columnsFor(scope: Scope): ColumnDef<Invocation, unknown>[] {
+  const linkTo = (inv: Invocation) => traceLink(scope, inv.trace_id, inv.span_id);
+  return [
   {
     accessorKey: "ts",
     header: "Time",
@@ -40,7 +42,7 @@ const columns: ColumnDef<Invocation, unknown>[] = [
     header: "Function",
     cell: ({ row }) => (
       <Link
-        to={invocationsLink({ function: row.original.function })}
+        to={invocationsLink(scope, { function: row.original.function })}
         className="block max-w-56 truncate hover:underline"
       >
         {row.original.function}
@@ -93,6 +95,7 @@ const columns: ColumnDef<Invocation, unknown>[] = [
     ),
   },
 ];
+}
 
 function useFilterParams() {
   const [params, setParams] = useSearchParams();
@@ -111,6 +114,20 @@ function useFilterParams() {
 }
 
 export default function Invocations() {
+  const scope = useScope();
+  if (scope.project === ALL_PROJECTS) {
+    return (
+      <div>
+        <h1 className="mb-4 text-2xl font-bold">Invocations</h1>
+        <PickProject workspace={scope.workspace} page="invocations" />
+      </div>
+    );
+  }
+  return <ProjectInvocations scope={scope} />;
+}
+
+function ProjectInvocations({ scope }: { scope: Scope }) {
+  const columns = useMemo(() => columnsFor(scope), [scope.workspace, scope.project]);
   const { range } = useTimeRange();
   const { fn, status, q, update } = useFilterParams();
   const [cursors, setCursors] = useState<string[]>([]);

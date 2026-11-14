@@ -27,3 +27,7 @@ export function formatTimestamp(iso: string): string {
 export function formatTime(iso: string): string {
   return format(new Date(iso), "HH:mm:ss.SSS");
 }
+
+export function formatDate(iso: string): string {
+  return format(new Date(iso), "MMM d, yyyy");
+}

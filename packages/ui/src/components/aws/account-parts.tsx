@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { deleteAwsAccount, refreshAws, updateAwsAccount } from "@/lib/api/aws";
 import { useAwsSetup } from "@/lib/api/hooks";
 import type { AwsAccount, TraceState } from "@/lib/api/types";
+import { useWorkspace } from "@/lib/links/use-scope";
 import { cn } from "@/lib/utils/cn";
 
 export function AccountStatus({ account }: { account: AwsAccount }) {
@@ -37,12 +38,13 @@ export function AccountStatus({ account }: { account: AwsAccount }) {
   );
 }
 
-const COUNT_ORDER: TraceState[] = ["traced", "opted_out", "conflict", "error", "pending", "unsupported"];
+const COUNT_ORDER: TraceState[] = ["traced", "available", "opted_out", "conflict", "error", "pending", "unsupported"];
 
 /** Compact per-state function counts; zero counts are left out (except traced). */
 export function FunctionCounts({ counts, onSelect }: { counts: AwsAccount["counts"]; onSelect?: (state: TraceState) => void }) {
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+      {counts.new > 0 && <NewBadge count={counts.new} />}
       {COUNT_ORDER.filter((s) => s === "traced" || counts[s] > 0).map((state) => {
         const content = (
           <>
@@ -66,6 +68,7 @@ export function FunctionCounts({ counts, onSelect }: { counts: AwsAccount["count
 }
 
 export function EditRegionsDialog({ account, onOpenChange }: { account: AwsAccount | null; onOpenChange: (open: boolean) => void }) {
+  const workspace = useWorkspace();
   const { data: setup } = useAwsSetup();
   const [value, setValue] = useState<RegionSelection>({ regions: [], all_regions: false });
   const [busy, setBusy] = useState(false);
@@ -81,7 +84,7 @@ export function EditRegionsDialog({ account, onOpenChange }: { account: AwsAccou
     setBusy(true);
     try {
       const regions = value.all_regions ? value.regions : [...new Set([account.stack_region, ...value.regions])];
-      await updateAwsAccount(account.id, { regions, all_regions: value.all_regions });
+      await updateAwsAccount(workspace, account.id, { regions, all_regions: value.all_regions });
       await refreshAws();
       onOpenChange(false);
     } catch (err) {
@@ -120,6 +123,7 @@ export function DeleteAccountDialog({
   onOpenChange: (open: boolean) => void;
   onDeleted?: () => void;
 }) {
+  const workspace = useWorkspace();
   const [detach, setDetach] = useState(true);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
@@ -133,7 +137,7 @@ export function DeleteAccountDialog({
     if (!account) return;
     setBusy(true);
     try {
-      const res = await deleteAwsAccount(account.id, detach && account.status !== "pending");
+      const res = await deleteAwsAccount(workspace, account.id, detach && account.status !== "pending");
       await refreshAws();
       if (res.detach_errors.length) setErrors(res.detach_errors);
       else {
@@ -190,5 +194,14 @@ export function DeleteAccountDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** "N new": functions found since the list was last looked at, not traced yet. */
+export function NewBadge({ count, className }: { count: number; className?: string }) {
+  return (
+    <span className={cn("inline-flex items-center rounded-full bg-sky-400/15 px-2 py-0.5 text-xs font-medium tabular-nums text-sky-300", className)}>
+      {count} new
+    </span>
   );
 }
