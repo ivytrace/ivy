@@ -43,6 +43,8 @@ export class Tracer {
   readonly isSecret: KeyMatcher;
   private coldStart = true;
   private resource: OtlpKeyValue[] | undefined;
+  /** Runs before each invocation (instrumentations that patch lazily check for new modules here). */
+  onInvocationStart: (() => void) | undefined;
 
   constructor(
     readonly config: Config,
@@ -53,6 +55,7 @@ export class Tracer {
   }
 
   startInvocation(event: unknown, context: LambdaContext): Invocation {
+    this.onInvocationStart?.();
     anchorClock();
     const start = now();
     const functionName = context.functionName ?? process.env.AWS_LAMBDA_FUNCTION_NAME ?? 'unknown';

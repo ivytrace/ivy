@@ -17,7 +17,9 @@ import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from "@/component
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { ApiError } from "@/lib/api/client";
 import { useTrace } from "@/lib/api/hooks";
-import { invocationsLink } from "@/lib/links/links";
+import { PickProject } from "@/components/common/pick-project";
+import { ALL_PROJECTS, invocationsLink } from "@/lib/links/links";
+import { useScope } from "@/lib/links/use-scope";
 import type { GraphNode } from "@/lib/spans/graph";
 import { LlmUsageTable } from "@/components/trace/llm-details";
 import {
@@ -140,6 +142,7 @@ function Overview({ invocation, usage }: { invocation: Span; usage?: LlmUsage })
 }
 
 function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
+  const scope = useScope();
   const [params, setParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>("overview");
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
@@ -191,7 +194,7 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
     <>
       <div className="border-b px-6 py-5 md:px-8">
         <Button variant="link" className="h-auto px-0" asChild>
-          <Link to={invocationsLink({ function: invocation.name })}>← {invocation.name}</Link>
+          <Link to={invocationsLink(scope, { function: invocation.name })}>← {invocation.name}</Link>
         </Button>
         <h1 className="truncate text-2xl font-bold">
           {invocation.attributes["faas.invocation_id"] ?? invocation.name}
@@ -239,8 +242,16 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
 
 export default function TraceDetails() {
   const { traceId = "" } = useParams();
+  const scope = useScope();
   const { data, error, mutate } = useTrace(traceId);
 
+  if (scope.project === ALL_PROJECTS) {
+    return (
+      <div className="p-6 md:p-8">
+        <PickProject workspace={scope.workspace} page="invocations" />
+      </div>
+    );
+  }
   if (error) {
     return error instanceof ApiError && error.status === 404 ? (
       <EmptyState

@@ -1,7 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+// Builtins via getBuiltinModule rather than ESM imports: an ESM import of a builtin builds a
+// namespace from all of its exports, which triggers lazy getters (node:http's pulls in undici).
+const { existsSync, readFileSync } = process.getBuiltinModule('node:fs');
+const { createRequire } = process.getBuiltinModule('node:module');
+const path = process.getBuiltinModule('node:path');
+const { pathToFileURL } = process.getBuiltinModule('node:url');
 
 class RuntimeError extends Error {
   constructor(name: string, message: string, cause?: unknown) {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../../app.js';
 import { openApiDocument } from './spec.js';
 
-const app = createApp({ uiDir: '/nonexistent', tenants: { resolve: async () => ({ id: 'default', shardId: 'shard-1' }) } });
+const app = createApp({ uiDir: '/nonexistent' });
 
 /** `GET /api/traces/{traceId}` for every concrete /api route registered in the app (middleware and catch-alls excluded). */
 function appRoutes(): string[] {

@@ -14,6 +14,8 @@ export function randomBase62(length: number): string {
 }
 
 export const newTenantId = () => `ten_${randomBase62(21)}`;
+export const newProjectId = () => `prj_${randomBase62(21)}`;
+export const newInvitationId = () => `inv_${randomBase62(21)}`;
 export const newKeyId = () => `key_${randomBase62(21)}`;
 
 /** API keys: `ivy_` + 40 base62 characters (~238 bits). */
@@ -23,3 +25,11 @@ export const hashKey = (key: string) => createHash('sha256').update(key, 'utf8')
 
 /** What the UI/CLI shows to identify a key: `ivy_` and the first 6 random characters. */
 export const keyPrefix = (key: string) => key.slice(0, key.startsWith('ivy_') ? 10 : 4);
+
+/**
+ * The ID of a workspace's default project, derived from the tenant ID so that every process (and
+ * the schema migration in deploy/clickhouse/init.sh, which computes the same in SQL) agrees on it
+ * without a lookup: `prj_` + the first 21 hex characters of sha256('ivy-default-project:' + tenant).
+ */
+export const defaultProjectId = (tenantId: string) =>
+  `prj_${createHash('sha256').update(`ivy-default-project:${tenantId}`, 'utf8').digest('hex').slice(0, 21)}`;

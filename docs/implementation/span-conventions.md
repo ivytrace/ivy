@@ -25,6 +25,21 @@ work, lookups are just slower.
 | `faas.max_memory` | memory limit in bytes |
 | `telemetry.sdk.name` | `ivy-layer` |
 
+### Set by the server, not by producers
+
+| attribute | |
+|---|---|
+| `ivy.tenant_id` | the workspace (tenant) ID of the API key |
+| `ivy.project_id` | the project ID of the API key (`prj_…`) |
+
+Both are stamped server-side: the ingest router resolves the key and passes workspace and project to the
+collector in headers, and the collector deletes whatever the client sent under these names and inserts the
+header values (`tenancy.md`, `workspaces-projects.md`). Producers shouldn't set them; if they do, the values are
+overwritten. They end up in `otel_traces.TenantId`/`ProjectId`. Spans without either are dropped.
+
+The project of a Lambda function is chosen by which key it sends with (`IVY_API_KEY`); auto-trace writes the
+right project's key (`auto-trace.md`). The tags `ivy:trace` and `ivy:project` on a function steer that, see there.
+
 ## Invocation (root) span
 
 One per invocation. It is the span the `invocations` table is built from.

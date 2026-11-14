@@ -1,4 +1,3 @@
-import { performance } from 'node:perf_hooks';
 import { now } from '../tracer/clock.js';
 import { cleanStack, StatusCode, type Attributes, type Span } from '../tracer/span.js';
 import type { Invocation } from '../tracer/tracer.js';

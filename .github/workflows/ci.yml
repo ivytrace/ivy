@@ -22,3 +22,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
       - run: pnpm -r test
+
+  extension:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/layer/extension
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/layer/extension
+      - run: cargo test --locked

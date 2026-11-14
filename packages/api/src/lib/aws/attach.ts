@@ -18,12 +18,16 @@ export interface LambdaFunction {
   env: Record<string, string> | null;
   envError: string;
   revisionId: string;
+  lastModified: string;
   tags: Record<string, string>;
 }
 
 export interface Desired {
-  /** false when the user turned tracing off in the dashboard. */
+  /** Whether the function should be traced (see assign.ts). */
   enabled: boolean;
+  /** State and reason to report when not traced (default: opted out). */
+  offState?: 'available' | 'opted_out';
+  offReason?: string;
   layerArn: string | null;
   ingest: IngestConfig | null;
 }
@@ -49,6 +53,7 @@ export function fromConfiguration(fn: FunctionConfiguration, tags: Record<string
     env: fn.Environment?.Error ? null : { ...(fn.Environment?.Variables ?? {}) },
     envError: fn.Environment?.Error?.Message ?? fn.Environment?.Error?.ErrorCode ?? '',
     revisionId: fn.RevisionId ?? '',
+    lastModified: fn.LastModified ?? '',
     tags,
   };
 }
@@ -116,7 +121,7 @@ export function planFunction(fn: LambdaFunction, desired: Desired): Plan {
     return leave(fn, 'unsupported', fn.runtime ? `Runtime ${fn.runtime} is not supported` : 'No managed runtime');
   }
   if (fn.tags[OPT_OUT_TAG]?.toLowerCase() === 'false') return leave(fn, 'opted_out', `Tagged ${OPT_OUT_TAG}=false`);
-  if (!desired.enabled) return leave(fn, 'opted_out', 'Turned off in the dashboard');
+  if (!desired.enabled) return leave(fn, desired.offState ?? 'opted_out', desired.offReason ?? 'Not selected for tracing');
 
   if (!fn.env) return plan('error', `Can't read environment variables: ${fn.envError}`);
   const wrapper = fn.env.AWS_LAMBDA_EXEC_WRAPPER;

@@ -1,12 +1,14 @@
 -- Applied by init.sh on first start, and safe to re-run (every statement is idempotent).
 -- Two databases: `ivy` holds span data (one per cell/shard), `ivy_control` the control plane
--- (tenants, API keys, auto-trace config). See docs/implementation/tenancy.md.
+-- (workspaces/tenants, projects, API keys, auto-trace config). See docs/implementation/tenancy.md
+-- and docs/implementation/workspaces-projects.md. Span data is keyed (tenant, project, …).
 CREATE DATABASE IF NOT EXISTS ivy;
 CREATE DATABASE IF NOT EXISTS ivy_control;
 
 CREATE TABLE IF NOT EXISTS ivy.otel_traces
 (
     `TenantId` LowCardinality(String) DEFAULT ResourceAttributes['ivy.tenant_id'] CODEC(ZSTD(1)),
+    `ProjectId` LowCardinality(String) DEFAULT ResourceAttributes['ivy.project_id'] CODEC(ZSTD(1)),
     `Timestamp` DateTime64(9) CODEC(Delta(8), ZSTD(1)),
     `TraceId` String CODEC(ZSTD(1)),
     `SpanId` String CODEC(ZSTD(1)),
@@ -36,17 +38,18 @@ CREATE TABLE IF NOT EXISTS ivy.otel_traces
 )
 ENGINE = MergeTree
 PARTITION BY toDate(Timestamp)
-ORDER BY (TenantId, toStartOfHour(Timestamp), TraceId)
+ORDER BY (TenantId, ProjectId, toStartOfHour(Timestamp), TraceId)
 TTL toDateTime(Timestamp) + toIntervalDay({{RETENTION_DAYS}})
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 
--- The tenant is set by the collector from the ingest router's header, which replaces any
--- client-supplied `ivy.tenant_id`. Older schemas fell back to the client's attribute or 'default'.
+-- Tenant and project are set by the collector from the ingest router's headers, which replace any
+-- client-supplied `ivy.tenant_id` / `ivy.project_id`. Older schemas fell back to the client's attribute or 'default'.
 ALTER TABLE ivy.otel_traces MODIFY COLUMN `TenantId` LowCardinality(String) DEFAULT ResourceAttributes['ivy.tenant_id'] CODEC(ZSTD(1));
 
 CREATE TABLE IF NOT EXISTS ivy.invocations
 (
     `tenant_id` LowCardinality(String),
+    `project_id` LowCardinality(String),
     `ts` DateTime64(3) CODEC(Delta(8), ZSTD(1)),
     `trace_id` String CODEC(ZSTD(1)),
     `span_id` String CODEC(ZSTD(1)),
@@ -72,7 +75,7 @@ CREATE TABLE IF NOT EXISTS ivy.invocations
 )
 ENGINE = MergeTree
 PARTITION BY toDate(ts)
-ORDER BY (tenant_id, function, ts)
+ORDER BY (tenant_id, project_id, function, ts)
 TTL toDateTime(ts) + toIntervalDay({{RETENTION_DAYS}})
 SETTINGS ttl_only_drop_parts = 1;
 
@@ -91,6 +94,7 @@ WITH
         '\\d+(\\.\\d+)?', '<n>') AS err_normalized
 SELECT
     TenantId AS tenant_id,
+    ProjectId AS project_id,
     toDateTime64(Timestamp, 3) AS ts,
     TraceId AS trace_id,
     SpanId AS span_id,
@@ -114,6 +118,7 @@ WHERE SpanAttributes['ivy.invocation'] = 'true';
 CREATE TABLE IF NOT EXISTS ivy.invocations_hourly
 (
     `tenant_id` LowCardinality(String),
+    `project_id` LowCardinality(String),
     `hour` DateTime,
     `function` LowCardinality(String),
     `region` LowCardinality(String),
@@ -126,12 +131,13 @@ CREATE TABLE IF NOT EXISTS ivy.invocations_hourly
 )
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(hour)
-ORDER BY (tenant_id, function, region, hour)
+ORDER BY (tenant_id, project_id, function, region, hour)
 TTL hour + toIntervalDay({{RETENTION_DAYS}});
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS ivy.invocations_hourly_mv TO ivy.invocations_hourly AS
 SELECT
     tenant_id,
+    project_id,
     toStartOfHour(ts) AS hour,
     function,
     region,
@@ -142,7 +148,7 @@ SELECT
     max(ts) AS last_invoked,
     quantilesTDigestState(0.5, 0.95, 0.99)(duration_ms) AS duration_q
 FROM ivy.invocations
-GROUP BY tenant_id, hour, function, region;
+GROUP BY tenant_id, project_id, hour, function, region;
 
 -- Defence in depth: when a query sets SQL_ivy_tenant (the API does for every query, see
 -- packages/api/src/lib/clickhouse/scoped.ts), only that tenant's rows are visible, even if the
@@ -155,13 +161,24 @@ CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations_hourly AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
+-- The same for projects: project-scoped API queries also set SQL_ivy_project. Workspace-wide
+-- queries ("all projects") leave it unset and rely on the tenant policy.
+CREATE ROW POLICY OR REPLACE ivy_project ON ivy.otel_traces AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_project', '') = '' OR ProjectId = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
+CREATE ROW POLICY OR REPLACE ivy_project ON ivy.invocations AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
+CREATE ROW POLICY OR REPLACE ivy_project ON ivy.invocations_hourly AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
 
 -- Control plane. Small, mutable tables: every update inserts a full row, ReplacingMergeTree
 -- keeps the newest version, reads use FINAL.
 
+-- A tenant is a workspace (docs/implementation/workspaces-projects.md). `slug` is unique across
+-- workspaces (checked by the API) and appears in URLs; `default` for the self-hosted tenant.
 CREATE TABLE IF NOT EXISTS ivy_control.tenants
 (
     `id` String,
+    `slug` String DEFAULT '',
     `name` String,
     `shard_id` LowCardinality(String) DEFAULT 'shard-1',
     `created_at` DateTime64(3, 'UTC'),
@@ -171,11 +188,29 @@ CREATE TABLE IF NOT EXISTS ivy_control.tenants
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY id;
 
+-- Projects group a workspace's functions and own its ingest keys. `slug` is unique per workspace.
+-- Every workspace has a project whose ID is derived from the tenant ID (its default project):
+-- prj_ + the first 21 hex characters of sha256('ivy-default-project:' || tenant_id).
+CREATE TABLE IF NOT EXISTS ivy_control.projects
+(
+    `tenant_id` String,
+    `id` String,
+    `slug` String,
+    `name` String,
+    `archived` UInt8 DEFAULT 0,
+    `created_at` DateTime64(3, 'UTC'),
+    `updated_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, id);
+
 -- Keys are stored as sha256(key) plus a display prefix. `encrypted_key` is only set for keys Ivy
 -- hands out itself (the per-tenant auto-trace key), encrypted with IVY_SECRET_KEY.
+-- Keys belong to a project; an empty `project_id` means the workspace's default project.
 CREATE TABLE IF NOT EXISTS ivy_control.api_keys
 (
     `tenant_id` String,
+    `project_id` String DEFAULT '',
     `id` String,
     `name` String,
     `kind` LowCardinality(String),
@@ -206,6 +241,27 @@ CREATE TABLE IF NOT EXISTS ivy_control.tenant_members
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, sub);
 
+-- Workspace invitations. Only sha256(token) is stored; tokens are single use and expire.
+CREATE TABLE IF NOT EXISTS ivy_control.invitations
+(
+    `tenant_id` String,
+    `id` String,
+    `email` String,
+    `role` LowCardinality(String),
+    `token_hash` String,
+    `invited_by` String,
+    `invited_by_email` String DEFAULT '',
+    `created_at` DateTime64(3, 'UTC'),
+    `expires_at` DateTime64(3, 'UTC'),
+    `accepted_at` Nullable(DateTime64(3, 'UTC')),
+    `accepted_by` String DEFAULT '',
+    `revoked_at` Nullable(DateTime64(3, 'UTC')),
+    `updated_at` DateTime64(3, 'UTC'),
+    INDEX idx_token_hash token_hash TYPE bloom_filter(0.001) GRANULARITY 1
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, id);
+
 -- Auto-trace configuration (docs/implementation/auto-trace.md).
 
 CREATE TABLE IF NOT EXISTS ivy_control.aws_accounts
@@ -219,6 +275,9 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_accounts
     `event_secret` String,
     `stack_name` String,
     `stack_region` LowCardinality(String),
+    -- The project the UI preselects; `reviewed_at`: functions first seen after it count as "new".
+    `default_project_id` String DEFAULT '',
+    `reviewed_at` DateTime64(3, 'UTC') DEFAULT 0,
     `regions` Array(LowCardinality(String)),
     `all_regions` Bool,
     `status` LowCardinality(String),
@@ -242,6 +301,13 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_functions
     `runtime` LowCardinality(String),
     `state` LowCardinality(String),
     `reason` String,
+    `project_id` String DEFAULT '',
+    `project_source` LowCardinality(String) DEFAULT '',
+    `rule_id` String DEFAULT '',
+    `stack` String DEFAULT '',
+    `tags` Map(String, String) DEFAULT map(),
+    `last_modified` String DEFAULT '',
+    `first_seen_at` DateTime64(3, 'UTC') DEFAULT now64(3),
     `updated_at` DateTime64(3, 'UTC'),
     `deleted` UInt8
 )
@@ -254,8 +320,35 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_function_settings
     `account_id` String,
     `region` LowCardinality(String),
     `function_name` String,
+    -- The manual choice: `mode` '' (follow the rules), 'trace' (into `project_id`) or 'exclude'.
+    -- `tracing_enabled` (false = exclude) is kept for rows written before modes existed.
     `tracing_enabled` Bool,
+    `mode` LowCardinality(String) DEFAULT '',
+    `project_id` String DEFAULT '',
     `updated_at` DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, account_id, region, function_name);
+
+-- Auto-trace rules of a workspace (docs/implementation/auto-trace.md): which functions are traced,
+-- and into which project. Evaluated in `position` order, first enabled match wins. Every non-empty
+-- matcher field must match: `account_id` and `region` exactly, `stack` (the aws:cloudformation:stack-name
+-- tag) and `name` as globs (`*`, `?`), `tag` as `key=value` (value may be a glob) or just `key`.
+CREATE TABLE IF NOT EXISTS ivy_control.aws_project_rules
+(
+    `tenant_id` LowCardinality(String),
+    `id` String,
+    `position` UInt32,
+    `account_id` String DEFAULT '',
+    `region` String DEFAULT '',
+    `stack` String DEFAULT '',
+    `name` String DEFAULT '',
+    `tag` String DEFAULT '',
+    `project_id` String,
+    `enabled` Bool DEFAULT true,
+    `created_at` DateTime64(3, 'UTC'),
+    `updated_at` DateTime64(3, 'UTC'),
+    `deleted` UInt8 DEFAULT 0
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, id);

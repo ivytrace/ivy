@@ -1,57 +1,63 @@
 import type { IvyData } from '@ivy/mcp';
 import type { ErrorGroup, Invocation, Trace } from '@ivy/spans';
-import { Hono, type Context } from 'hono';
+import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { getErrors } from '../../routes/errors/get.js';
-import { getInvocations } from '../../routes/invocations/get.js';
-import { getTrace } from '../../routes/traces/get.js';
-import type { Tenant } from '../tenancy/context.js';
+import { errorGroups } from '../data/errors.js';
+import { listInvocations } from '../data/invocations.js';
+import { getTrace } from '../data/traces.js';
+import type { DataScope } from '../tenancy/context.js';
+import { findProject } from '../tenancy/projects.js';
+import { parseTimeRange } from '../utils/time-range.js';
 import type { ApiWorkspace, WorkspaceSource } from './workspaces.js';
 
 /**
- * The API's own route handlers, run in-process (no HTTP) for one workspace's tenant. The MCP tools
- * therefore go through the same SQL, validation and tenant guard (dataQuery → that tenant's shard)
- * as the API, one tenant-scoped read per workspace; the fan-out over workspaces is in @ivy/mcp.
+ * Where a read goes: one project of the workspace (slug or ID), or all of its projects. null when the
+ * workspace has no such project (the read then returns nothing for this workspace).
  */
-const routes = new Hono<{ Bindings: { tenant: Tenant } }>()
-  .use(async (c, next) => {
-    c.set('tenant', c.env.tenant);
-    await next();
-  })
-  .get('/invocations', getInvocations)
-  .get('/traces/:traceId', getTrace)
-  .get('/errors', getErrors)
-  .onError((err, c) => {
-    if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
+async function scopeOf(w: ApiWorkspace, project: string | undefined): Promise<DataScope | null> {
+  if (!project) return { tenant: w.tenant, projectId: null };
+  const match = await findProject(w.tenant.id, project);
+  return match ? { tenant: w.tenant, projectId: match.id } : null;
+}
+
+const range = (q: { since?: string; from?: string; to?: string }) =>
+  parseTimeRange(Object.fromEntries(Object.entries(q).filter(([, v]) => v !== undefined)) as Record<string, string>);
+
+/** Validation errors (HTTP 400) become plain errors with the API's message. */
+async function api<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof HTTPException) throw new Error(err.message);
     throw err;
-  });
-
-function search(params: Record<string, string | number | undefined>) {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== '') query.set(key, String(value));
-  return query.size ? `?${query}` : '';
+  }
 }
 
-async function call<T>(tenant: Tenant, path: string): Promise<T | null> {
-  const res = await routes.request(path, {}, { tenant });
-  if (res.status === 404) return null;
-  const body = (await res.json()) as T & { error?: string };
-  if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-  return body;
-}
-
+/**
+ * The MCP tools' reads, through the same query functions (lib/data) and guards as the API: one
+ * tenant-scoped (and, with `project`, project-scoped) read per workspace. The fan-out over workspaces
+ * is in @ivy/mcp.
+ */
 export function apiData(c: Context, workspaces: WorkspaceSource): IvyData<ApiWorkspace> {
   let resolved: Promise<ApiWorkspace[]> | undefined;
   return {
     workspaces: () => (resolved ??= workspaces(c)),
-    async invocations(w, query) {
-      const body = await call<{ items: Invocation[] }>(w.tenant, `/invocations${search({ ...query })}`);
-      return body?.items ?? [];
-    },
-    trace: (w, traceId) => call<Trace>(w.tenant, `/traces/${encodeURIComponent(traceId)}`),
-    async errors(w, query) {
-      const body = await call<{ items: ErrorGroup[] }>(w.tenant, `/errors${search({ ...query })}`);
-      return body?.items ?? [];
-    },
+    invocations: (w, query) =>
+      api(async () => {
+        const scope = await scopeOf(w, query.project);
+        if (!scope) return [];
+        const { items } = await listInvocations(scope, range(query), { function: query.function, status: query.status, q: query.q, limit: query.limit });
+        return items as Invocation[];
+      }),
+    trace: (w, traceId, project) =>
+      api(async () => {
+        const scope = await scopeOf(w, project);
+        return scope ? ((await getTrace(scope, traceId)) as Trace | null) : null;
+      }),
+    errors: (w, query) =>
+      api(async () => {
+        const scope = await scopeOf(w, query.project);
+        return scope ? ((await errorGroups(scope, range(query), query.function)) as ErrorGroup[]) : [];
+      }),
   };
 }

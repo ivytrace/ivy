@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
+import type { AsyncLocalStorage } from 'node:async_hooks';
 import { GLOBAL_KEY, type Context, type ContextManager, type GlobalApi } from './api.js';
 
 class BaseContext implements Context {
@@ -39,7 +39,7 @@ export class AlsContextManager implements ContextManager {
   }
 
   with<A extends unknown[], F extends (...args: A) => ReturnType<F>>(context: Context, fn: F, thisArg?: ThisParameterType<F>, ...args: A): ReturnType<F> {
-    this.storage ??= new AsyncLocalStorage();
+    this.storage ??= new (process.getBuiltinModule('node:async_hooks').AsyncLocalStorage)();
     const cb = thisArg == null ? fn : fn.bind(thisArg);
     return this.storage.run(context, cb as (...a: A) => ReturnType<F>, ...args);
   }

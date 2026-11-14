@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router";
 import { Cloud, MapPin, Plus, RefreshCw, Trash2 } from "lucide-react";
 
 import { AccountStatus, DeleteAccountDialog, EditRegionsDialog, FunctionCounts } from "@/components/aws/account-parts";
+import { RulesSection } from "@/components/aws/rules-section";
 import { ConnectDialog, SetupIssues } from "@/components/aws/connect-dialog";
 import { regionSummary } from "@/components/aws/region-picker";
 import { ErrorState, LoadingState } from "@/components/common/states";
@@ -12,6 +13,7 @@ import { refreshAws, syncAwsAccount } from "@/lib/api/aws";
 import { useAwsAccounts, useAwsSetup } from "@/lib/api/hooks";
 import type { AwsAccount } from "@/lib/api/types";
 import { accountLink } from "@/lib/links/links";
+import { useWorkspace } from "@/lib/links/use-scope";
 import { formatAgo } from "@/lib/utils/format";
 
 export default function AwsAccounts() {
@@ -42,8 +44,8 @@ export default function AwsAccounts() {
         <div>
           <h2 className="text-xl font-semibold">AWS accounts</h2>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Ivy assumes a role in each connected account to attach its tracing layer to every Node.js function, including new
-            ones. Turn tracing off for single functions on the account's page.
+            Ivy assumes a role in each connected account and lists its Node.js functions. Nothing is traced until you pick
+            CloudFormation stacks or functions on the account's page; rules then keep new matching functions traced.
           </p>
         </div>
         <Button onClick={() => connect()}>
@@ -77,6 +79,8 @@ export default function AwsAccounts() {
           ))}
         </div>
       )}
+
+      {accounts.data && accounts.data.items.length > 0 && <RulesSection />}
 
       <ConnectDialog open={connectOpen} onOpenChange={setConnectOpen} resume={resume} />
       <EditRegionsDialog account={editing} onOpenChange={(open) => !open && setEditing(null)} />
@@ -114,11 +118,12 @@ function AccountCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const workspace = useWorkspace();
   const [syncing, setSyncing] = useState(false);
   const sync = async () => {
     setSyncing(true);
     try {
-      await syncAwsAccount(account.id);
+      await syncAwsAccount(workspace, account.id);
       await refreshAws();
     } finally {
       setSyncing(false);
@@ -133,7 +138,7 @@ function AccountCard({
           {pending ? (
             <span className="font-semibold">{account.name}</span>
           ) : (
-            <Link to={accountLink(account.id)} className="font-semibold text-primary hover:underline">
+            <Link to={accountLink(workspace, account.id)} className="font-semibold text-primary hover:underline">
               {account.name}
             </Link>
           )}
@@ -155,7 +160,9 @@ function AccountCard({
         {!pending && (
           <div className="min-w-56 flex-1">
             <FunctionCounts counts={account.counts} />
-            <div className="text-xs text-muted-foreground">{account.counts.total} functions</div>
+            <div className="text-xs text-muted-foreground">
+              {account.counts.total} functions{account.default_project ? ` · default project ${account.default_project}` : ""}
+            </div>
           </div>
         )}
         <div className="ml-auto flex items-center gap-1">
@@ -166,7 +173,7 @@ function AccountCard({
           ) : (
             <>
               <Button size="sm" variant="outline" asChild>
-                <Link to={accountLink(account.id)}>Functions</Link>
+                <Link to={accountLink(workspace, account.id)}>Functions</Link>
               </Button>
               <Tooltipped title="Sync now">
                 <Button size="icon" variant="ghost" onClick={() => void sync()} disabled={syncing || account.syncing} aria-label="Sync now">

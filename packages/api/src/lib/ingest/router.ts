@@ -5,6 +5,7 @@ import { countSpans, decode, formatOf, GrpcCode, PayloadTooLargeError, statusBod
 import type { UsageCounters } from './usage.js';
 
 export const TENANT_HEADER = 'x-ivy-tenant';
+export const PROJECT_HEADER = 'x-ivy-project';
 
 export interface IngestOptions {
   keys: KeyCache;
@@ -82,8 +83,9 @@ function send(res: http.ServerResponse, format: OtlpFormat | null, err: HttpErro
 }
 
 /**
- * OTLP/HTTP ingest router: authenticates the API key, resolves its tenant and shard, and forwards
- * the request body unchanged to that shard's collector with the tenant in `x-ivy-tenant`.
+ * OTLP/HTTP ingest router: authenticates the API key, resolves its tenant, project and shard, and
+ * forwards the request body unchanged to that shard's collector with the tenant in `x-ivy-tenant`
+ * and the project in `x-ivy-project`.
  * See docs/implementation/tenancy.md.
  */
 export function createIngestHandler(opts: IngestOptions): http.RequestListener {
@@ -146,6 +148,7 @@ export function createIngestHandler(opts: IngestOptions): http.RequestListener {
           'content-type': req.headers['content-type']!,
           authorization: `Bearer ${opts.collectorToken}`,
           [TENANT_HEADER]: tenant.tenantId,
+          [PROJECT_HEADER]: tenant.projectId,
         };
         if (encoding) headers['content-encoding'] = encoding;
         upstream = await fetch(`${opts.collectorUrl(tenant.shardId)}/v1/traces`, {

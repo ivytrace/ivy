@@ -49,10 +49,12 @@ library needs:
 
 ### Cost
 
-6.5 KB of the 38 KB `handler.mjs` (minified). Nothing runs per invocation unless a library creates spans.
-Registration at init is an `existsSync`, at most one small `readFileSync` and a few object writes. An A/B
-of the handler's import + init with and without the bridge (30 alternating cold processes each) showed
-no difference beyond run-to-run noise.
+6.6 KB of the 39.8 KB `handler.mjs` (minified). Like the rest of the tracer it imports no builtin
+statically (`node:async_hooks`, `node:fs`, `node:path` come from `process.getBuiltinModule` at first use;
+see `layer.md`, "Tracer init"). Nothing runs per invocation unless a library creates spans. Registration
+at init is an `existsSync`, at most one small `readFileSync` and a few object writes. A local A/B of the
+handler's import + init with and without the bridge (30 alternating fresh processes each, two runs)
+gave medians of 19.9/18.7 ms vs. 18.6/18.8 ms, i.e. within noise. Not yet measured on real Lambda.
 
 ### AI SDK versions
 

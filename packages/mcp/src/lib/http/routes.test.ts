@@ -77,6 +77,14 @@ async function call(seeds: Seed[], name: string, args: Record<string, unknown> =
 }
 
 describe("MCP server", () => {
+  it("passes the project filter to every read", async () => {
+    const calls: Call[] = [];
+    await call([prod, staging], "find_failing_invocations", { project: "checkout-prod" }, calls);
+    await call([prod], "list_error_groups", { project: "checkout-prod" }, calls);
+    expect(calls.filter((c) => c.method === "invocations").map((c) => c.query?.project)).toEqual(["checkout-prod", "checkout-prod"]);
+    expect(calls.filter((c) => c.method === "errors")).toHaveLength(1);
+  });
+
   it("lists the tools with schemas", async () => {
     const client = await connect(mcpRoutes({ data: () => fakeData([prod]) }));
     const { tools } = await client.listTools();
@@ -97,7 +105,7 @@ describe("MCP server", () => {
       if (tool.name !== "list_workspaces") expect(tool.inputSchema.properties).toHaveProperty("workspace");
     }
     const summary = tools.find((t) => t.name === "get_trace_summary")!;
-    expect(Object.keys(summary.inputSchema.properties ?? {})).toEqual(["workspace", "trace_id", "request_id", "detail", "max_tokens"]);
+    expect(Object.keys(summary.inputSchema.properties ?? {})).toEqual(["workspace", "project", "trace_id", "request_id", "detail", "max_tokens"]);
   });
 
   it("list_workspaces lists slug, name and ID", async () => {

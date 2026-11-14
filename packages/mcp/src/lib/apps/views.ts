@@ -1,9 +1,10 @@
+import { scoped } from "../workspaces/scope.js";
 import { formatServiceGraph, formatTrace } from "@ivy/format";
 import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { IvyData } from "../data/types.js";
-import { guarded, label, READ_ONLY, traceId, workspace } from "../tools/common.js";
+import { guarded, label, READ_ONLY, traceId, project, workspace } from "../tools/common.js";
 import { findTrace, type FoundTrace } from "../tools/traces.js";
 import { viewTrace } from "./view-trace.js";
 
@@ -56,9 +57,9 @@ const TOOLS: ViewTool[] = [
 ];
 
 function handler(data: IvyData, tool: ViewTool, withView: boolean) {
-  return (args: { workspace?: string; trace_id: string }) =>
+  return (args: { workspace?: string; project?: string; trace_id: string }) =>
     guarded(async (): Promise<CallToolResult> => {
-      const found = await findTrace(data, args.workspace, args.trace_id);
+      const found = await findTrace(scoped(data, args), args.workspace, args.trace_id);
       const content: CallToolResult["content"] = [{ type: "text", text: tool.text(found) }];
       if (!withView) return { content };
       const { id, slug, name } = found.workspace;
@@ -72,7 +73,7 @@ function handler(data: IvyData, tool: ViewTool, withView: boolean) {
  * view's HTML is missing (UI not built), the tool is registered as a plain text tool.
  */
 export function registerViewTools(server: McpServer, data: IvyData, views: ViewHtml = {}) {
-  const inputSchema = { workspace, trace_id: traceId };
+  const inputSchema = { workspace, project, trace_id: traceId };
   for (const tool of TOOLS) {
     const html = views[tool.view];
     const config = { title: tool.title, description: tool.description, inputSchema, annotations: { title: tool.title, ...READ_ONLY } };

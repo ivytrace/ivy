@@ -10,7 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { createAwsAccount, refreshAws, verifyAwsAccount } from "@/lib/api/aws";
 import { downloadFile } from "@/lib/api/client";
-import { useAwsSetup } from "@/lib/api/hooks";
+import { useAwsSetup, useProjects } from "@/lib/api/hooks";
+import { useWorkspace } from "@/lib/links/use-scope";
 import type { AwsAccount } from "@/lib/api/types";
 import { accountLink } from "@/lib/links/links";
 
@@ -57,8 +58,22 @@ export function ConnectDialog({
   );
 }
 
-function Details({ onCreated }: { onCreated: (account: AwsAccount) => void }) {
+/** Dialog header, or just the description when the step is shown on a page (the setup wizard has its own title). */
+function Header({ bare, title, children }: { bare?: boolean; title: string; children: ReactNode }) {
+  if (bare) return <p className="text-sm text-muted-foreground">{children}</p>;
+  return (
+    <DialogHeader>
+      <DialogTitle>{title}</DialogTitle>
+      <DialogDescription>{children}</DialogDescription>
+    </DialogHeader>
+  );
+}
+
+export function Details({ onCreated, bare, defaultProject }: { onCreated: (account: AwsAccount) => void; bare?: boolean; defaultProject?: string }) {
+  const workspace = useWorkspace();
   const { data: setup } = useAwsSetup();
+  const projects = useProjects(workspace);
+  const [project, setProject] = useState(defaultProject ?? "");
   const [accountId, setAccountId] = useState("");
   const [name, setName] = useState("");
   const [stackRegion, setStackRegion] = useState<string>("");
@@ -74,7 +89,14 @@ function Details({ onCreated }: { onCreated: (account: AwsAccount) => void }) {
     setError(null);
     try {
       const regions = selection.all_regions ? [] : [region, ...selection.regions.filter((r) => r !== region)];
-      const account = await createAwsAccount({ account_id: accountId, name: name || undefined, stack_region: region, regions, all_regions: selection.all_regions });
+      const account = await createAwsAccount(workspace, {
+        account_id: accountId,
+        name: name || undefined,
+        stack_region: region,
+        regions,
+        all_regions: selection.all_regions,
+        default_project: project || undefined,
+      });
       await refreshAws();
       onCreated(account);
     } catch (err) {
@@ -86,12 +108,10 @@ function Details({ onCreated }: { onCreated: (account: AwsAccount) => void }) {
 
   return (
     <form onSubmit={submit} className="grid gap-4">
-      <DialogHeader>
-        <DialogTitle>Connect an AWS account</DialogTitle>
-        <DialogDescription>
-          You'll deploy a small CloudFormation stack that lets Ivy attach its tracing layer to your Node.js functions.
-        </DialogDescription>
-      </DialogHeader>
+      <Header bare={bare} title="Connect an AWS account">
+        You'll deploy a small CloudFormation stack that lets Ivy list your functions and attach its tracing layer to the ones you pick.
+        Nothing is traced until you choose functions or stacks.
+      </Header>
       {setup?.issues.length ? <SetupIssues issues={setup.issues} /> : null}
       <Field label="AWS account ID" htmlFor="account-id">
         <Input
@@ -126,8 +146,23 @@ function Details({ onCreated }: { onCreated: (account: AwsAccount) => void }) {
           <RegionPicker value={selection} onChange={setSelection} options={setup?.regions ?? []} locked={region} />
         </Field>
       </div>
+      <Field label="Default project" htmlFor="account-project" hint="Preselected when you pick functions to trace">
+        <Select value={project || "__default"} onValueChange={(v) => setProject(v === "__default" ? "" : v)}>
+          <SelectTrigger id="account-project" className="h-9">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__default">Workspace default</SelectItem>
+            {projects.data?.items.map((p) => (
+              <SelectItem key={p.id} value={p.slug}>
+                {p.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
       {error && <p className="text-sm text-red-400">{error}</p>}
-      <DialogFooter>
+      <DialogFooter className={bare ? "sm:justify-start" : undefined}>
         <Button type="submit" disabled={!validId || busy}>
           {busy && <Loader2 className="mr-2 size-4 animate-spin" />}
           Continue
@@ -137,7 +172,8 @@ function Details({ onCreated }: { onCreated: (account: AwsAccount) => void }) {
   );
 }
 
-function Deploy({ account, onConnected }: { account: AwsAccount; onConnected: (account: AwsAccount) => void }) {
+export function Deploy({ account, onConnected, bare }: { account: AwsAccount; onConnected: (account: AwsAccount) => void; bare?: boolean }) {
+  const workspace = useWorkspace();
   const [polling, setPolling] = useState(false);
   const [checking, setChecking] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -146,7 +182,7 @@ function Deploy({ account, onConnected }: { account: AwsAccount; onConnected: (a
   async function verify() {
     setChecking(true);
     try {
-      const res = await verifyAwsAccount(account.id);
+      const res = await verifyAwsAccount(workspace, account.id);
       if (res.verified) {
         clearInterval(timer.current);
         await refreshAws();
@@ -172,13 +208,10 @@ function Deploy({ account, onConnected }: { account: AwsAccount; onConnected: (a
 
   return (
     <div className="grid gap-4">
-      <DialogHeader>
-        <DialogTitle>Deploy the Ivy stack</DialogTitle>
-        <DialogDescription>
-          Account <span className="font-mono">{account.account_id}</span>, region{" "}
-          <span className="font-mono">{account.stack_region}</span>. Sign in to that account first.
-        </DialogDescription>
-      </DialogHeader>
+      <Header bare={bare} title="Deploy the Ivy stack">
+        Account <span className="font-mono">{account.account_id}</span>, region <span className="font-mono">{account.stack_region}</span>. Sign in to
+        that account first.
+      </Header>
 
       {account.quick_create_url ? (
         <ol className="grid gap-3 text-sm">
@@ -226,7 +259,9 @@ function Deploy({ account, onConnected }: { account: AwsAccount; onConnected: (a
             Tick the IAM acknowledgement and click <strong>Create stack</strong>.
           </Step>
           <p className="text-xs text-muted-foreground">
-            No template URL is configured on this server (<span className="font-mono">IVY_CFN_TEMPLATE_URL</span>), so there's no one-click link.
+            {account.quick_create_error
+              ? `The one-click link couldn't be prepared (${account.quick_create_error}), so use the template file instead.`
+              : "This server has no one-click CloudFormation link, so the template is uploaded by hand."}
           </p>
         </ol>
       )}
@@ -261,6 +296,7 @@ function Deploy({ account, onConnected }: { account: AwsAccount; onConnected: (a
 }
 
 function Connected({ account, onClose }: { account: AwsAccount; onClose: () => void }) {
+  const workspace = useWorkspace();
   return (
     <div className="grid gap-4">
       <DialogHeader>
@@ -269,8 +305,8 @@ function Connected({ account, onClose }: { account: AwsAccount; onClose: () => v
           Connected
         </DialogTitle>
         <DialogDescription>
-          Ivy is attaching its layer to the Node.js functions in {account.name}. Traces appear after each function's next
-          invocation.
+          Ivy is listing the functions in {account.name}. Pick the stacks or functions to trace on the next page; traces appear
+          after each function's next invocation.
         </DialogDescription>
       </DialogHeader>
       <DialogFooter className="gap-2">
@@ -278,7 +314,7 @@ function Connected({ account, onClose }: { account: AwsAccount; onClose: () => v
           Close
         </Button>
         <Button asChild onClick={onClose}>
-          <Link to={accountLink(account.id)}>View functions</Link>
+          <Link to={accountLink(workspace, account.id)}>Choose functions</Link>
         </Button>
       </DialogFooter>
     </div>

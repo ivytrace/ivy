@@ -6,7 +6,7 @@ export class ToolInputError extends Error {}
 
 /**
  * The workspaces a call covers: the one named by `workspace` (ID or slug, case-insensitive), or all
- * of the caller's. A future `project` filter narrows within these.
+ * of the caller's. The `project` filter narrows within these (see `scoped`).
  */
 export async function selectWorkspaces<W extends Workspace>(data: IvyData<W>, workspace: string | undefined): Promise<W[]> {
   const all = await data.workspaces();
@@ -63,4 +63,16 @@ export async function locateTrace<W extends Workspace>(
   const found = await findFirst(candidates, (w) => data.trace(w, id), options);
   failed.push(...found.failed);
   return { hit: found.hit && { workspace: found.hit.workspace, trace: found.hit.value }, failed };
+}
+
+/** `data` with every read narrowed to the project named by a tool's `project` argument (if any). */
+export function scoped<W extends Workspace>(data: IvyData<W>, args: { project?: string }): IvyData<W> {
+  const project = args.project;
+  if (!project) return data;
+  return {
+    workspaces: () => data.workspaces(),
+    invocations: (w, query) => data.invocations(w, { ...query, project }),
+    trace: (w, traceId) => data.trace(w, traceId, project),
+    errors: (w, query) => data.errors(w, { ...query, project }),
+  };
 }
