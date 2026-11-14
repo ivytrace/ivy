@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router";
-import { Bell, BellRing, Cloud, FolderKanban, Gauge, Mail, Settings2, Users } from "lucide-react";
+import { Bell, BellRing, Cloud, FolderKanban, Gauge, Settings2, Users } from "lucide-react";
 
 import { NewBadge } from "@/components/aws/account-parts";
 import { useAwsAccounts, useMultiWorkspace, useWorkspaceInfo } from "@/lib/api/hooks";
@@ -21,7 +21,6 @@ export default function SettingsLayout() {
     { section: "aws", label: "AWS accounts", icon: Cloud, badge: newFunctions },
     { section: "usage", label: "Usage", icon: Gauge },
     { section: "alerts", label: "Alerts", icon: BellRing },
-    { section: "digest", label: "Email digest", icon: Mail },
     { section: "notifications", label: "Notifications", icon: Bell },
   ];
 

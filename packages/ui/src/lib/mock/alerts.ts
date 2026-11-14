@@ -87,7 +87,7 @@ export function createAlertsMock(options: { configured: boolean }) {
       }
       return null;
     },
-    workspaceRoutes(ws: MockWorkspace, rest: string, method: string, body: Record<string, unknown>, errors: () => ErrorGroup[]) {
+    workspaceRoutes(ws: MockWorkspace, rest: string, method: string, body: Record<string, unknown>, week: () => { groups: ErrorGroup[]; untraced: string[] }) {
       const owner = ws.role === "owner";
       if (rest === "/digest" && method === "GET") {
         return {
@@ -108,7 +108,10 @@ export function createAlertsMock(options: { configured: boolean }) {
         digest.set(ws.id, body.enabled === true);
         return { status: 200, body: { enabled: body.enabled === true } };
       }
-      if (rest === "/digest/preview" && method === "GET") return { status: 200, body: digestPreview(ws, errors()) };
+      if (rest === "/digest/preview" && method === "GET") {
+        const { groups, untraced } = week();
+        return { status: 200, body: digestPreview(ws, groups, untraced) };
+      }
       return null;
     },
     notifications(workspaces: MockWorkspace[], method: string, body: Record<string, unknown>) {
@@ -133,8 +136,16 @@ export function createAlertsMock(options: { configured: boolean }) {
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+/** The API's "New functions not traced yet": up to three names, then "and N more". */
+export function untracedSection(names: string[]) {
+  if (!names.length) return "";
+  const shown = names.slice(0, 3).map((n) => `<code style="font-family:Menlo,Consolas,monospace;">${esc(n)}</code>`).join(", ");
+  const list = names.length > 3 ? `${shown} and ${names.length - 3} more` : shown;
+  return `<h2 style="font-size:15px;margin:28px 0 4px;">New functions not traced yet</h2><table role="presentation" width="100%" style="border-collapse:collapse;"><tr><td style="padding:10px 0;border-top:1px solid #e4e4e7;font-size:13px;color:#27272a;">${list}. <a href="#" style="color:#15803d;">Choose what to trace</a></td></tr></table>`;
+}
+
 /** A stand-in for the API's digest email (same layout, mock numbers). */
-function digestPreview(ws: MockWorkspace, groups: ErrorGroup[]) {
+function digestPreview(ws: MockWorkspace, groups: ErrorGroup[], untraced: string[]) {
   const errors = groups.filter((g) => g.kind === "error").reduce((n, g) => n + g.count, 0);
   const throttles = groups.filter((g) => g.kind === "throttle").reduce((n, g) => n + g.count, 0);
   const weekAgo = Date.now() - 7 * DAY;
@@ -153,7 +164,7 @@ function digestPreview(ws: MockWorkspace, groups: ErrorGroup[]) {
 <tr><td style="padding:24px 28px 8px;"><div style="font-size:13px;font-weight:700;color:#16a34a;">Ivy</div><h1 style="font-size:20px;margin:6px 0 2px;">Weekly digest: ${esc(ws.name)}</h1><div style="color:#71717a;font-size:13px;">Last seven days (UTC)</div></td></tr>
 <tr><td style="padding:8px 28px 0;"><table role="presentation" width="100%"><tr>${stat(18_420, "Invocations", "+12%")}${stat(errors, "Errors", "+40%")}${stat(3, "Failures outside the handler", "new")}${stat(throttles, "Throttles", "−20%")}</tr></table></td></tr>
 <tr><td style="padding:0 28px 8px;"><h2 style="font-size:15px;margin:28px 0 4px;">New error groups this week</h2><table role="presentation" width="100%" style="border-collapse:collapse;">${fresh.map(row).join("") || '<tr><td style="padding:10px 0;border-top:1px solid #e4e4e7;color:#71717a;font-size:13px;">None.</td></tr>'}</table>
-<h2 style="font-size:15px;margin:28px 0 4px;">Top error groups</h2><table role="presentation" width="100%" style="border-collapse:collapse;">${top.map(row).join("")}</table></td></tr>
+<h2 style="font-size:15px;margin:28px 0 4px;">Top error groups</h2><table role="presentation" width="100%" style="border-collapse:collapse;">${top.map(row).join("")}</table>${untracedSection(untraced)}</td></tr>
 <tr><td style="padding:20px 28px 24px;color:#71717a;font-size:12px;border-top:1px solid #e4e4e7;">You get this because you are a member of ${esc(ws.name)} in Ivy. <a href="#" style="color:#15803d;">Notification settings</a> · <a href="#" style="color:#15803d;">Unsubscribe</a></td></tr>
 </table></td></tr></table></body></html>`;
   return {

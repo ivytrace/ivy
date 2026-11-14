@@ -123,11 +123,19 @@ restart over Monday morning still sends it.
   with their trend; each links to its latest trace (or errors page). Types, trimmed messages, function and project
   names only, no payloads. HTML with tables and inline styles on a light background (email clients don't do the
   dashboard's dark theme reliably; `color-scheme` lets clients that darken mail do so), plus a text part.
+- **New functions not traced yet** (`newUntracedFunctions`): Lambda functions of the workspace's AWS accounts (not
+  `pending`) whose `aws_functions.first_seen_at` falls in the period and whose state is `available` (no tag, manual
+  choice or rule traces them; `opted_out`, i.e. `ivy:trace=false` or excluded in the dashboard, `unsupported` and
+  the rest are left out, and a manual exclude is checked again in case the state is stale). Up to three names
+  (oldest first), then "and N more", and a "Choose what to trace" link to `/w/<ws>/settings/aws`. The section is
+  left out when there are none or no accounts are connected; it does not make an otherwise empty week send. It reuses
+  the existing `first_seen_at` column (kept across syncs by `replaceRegionFunctions`), so there is no schema change;
+  the per-tenant function list is small and already read whole for the AWS settings page, so no index either.
 - **Unsubscribe**: each email carries `List-Unsubscribe: <…/api/digest/unsubscribe?token=…>` and
   `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058), and the same link in the footer. The token is
   `{t: tenant, s: sub}` signed like the OAuth state (purpose `digest-unsubscribe`, key `IVY_SECRET_KEY`, or the SMTP
   URL when there is none), without expiry, so it works without signing in. GET shows a confirmation button (link
-  scanners prefetch GETs), POST unsubscribes. Members switch it back on under Notifications.
+  scanners prefetch GETs), POST unsubscribes. Members switch it back on under Settings → Notifications.
 
 ## Dashboard
 
@@ -135,9 +143,24 @@ restart over Monday morning still sends it.
   "Send test message", remove), and "When an error group is first seen (always), then at most every [60] minutes or
   every [100] occurrences, whichever comes first", the Slack on/off switch and "Also alert on throttles". Owners edit;
   members see it read-only.
-- **Settings → Email digest**: on/off (owners), schedule, recipient count, and a preview of this week's email.
-- **Notifications** (settings and the user menu): your digest subscription per workspace.
-- Without the configuration each page explains which variables are missing. Mock mode: `VITE_MOCK_NO_ALERTS=1`.
+- **Settings → Notifications** (`/w/<ws>/settings/notifications`), one page per workspace for everything that
+  notifies:
+  - *Weekly email digest*: the workspace's on/off switch (owners; members see it disabled with "Only workspace owners
+    can change this"), the schedule (`describeSchedule` of `IVY_DIGEST_CRON` as returned by `GET …/digest`), the
+    recipient count, and a preview of this week's email.
+  - *Your email*: "Send the weekly digest to me" for this workspace (`PUT /api/me/notifications`); every member can
+    change it. Without sign-in it explains that `IVY_DIGEST_TO` decides instead.
+  - *Slack alerts*: a note that Slack is set per project, and each active project with its channels (or "Not
+    connected", "Broken") linking to its Alerts settings. The statuses come from the existing per-project
+    `GET …/alerts`, one request per project (workspaces have a handful), so no new endpoint.
+  - Sections follow `/api/config` `alerts`: without email the digest card shows the missing variables (the preview
+    still works) and *Your email* is hidden; without Slack the Slack card shows its missing variables instead of the
+    project list.
+  - It replaces the separate "Email digest" settings page and the user menu's "Notifications" entry (two places for
+    one topic confused people). `/w/<ws>/settings/digest` (a route loader redirect, `routes/settings/redirects.ts`),
+    `/settings/notifications` and `/settings/digest` redirect here. The digest's "Notification settings" link and the
+    unsubscribe pages point here.
+- Mock mode: `VITE_MOCK_NO_ALERTS=1` for the unconfigured server; the "Side project" workspace shows the member view.
 
 These are dashboard-only pages; the MCP App views and the website demo have no settings, so nothing changes there.
 
@@ -191,7 +214,12 @@ If `IVY_SECRET_KEY` changes, stored webhooks can't be decrypted: the channels sh
   schedule, recipients, subject, both parts, totals and trends, new and top groups, links, `List-Unsubscribe` and
   its token, once per period across "processes" and restarts, late delivery, skipping empty or switched-off
   workspaces or missing SMTP, `IVY_DIGEST_CRON`, the unsubscribe page and one-click POST, re-subscribing under
-  Notifications, workspace settings and preview.
+  Notifications, workspace settings and preview, and "New functions not traced yet" (at most three plus "and N
+  more", the week window, excluded/tagged-off/unsupported/traced functions skipped, no section without new
+  functions or connected accounts, also in the preview).
+- UI: `routes/settings/notifications.test.tsx` (owner and member digest card, configured and not, your email with
+  and without sign-in, Slack rows, the `/settings/digest` redirect), `lib/links/links.test.ts` (old URLs),
+  `lib/mock/alerts.test.ts`.
 - `lib/alerts/data.test.ts`: every alert query binds the tenant and project (the digest explicitly all projects).
   The SQL was also run against a throwaway ClickHouse 26.8 with the schema applied and seeded rows (groups, the
   since-notify count, throttles, the stack frame, digest totals and trends).

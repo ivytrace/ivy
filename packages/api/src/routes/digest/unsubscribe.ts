@@ -17,7 +17,7 @@ async function target(c: Context) {
 }
 
 const invalid = (c: Context) =>
-  c.html(simplePage('This link is not valid', 'The unsubscribe link is incomplete or was changed. You can also switch the digest off under Notifications in Ivy.'), 400);
+  c.html(simplePage('This link is not valid', 'The unsubscribe link is incomplete or was changed. You can also switch the digest off in Ivy under Settings → Notifications.'), 400);
 
 export async function getUnsubscribe(c: Context) {
   const t = await target(c);
@@ -34,7 +34,7 @@ export async function postUnsubscribe(c: Context) {
     simplePage(
       'You are unsubscribed',
       `You will no longer get the weekly digest of ${t.workspace.name}.`,
-      `<p>Changed your mind? Switch it back on under Notifications in <a href="/w/${escapeHtml(encodeURIComponent(t.workspace.slug))}/settings/notifications">Ivy</a>.</p>`,
+      `<p>Changed your mind? Switch it back on under Settings → Notifications in <a href="/w/${escapeHtml(encodeURIComponent(t.workspace.slug))}/settings/notifications">Ivy</a>.</p>`,
     ),
   );
 }

@@ -136,5 +136,11 @@ live in `docs/implementation/`.
 - Alerts and the digest never carry payloads: type, trimmed message, function, counts, a stack frame and links.
 - The digest goes to a workspace's members every Monday 08:00 UTC by default, skips weeks without data, can be
   switched off per workspace by owners, and every member can unsubscribe (one click in the email, no sign-in).
+- Notification settings live on one page per workspace (Settings → Notifications): the workspace's digest switch
+  (owners), your own digest subscription (everyone), and each project's Slack status with a link to its Alerts
+  settings. No separate "Email digest" page and no Notifications entry in the user menu; old URLs redirect.
+- The digest lists Lambda functions first seen that week in the workspace's AWS accounts that nothing traces yet (at
+  most three names, then "and N more", with a "Choose what to trace" link); left out when there are none or no
+  account is connected, and never listing functions excluded in the dashboard or tagged `ivy:trace=false`.
 - Self-hosters get the `on-error-group-created` hook for their own integrations. Implementation:
   `docs/implementation/alerts.md`.

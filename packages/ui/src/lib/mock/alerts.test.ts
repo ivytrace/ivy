@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { describeSchedule } from "../../routes/settings/digest";
+import { describeSchedule } from "../../routes/settings/notifications";
+import { untracedSection } from "./alerts";
 import { createMockHandler } from "./server";
 
 function client(options: Parameters<typeof createMockHandler>[0] = {}) {
@@ -50,6 +51,21 @@ describe("mock API: alerts", () => {
     const mine = call<{ items: { workspace: { slug: string }; digest: boolean }[] }>("GET", "/api/me/notifications").body.items;
     expect(mine.find((i) => i.workspace.slug === "acme")?.digest).toBe(false);
     expect(call<{ subscribed: boolean }>("GET", "/api/w/acme/digest").body.subscribed).toBe(false);
+  });
+});
+
+describe("mock digest preview: new functions not traced yet", () => {
+  it("shows up to three names, then and N more, and nothing when there are none", () => {
+    expect(untracedSection([])).toBe("");
+    const text = (s: string) => s.replace(/<[^>]+>/g, "");
+    expect(text(untracedSection(["a", "b"]))).toContain("a, b. Choose what to trace");
+    expect(text(untracedSection(["a", "b", "c", "d", "e"]))).toContain("a, b, c and 2 more. Choose what to trace");
+  });
+
+  it("lists the seeded workspace's new untraced functions", () => {
+    const call = client();
+    expect(call<{ html: string }>("GET", "/api/w/acme/digest/preview").body.html).toContain("New functions not traced yet");
+    expect(call<{ html: string }>("GET", "/api/w/side-project/digest/preview").body.html).not.toContain("not traced yet");
   });
 });
 

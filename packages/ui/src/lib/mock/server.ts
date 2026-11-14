@@ -380,7 +380,10 @@ export function createMockHandler(options: MockOptions = {}) {
     if (rest === "/members" && method === "GET") return json(200, { items: ws.members });
     if (rest.startsWith("/digest")) {
       const sevenDays = new URLSearchParams({ since: "7d" });
-      const res = alerts.workspaceRoutes(ws, rest, method, body, () => errors(poolOf(ws, null), throttlePoolOf(ws, null), sevenDays, true, ids(ws)));
+      const res = alerts.workspaceRoutes(ws, rest, method, body, () => ({
+        groups: errors(poolOf(ws, null), throttlePoolOf(ws, null), sevenDays, true, ids(ws)),
+        untraced: awsOf(ws).newUntraced(Date.now() - 7 * 86_400_000),
+      }));
       if (res) return json(res.status, res.body);
     }
     if (rest === "/usage" && method === "GET") return json(200, mockUsage(options.usage ?? "free", ws.id));

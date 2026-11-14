@@ -17,8 +17,8 @@ import AwsAccounts from "@/routes/settings/aws/page";
 import AwsAccountPage from "@/routes/settings/aws/account";
 import UsagePage from "@/routes/settings/usage/page";
 import AlertsSettings from "@/routes/settings/alerts";
-import DigestSettings from "@/routes/settings/digest";
 import NotificationsSettings from "@/routes/settings/notifications";
+import { mergedSettingsRoutes } from "@/routes/settings/redirects";
 import InvitePage from "@/routes/invite/page";
 import WelcomePage from "@/routes/welcome/page";
 import { LegacyRedirect, ProjectLayout, WorkspaceIndex } from "@/routes/scope/redirects";
@@ -61,6 +61,8 @@ const router = createBrowserRouter([
       { path: "settings/aws", element: <LegacyRedirect /> },
       { path: "settings/aws/:id", element: <LegacyRedirect /> },
       { path: "settings/usage", element: <LegacyRedirect /> },
+      { path: "settings/notifications", element: <LegacyRedirect /> },
+      { path: "settings/digest", element: <LegacyRedirect /> },
       {
         path: "w/:workspace",
         children: [
@@ -78,8 +80,8 @@ const router = createBrowserRouter([
               { path: "usage", element: <UsagePage /> },
               { path: "alerts", element: <AlertsSettings /> },
               { path: "alerts/:project", element: <AlertsSettings /> },
-              { path: "digest", element: <DigestSettings /> },
               { path: "notifications", element: <NotificationsSettings /> },
+              ...mergedSettingsRoutes,
             ],
           },
           {

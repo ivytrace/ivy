@@ -34,7 +34,7 @@ export const invocationsLink = (s: Scope, filters: { function?: string; status?:
 
 export const errorsLink = (s: Scope, fn?: string) => `${pageLink(s, "errors")}${fn ? `?function=${enc(fn)}` : ""}`;
 
-export type SettingsSection = "general" | "members" | "projects" | "aws" | "usage" | "alerts" | "digest" | "notifications";
+export type SettingsSection = "general" | "members" | "projects" | "aws" | "usage" | "alerts" | "notifications";
 
 export const settingsLink = (workspace: string, section: SettingsSection = "general") => `/w/${enc(workspace)}/settings/${section}`;
 
@@ -77,6 +77,7 @@ export function legacyTarget(pathname: string, scope: Scope): string | null {
   if (path === "/settings") return settingsLink(scope.workspace);
   if (path === "/settings/aws") return awsAccountsLink(scope.workspace);
   if (path === "/settings/usage") return usageLink(scope.workspace);
+  if (path === "/settings/notifications" || path === "/settings/digest") return settingsLink(scope.workspace, "notifications");
   const account = /^\/settings\/aws\/([^/]+)$/.exec(path);
   if (account) return `${awsAccountsLink(scope.workspace)}/${account[1]}`;
   return null;

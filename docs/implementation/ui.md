@@ -65,7 +65,7 @@ Everything lives under a workspace and, for data, a project (`workspaces-project
 | `/w/:workspace/:project/functions`, `…/invocations`, `…/errors`, `…/traces/:traceId` | data pages of a project |
 | `/w/:workspace/all/functions`, `…/all/invocations`, `…/all/errors` | every project of the workspace (charts included); rows have a quiet Project column and link into their own project (`rowScope`). `/w/:workspace/all/traces/:id` finds the trace's project and redirects there |
 | `/w/:workspace` | the last-used project of that workspace, else its default project |
-| `/w/:workspace/settings/general` · `members` · `projects` · `aws` · `aws/:id` | workspace settings |
+| `/w/:workspace/settings/general` · `members` · `projects` · `aws` · `aws/:id` · `usage` · `alerts/:project` · `notifications` | workspace settings |
 | `/invite/:token` | accept an invitation (signed in, outside the layout) |
 | `/welcome/:step?ws=&project=&account=&from=&mode=` | the first-run quick start (signed in, outside the layout) |
 
@@ -73,9 +73,11 @@ Everything lives under a workspace and, for data, a project (`workspaces-project
   `/api/w/:ws/…` from it. Pages outside `/w/…` (the wizard) set it with `ScopeProvider`.
 - The last-used workspace and project are kept in localStorage (`ivy.lastScope`, in try/catch); `all` is a valid
   last choice.
-- Old links keep working: `/`, `/functions`, `/invocations`, `/errors`, `/traces/:id`, `/settings`, `/settings/aws` and
-  `/settings/aws/:id` redirect to the same page in the last-used workspace and project (else the first workspace from
+- Old links keep working: `/`, `/functions`, `/invocations`, `/errors`, `/traces/:id`, `/settings`, `/settings/aws`,
+  `/settings/aws/:id`, `/settings/notifications` and `/settings/digest` redirect to the same page in the last-used workspace and project (else the first workspace from
   `GET /api/workspaces` and its default project), keeping the query string and hash (`legacyTarget`, unit-tested).
+- Merged settings pages keep their URLs: `/w/:workspace/settings/digest` redirects to `…/settings/notifications`
+  (`routes/settings/redirects.ts`, a loader redirect so it is tested with a memory router).
 - Routing behind a shared domain: `/w/*`, `/invite/*` and `/welcome/*` are app paths (`auth.md`).
 
 **Header.** A `Workspace / Project ▾` breadcrumb next to the logo with a popover on each part: the workspaces (plus
@@ -159,7 +161,8 @@ Paths below are relative to `/w/:workspace/:project`.
   localStorage), a ⌘K search (functions, jump to a trace ID, search invocations; within the current project), and the
   "Authentication disabled" banner shown when `GET /api/config` returns `auth.enabled: false`.
 - Auth (`auth.md`): with OIDC on, every route above needs a signed-in user (`RequireAuth` → `/login?returnTo=…`).
-  `/login`, `/auth/callback` and `/logout` render outside the layout. The header has a user menu (email, sign out).
+  `/login`, `/auth/callback` and `/logout` render outside the layout. The header has a user menu (email, sign out);
+  notification settings are per workspace under Settings → Notifications (`alerts.md`), not in the user menu.
   `src/lib/auth/` holds the oidc-client-ts wrapper, the provider, `returnTo` handling and the `ivy_session` marker cookie.
 
 ## In-progress invocations

@@ -33,6 +33,8 @@ describe("legacy redirects", () => {
     ["/settings", "/w/acme/settings/general"],
     ["/settings/aws", "/w/acme/settings/aws"],
     ["/settings/aws/acc-1", "/w/acme/settings/aws/acc-1"],
+    ["/settings/notifications", "/w/acme/settings/notifications"],
+    ["/settings/digest", "/w/acme/settings/notifications"],
   ])("%s → %s", (from, to) => {
     expect(legacyTarget(from, scope)).toBe(to);
   });
