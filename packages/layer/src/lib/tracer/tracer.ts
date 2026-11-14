@@ -3,7 +3,7 @@ import { chunkSpans } from '../export/chunks.js';
 import { encodeSpan, toKeyValues, type OtlpKeyValue, type OtlpSpan } from '../export/otlp.js';
 import { detectTrigger, httpStatusFromResult, type Trigger } from '../triggers/detect.js';
 import { capString, createKeyMatcher, serialize, serializeBody, type KeyMatcher } from '../utils/redact.js';
-import { newTraceId } from '../utils/ids.js';
+import { invocationIds, newTraceId } from '../utils/ids.js';
 import { anchorClock, now } from './clock.js';
 import { SpanReducer } from './collapse.js';
 import { byteLength, isPayloadKey, PayloadBudget } from './payload-budget.js';
@@ -63,6 +63,7 @@ export class Tracer {
     const functionName = context.functionName ?? process.env.AWS_LAMBDA_FUNCTION_NAME ?? 'unknown';
     const trigger = detectTrigger(event);
     const root = createSpan(newTraceId(start), functionName, trigger.kind, start);
+    if (context.awsRequestId) Object.assign(root, invocationIds(context.awsRequestId, start));
     const requestId = context.awsRequestId ?? root.spanId;
     Object.assign(root.attributes, trigger.attributes, {
       'ivy.invocation': true,

@@ -28,6 +28,8 @@ const LATE_HELLO_WAIT_MS: u64 = 2000;
 const SHUTDOWN_BUDGET_MS: i64 = 1500;
 const SHUTDOWN_TELEMETRY_WAIT_MS: i64 = 150;
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
+const IN_PROGRESS_REFRESH_MS: i64 = 60_000;
+const IN_PROGRESS_BUDGET_MS: u64 = 2000;
 
 fn log(msg: &str) {
     let _ = writeln!(std::io::stderr(), "[ivy-extension] {msg}");
@@ -218,6 +220,38 @@ fn start_telemetry_server(port: u16, store: Arc<SpanStore>) -> std::io::Result<(
     Ok(())
 }
 
+/// While the invocation runs past `after_ms`, exports a provisional invocation span, refreshed every
+/// `IN_PROGRESS_REFRESH_MS`, until it ends or `wait_until` passes. Costs nothing for shorter invocations: the
+/// extension only waits, as it does anyway. See docs/implementation/layer.md, "Long-running invocations".
+#[allow(clippy::too_many_arguments)]
+fn report_in_progress<E: queue::Exporter>(
+    store: &SpanStore,
+    queue: &mut ExportQueue<E>,
+    ctx: &InvocationContext,
+    deadline_ms: i64,
+    wait_until: Instant,
+    after_ms: u64,
+    opts: &FinishOptions,
+    debug: &dyn Fn(&str),
+) {
+    let Some(request_id) = ctx.request_id.as_deref().filter(|_| after_ms > 0) else { return };
+    let mut next_ms = ctx.start_ms + after_ms as i64;
+    while next_ms < deadline_ms {
+        let until = Instant::now() + Duration::from_millis((next_ms - epoch_ms()).max(0) as u64);
+        if until >= wait_until || store.wait_settled(request_id, until.saturating_duration_since(Instant::now())) {
+            return;
+        }
+        let Some(batch) = store.in_progress(ctx, deadline_ms, epoch_ms(), opts) else { return };
+        debug(&format!("{request_id} still running after {} ms; reporting it as in progress", epoch_ms() - ctx.start_ms));
+        queue.add(batch);
+        let budget = IN_PROGRESS_BUDGET_MS.min((deadline_ms - epoch_ms()).max(0) as u64);
+        if budget > 50 {
+            queue.flush(budget, false);
+        }
+        next_ms += IN_PROGRESS_REFRESH_MS;
+    }
+}
+
 fn main() {
     let name = std::env::args()
         .nth(1)
@@ -361,16 +395,18 @@ fn main() {
         // hello. With telemetry the wait ends when the runtime is done, so a missing tracer costs little;
         // without it, the first invocation still waits a bounded while for spans that come late.
         let wait_for_spans = store.is_attached() || (tracer_expected && (telemetry_on || late_hello_wait.is_some()));
+        let ctx = InvocationContext { request_id: event.request_id.clone(), function_arn: event.function_arn.clone(), start_ms: invoked_at, cold_start: first_invoke };
         if let Some(request_id) = event.request_id.as_deref().filter(|_| wait_for_spans) {
             let mut wait_ms = (event.deadline_ms - epoch_ms() + WAIT_GRACE_MS).max(0) as u64;
             if !telemetry_on && !store.is_attached() {
                 wait_ms = wait_ms.min(late_hello_wait.unwrap_or(0));
             }
-            if !store.wait_for(request_id, Duration::from_millis(wait_ms)) {
+            let wait_until = Instant::now() + Duration::from_millis(wait_ms);
+            report_in_progress(&store, &mut queue, &ctx, event.deadline_ms, wait_until, config.inprogress_after_ms, &finish_options, &debug);
+            if !store.wait_for(request_id, wait_until.saturating_duration_since(Instant::now())) {
                 debug(&format!("no final spans for {request_id}"));
             }
         }
-        let ctx = InvocationContext { request_id: event.request_id.clone(), function_arn: event.function_arn.clone(), start_ms: invoked_at, cold_start: first_invoke };
         first_invoke = false;
         last_request = event.request_id.clone();
         for b in store.finish(Some(&ctx), &finish_options) {
@@ -384,6 +420,89 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    #[derive(Clone, Default)]
+    struct Recorder(Arc<Mutex<Vec<(Instant, Value)>>>);
+
+    impl queue::Exporter for Recorder {
+        fn send(&mut self, body: Vec<u8>, _budget: Duration) -> queue::SendResult {
+            self.0.lock().unwrap().push((Instant::now(), serde_json::from_slice(&body).unwrap()));
+            queue::SendResult::ok()
+        }
+    }
+
+    fn sent_spans(r: &Recorder) -> Vec<(Instant, Value)> {
+        let sent = r.0.lock().unwrap();
+        sent.iter()
+            .flat_map(|(at, body)| {
+                body["resourceSpans"].as_array().unwrap().iter().flat_map(|rs| rs["scopeSpans"].as_array().unwrap().iter()).flat_map(|ss| ss["spans"].as_array().unwrap().clone()).map(|s| (*at, s)).collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    fn opts() -> FinishOptions {
+        FinishOptions { redact_keys: vec![], report_updates: false, fallback_resource: json!([{ "key": "faas.name", "value": { "stringValue": "import-worker" } }]) }
+    }
+
+    /// Runs `report_in_progress` for an invocation whose tracer sends its final batch after `final_after_ms`.
+    fn run(after_ms: u64, final_after_ms: u64) -> (Recorder, Arc<SpanStore>, Instant, InvocationContext) {
+        let store = Arc::new(SpanStore::default());
+        store.attach();
+        let recorder = Recorder::default();
+        let mut queue = ExportQueue::new(recorder.clone(), Limits::default(), Box::new(|| 0), Box::new(|_: &str| {}));
+        let started = Instant::now();
+        let ctx = InvocationContext { request_id: Some("req-long".into()), function_arn: None, start_ms: epoch_ms(), cold_start: false };
+        let (trace, span) = spans::derived_ids("req-long", ctx.start_ms);
+        let tracer = {
+            let store = store.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(final_after_ms));
+                let root = json!({ "traceId": trace, "spanId": span, "name": "import-worker", "attributes": [{ "key": "ivy.invocation", "value": { "boolValue": true } }], "status": { "code": 0 } });
+                store.add("req-long", true, json!([]), vec![root]);
+            })
+        };
+        let deadline_ms = ctx.start_ms + 10_000;
+        report_in_progress(&store, &mut queue, &ctx, deadline_ms, started + Duration::from_millis(10_200), after_ms, &opts(), &|_: &str| {});
+        store.wait_for("req-long", Duration::from_secs(5));
+        tracer.join().unwrap();
+        for b in store.finish(Some(&ctx), &opts()) {
+            queue.add(b);
+        }
+        queue.flush(2000, false);
+        (recorder, store, started, ctx)
+    }
+
+    #[test]
+    fn a_long_invocation_is_reported_as_in_progress_after_the_threshold_and_the_final_span_replaces_it() {
+        let (recorder, _, started, ctx) = run(150, 400);
+        let sent = sent_spans(&recorder);
+        assert_eq!(sent.len(), 2, "one provisional and one final invocation span");
+        let (at, provisional) = &sent[0];
+        let elapsed = at.duration_since(started);
+        assert!(elapsed >= Duration::from_millis(150) && elapsed < Duration::from_millis(400), "sent after the threshold, not before ({elapsed:?})");
+        assert_eq!(spans::attr(provisional, "ivy.in_progress").unwrap()["boolValue"], true);
+        assert_eq!(spans::attr(provisional, "ivy.invocation").unwrap()["boolValue"], true);
+        assert_eq!(spans::attr(provisional, "ivy.deadline_ms").unwrap()["intValue"], (ctx.start_ms + 10_000).to_string());
+        assert_eq!(spans::attr(provisional, "faas.invocation_id").unwrap()["stringValue"], "req-long");
+        assert_eq!(provisional["status"]["code"], 0);
+        assert_eq!(provisional["name"], "import-worker");
+        assert!(spans::attr(provisional, "ivy.payload.request").is_none());
+        let final_root = &sent[1].1;
+        assert!(spans::attr(final_root, "ivy.in_progress").is_none());
+        assert_eq!((&final_root["traceId"], &final_root["spanId"]), (&provisional["traceId"], &provisional["spanId"]), "the final span has the provisional's IDs");
+    }
+
+    #[test]
+    fn nothing_is_sent_for_invocations_shorter_than_the_threshold_or_when_turned_off() {
+        let (recorder, _, _, _) = run(300, 50);
+        assert_eq!(sent_spans(&recorder).len(), 1, "only the final span");
+        let (recorder, _, _, _) = run(0, 200);
+        let sent = sent_spans(&recorder);
+        assert_eq!(sent.len(), 1);
+        assert!(spans::attr(&sent[0].1, "ivy.in_progress").is_none());
+    }
 
     #[test]
     fn the_intake_listens_before_register_is_sent() {

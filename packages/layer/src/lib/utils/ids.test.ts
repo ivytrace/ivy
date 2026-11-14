@@ -1,23 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { newSpanId, newTraceId } from './ids.js';
+import { invocationIds, newTraceId } from './ids.js';
 
-describe('ids', () => {
-  it('trace IDs start with the big-endian unix timestamp in seconds', () => {
-    const ms = Date.UTC(2024, 10, 21, 10, 0, 0);
-    const id = newTraceId(ms);
-    expect(id).toMatch(/^[0-9a-f]{32}$/);
-    expect(parseInt(id.slice(0, 8), 16)).toBe(ms / 1000);
-    expect(id.slice(0, 8)).toBe('673f04a0');
+describe('invocationIds', () => {
+  it('derives the IDs the extension derives (extension/src/spans.rs, derived_ids_match_the_tracer)', () => {
+    expect(invocationIds('8f1c2a7e-3b9d-4c55-9a51-0f6f1e2b7c3d', 1_700_000_000_123)).toEqual({
+      traceId: '6553f100306e643c836b93bd7315f15e',
+      spanId: 'aa43ecc22bca145b',
+    });
   });
 
-  it('are random after the prefix', () => {
-    const ids = new Set(Array.from({ length: 2000 }, () => newTraceId(0).slice(8)));
-    expect(ids.size).toBe(2000);
-  });
-
-  it('span IDs are 16 hex chars and unique', () => {
-    const ids = new Set(Array.from({ length: 5000 }, newSpanId));
-    expect(ids.size).toBe(5000);
-    for (const id of ids) expect(id).toMatch(/^[0-9a-f]{16}$/);
+  it('differs per request and keeps the time prefix layout', () => {
+    const a = invocationIds('req-a', Date.UTC(2026, 10, 14));
+    expect(a.spanId).not.toBe(invocationIds('req-b', Date.UTC(2026, 10, 14)).spanId);
+    expect(a.traceId.slice(0, 8)).toBe(newTraceId(Date.UTC(2026, 10, 14)).slice(0, 8));
   });
 });
