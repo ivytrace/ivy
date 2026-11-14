@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { THROTTLED_ERROR_TYPE, THROTTLED_MESSAGE, throttleSource } from '../../lib/stats/throttles.js';
 import { dataQuery } from '../../lib/tenancy/context.js';
 import { isoFromMs } from '../../lib/utils/format.js';
 import { parseTimeRange } from '../../lib/utils/time-range.js';
@@ -37,16 +38,36 @@ export async function getErrors(c: Context) {
     { from: range.from, to: range.to, function: params.function ?? '' },
   );
 
-  return c.json({
-    items: rows.map((row) => ({
-      fingerprint: row.fingerprint,
-      function: row.function,
-      error_type: row.error_type || 'Error',
-      error_message: row.error_message,
-      count: row.count,
-      first_seen: isoFromMs(row.first_seen_ms),
-      last_seen: isoFromMs(row.last_seen_ms),
-      sample_trace_id: row.sample_trace_id,
-    })),
-  });
+  const throttleQuery = throttleSource({ range, functionName: params.function || undefined });
+  const throttled = await dataQuery<{ function: string; region: string; throttles: number; first_ms: number; last_ms: number }>(
+    c,
+    throttleQuery.sql,
+    throttleQuery.params,
+  );
+  // One synthetic group per function: throttled requests never reach the function, so there is no trace.
+  const throttleGroups = throttled.map((row) => ({
+    fingerprint: `throttled:${row.region}:${row.function}`,
+    function: row.function,
+    error_type: THROTTLED_ERROR_TYPE,
+    error_message: THROTTLED_MESSAGE,
+    count: row.throttles,
+    first_seen: isoFromMs(row.first_ms),
+    last_seen: isoFromMs(row.last_ms),
+    sample_trace_id: null,
+    kind: 'throttle' as const,
+  }));
+
+  const errorGroups = rows.map((row) => ({
+    fingerprint: row.fingerprint,
+    function: row.function,
+    error_type: row.error_type || 'Error',
+    error_message: row.error_message,
+    count: row.count,
+    first_seen: isoFromMs(row.first_seen_ms),
+    last_seen: isoFromMs(row.last_seen_ms),
+    sample_trace_id: row.sample_trace_id,
+    kind: 'error' as const,
+  }));
+
+  return c.json({ items: [...errorGroups, ...throttleGroups].sort((a, b) => b.count - a.count || b.last_seen.localeCompare(a.last_seen)) });
 }

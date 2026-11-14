@@ -35,9 +35,11 @@ Function overview for the range.
   "name": "checkout-createOrder", "region": "eu-west-1",
   "invocations": 1234, "errors": 12, "error_rate": 0.0097,
   "cold_starts": 40, "avg_ms": 120.5, "p50_ms": 80.1, "p95_ms": 410.0, "p99_ms": 900.2,
-  "last_invoked": "2026-11-14T12:00:00.000Z"
+  "last_invoked": "2026-11-14T12:00:00.000Z" | null, "throttles": 31
 } ] }
 ```
+`throttles`: requests Lambda rejected in the range (CloudWatch `Throttles`, see `auto-trace.md`, "Throttles"); they never
+reached the function. A function that was only throttled in the range is listed with 0 invocations and `last_invoked: null`.
 
 ## `GET /api/invocations`
 Query: `function`, `status` (`ok`|`error`), `q` (free text: matches request ID, trace ID, error message, HTTP path), `limit` (default 50, max 500), `cursor` (opaque; from `next_cursor`).
@@ -80,14 +82,17 @@ Query: `function`.
 { "items": [ {
   "fingerprint": "…", "function": "…", "error_type": "TypeError",
   "error_message": "Cannot read properties of undefined (reading 'id')",
-  "count": 42, "first_seen": "…", "last_seen": "…", "sample_trace_id": "…"
+  "count": 42, "first_seen": "…", "last_seen": "…", "sample_trace_id": "…", "kind": "error"
 } ] }
 ```
+Each throttled function also gets one synthetic group: `kind: "throttle"`, `error_type: "Throttled"`,
+`fingerprint: "throttled:<region>:<function>"`, `count` = throttles in the range, `sample_trace_id: null` (throttled
+requests never reach the function, so there is no trace). Groups are sorted by count.
 
 ## `GET /api/stats/timeseries`
 Query: `function` (optional), `bucket` (`1m`|`5m`|`15m`|`1h`|`1d`, default picked from range to keep about 100 points or fewer).
 ```json
-{ "items": [ { "ts": "…", "invocations": 10, "errors": 1, "p95_ms": 300.1 } ] }
+{ "items": [ { "ts": "…", "invocations": 10, "errors": 1, "p95_ms": 300.1, "throttles": 0 } ] }
 ```
 
 ## AWS accounts (auto-trace)
@@ -117,19 +122,21 @@ The CloudFormation template (`text/yaml`). `account=<id>` fills in that connecti
   "regions": ["eu-west-1"], "all_regions": false,
   "status": "pending" | "connected" | "error", "error": "…" | null,
   "created_at": "…", "verified_at": "…" | null, "last_sync_at": "…" | null, "syncing": false,
+  "throttle_metrics": true, "throttle_status": "ok" | "missing_permission" | "error" | null,
   "counts": { "traced": 12, "opted_out": 1, "unsupported": 3, "conflict": 1, "error": 0, "pending": 0, "total": 17 },
   "quick_create_url": "https://eu-west-1.console.aws.amazon.com/cloudformation/home?…" | null,
   "template_download_url": "/api/aws/template.yaml?account=…&download=1"
 } ] }
 ```
-`error` on a connected account lists per-region sync errors, one per line.
+`error` on a connected account lists per-region sync errors, one per line. `throttle_status` is `null` until the first
+throttle poll; `missing_permission` means the stack's role predates `cloudwatch:GetMetricData`.
 
 ### `POST /api/aws/accounts`
-Body: `{ "account_id": "123456789012", "name"?: "Production", "regions": ["eu-west-1"], "all_regions"?: false, "stack_region"?: "eu-west-1" }`.
+Body: `{ "account_id": "123456789012", "name"?: "Production", "regions": ["eu-west-1"], "all_regions"?: false, "stack_region"?: "eu-west-1", "throttle_metrics"?: true }`.
 The stack region is added to `regions`. 201 with the account (status `pending`). 409 if the AWS account is already connected.
 
 ### `PATCH /api/aws/accounts/:id`
-Body: any of `name`, `regions`, `all_regions`. Starts a sync for connected accounts. Returns the account.
+Body: any of `name`, `regions`, `all_regions`, `throttle_metrics` (boolean). Starts a sync for connected accounts. Returns the account.
 
 ### `POST /api/aws/accounts/:id/verify`
 Tries `AssumeRole`. `{ "verified": true|false, "account": {…} }`; on success the account becomes `connected` and the first sync starts.

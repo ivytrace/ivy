@@ -5,6 +5,7 @@ export const TENANT_SCOPED_TABLES = [
   'otel_traces',
   'invocations',
   'invocations_hourly',
+  'function_throttles',
   'aws_accounts',
   'aws_functions',
   'aws_function_settings',

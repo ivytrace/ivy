@@ -6,7 +6,7 @@ import { triggerSync } from '../../../lib/aws/scheduler.js';
 import { awsStore } from '../../../lib/aws/store.js';
 import { badRequest } from '../../../lib/utils/http-error.js';
 
-/** Changes the name or the regions to scan. A connected account is synced right away. */
+/** Changes the name, the regions to scan or the throttle polling setting. A connected account is synced right away. */
 export async function patchAwsAccount(c: Context) {
   const account = await loadAccount(c);
   const body = await jsonBody(c);
@@ -17,6 +17,10 @@ export async function patchAwsAccount(c: Context) {
   }
   if (body.regions !== undefined) next.regions = parseRegions(body.regions);
   if (body.all_regions !== undefined) next.all_regions = body.all_regions === true;
+  if (body.throttle_metrics !== undefined) {
+    if (typeof body.throttle_metrics !== 'boolean') throw badRequest('throttle_metrics must be a boolean');
+    next.throttle_metrics = body.throttle_metrics;
+  }
   if (!next.all_regions && !next.regions.length) throw badRequest('Pick at least one region, or all_regions');
 
   await awsStore().saveAccount(next);

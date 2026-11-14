@@ -421,4 +421,17 @@ export const errorGroups: ErrorGroup[] = [
   },
 ];
 
+/** The synthetic group the API adds per throttled function (no trace). */
+export const throttledGroup: ErrorGroup = {
+  fingerprint: "throttled:eu-west-1:orders-processQueue",
+  function: "orders-processQueue",
+  error_type: "Throttled",
+  error_message: "Lambda rejected these invocations (concurrency limit); they never reached the function, so there is no trace.",
+  count: 31,
+  first_seen: "2026-11-14T11:40:00.000Z",
+  last_seen: "2026-11-14T11:52:00.000Z",
+  sample_trace_id: null,
+  kind: "throttle",
+};
+
 export const traces = [checkoutFailed, checkoutOk, queueFailed, plainOtel];

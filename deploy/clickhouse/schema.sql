@@ -144,6 +144,23 @@ SELECT
 FROM ivy.invocations
 GROUP BY tenant_id, hour, function, region;
 
+-- Lambda throttles per function and minute, polled from CloudWatch by the API's auto-trace sync
+-- (docs/implementation/auto-trace.md, "Throttles"). Re-polling a minute replaces its row.
+CREATE TABLE IF NOT EXISTS ivy.function_throttles
+(
+    `tenant_id` LowCardinality(String),
+    `function` LowCardinality(String),
+    `region` LowCardinality(String),
+    `minute` DateTime,
+    `account_id` String,
+    `throttles` UInt32,
+    `updated_at` DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(updated_at)
+PARTITION BY toYYYYMM(minute)
+ORDER BY (tenant_id, function, region, minute)
+TTL minute + toIntervalDay({{RETENTION_DAYS}});
+
 -- Defence in depth: when a query sets SQL_ivy_tenant (the API does for every query, see
 -- packages/api/src/lib/clickhouse/scoped.ts), only that tenant's rows are visible, even if the
 -- SQL forgot its tenant filter. Without the setting (collector inserts, materialized views,
@@ -154,6 +171,8 @@ CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.otel_traces AS RESTRICTIVE
 CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations_hourly AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
+CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.function_throttles AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
 
 -- Control plane. Small, mutable tables: every update inserts a full row, ReplacingMergeTree
@@ -226,11 +245,18 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_accounts
     `created_at` DateTime64(3, 'UTC'),
     `verified_at` DateTime64(3, 'UTC'),
     `last_sync_at` DateTime64(3, 'UTC'),
+    `throttle_metrics` Bool DEFAULT true,
+    `throttle_status` LowCardinality(String) DEFAULT '',
+    `throttles_polled_to` DateTime64(3, 'UTC') DEFAULT 0,
     `updated_at` DateTime64(3, 'UTC'),
     `deleted` UInt8
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, id);
+
+ALTER TABLE ivy_control.aws_accounts ADD COLUMN IF NOT EXISTS `throttle_metrics` Bool DEFAULT true AFTER last_sync_at;
+ALTER TABLE ivy_control.aws_accounts ADD COLUMN IF NOT EXISTS `throttle_status` LowCardinality(String) DEFAULT '' AFTER throttle_metrics;
+ALTER TABLE ivy_control.aws_accounts ADD COLUMN IF NOT EXISTS `throttles_polled_to` DateTime64(3, 'UTC') DEFAULT 0 AFTER throttle_status;
 
 CREATE TABLE IF NOT EXISTS ivy_control.aws_functions
 (

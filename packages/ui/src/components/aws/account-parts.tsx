@@ -192,3 +192,63 @@ export function DeleteAccountDialog({
     </Dialog>
   );
 }
+
+/** Per-account switch for CloudWatch throttle polling, plus the hint when the stack predates the permission. */
+export function ThrottleSetting({ account }: { account: AwsAccount }) {
+  const [pending, setPending] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const checked = pending ?? account.throttle_metrics;
+
+  async function toggle(enabled: boolean) {
+    setPending(enabled);
+    setError(null);
+    try {
+      await updateAwsAccount(account.id, { throttle_metrics: enabled });
+      await refreshAws();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  return (
+    <div className="mb-4 rounded-md border px-4 py-3 text-sm">
+      <div className="flex items-start gap-3">
+        <Switch
+          id={`throttles-${account.id}`}
+          checked={checked}
+          disabled={pending !== null}
+          onCheckedChange={(v) => void toggle(v)}
+          className="mt-0.5"
+        />
+        <div>
+          <Label htmlFor={`throttles-${account.id}`} className="font-medium">
+            Throttle metrics
+          </Label>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Every 5 minutes Ivy reads the Lambda <span className="font-mono">Throttles</span> metric from CloudWatch in the
+            regions with traced functions, so throttled requests (which never reach a function) show up as errors.
+            CloudWatch bills <span className="font-mono">GetMetricData</span> to this AWS account: about $0.09 per region per
+            month, plus a little more while functions are being throttled.
+          </p>
+        </div>
+      </div>
+      {account.throttle_metrics && account.throttle_status === "missing_permission" && (
+        <div className="mt-3 flex items-start gap-2 rounded border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-300">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            The role in stack <span className="font-mono">{account.stack_name}</span> can&apos;t read CloudWatch metrics yet
+            (it predates <span className="font-mono">cloudwatch:GetMetricData</span>). Update the stack with the{" "}
+            <a href={account.template_download_url} className="underline">
+              current template
+            </a>{" "}
+            (CloudFormation → {account.stack_name} → Update → Replace existing template) to see throttles. Tracing is not
+            affected.
+          </span>
+        </div>
+      )}
+      {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+    </div>
+  );
+}

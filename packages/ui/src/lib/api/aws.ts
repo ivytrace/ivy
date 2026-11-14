@@ -21,7 +21,7 @@ export const verifyAwsAccount = (id: string) => sendJson<VerifyResponse>("POST",
 
 export const syncAwsAccount = (id: string) => sendJson<{ started: boolean }>("POST", `${accountUrl(id)}/sync`);
 
-export const updateAwsAccount = (id: string, body: Partial<Pick<AwsAccount, "name" | "regions" | "all_regions">>) =>
+export const updateAwsAccount = (id: string, body: Partial<Pick<AwsAccount, "name" | "regions" | "all_regions" | "throttle_metrics">>) =>
   sendJson<AwsAccount>("PATCH", accountUrl(id), body);
 
 export const deleteAwsAccount = (id: string, detach: boolean) =>

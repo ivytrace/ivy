@@ -27,6 +27,8 @@ export function presentAccount(account: AwsAccount, principal: string | null, co
     verified_at: isoOrNull(account.verified_at),
     last_sync_at: isoOrNull(account.last_sync_at),
     syncing: isSyncing(account),
+    throttle_metrics: account.throttle_metrics !== false,
+    throttle_status: account.throttle_status || null,
     counts: { ...allCounts, total: Object.values(allCounts).reduce((a, b) => a + b, 0) },
     quick_create_url: templateUrl
       ? quickCreateUrl({

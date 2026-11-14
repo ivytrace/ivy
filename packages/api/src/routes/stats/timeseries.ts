@@ -5,6 +5,7 @@ import { isoFromMs, round } from '../../lib/utils/format.js';
 import { badRequest } from '../../lib/utils/http-error.js';
 import { parseTimeRange } from '../../lib/utils/time-range.js';
 import { BUCKET_SECONDS, pickBucket } from '../../lib/stats/buckets.js';
+import { throttleSource } from '../../lib/stats/throttles.js';
 
 const MAX_POINTS = 2000;
 
@@ -36,6 +37,14 @@ export async function getTimeseries(c: Context) {
     source.params,
   );
 
+  const throttleQuery = throttleSource({ range, bucketSeconds: step, functionName: params.function || undefined });
+  const throttleRows = await dataQuery<{ bucket_ms: number; throttles: number }>(
+    c,
+    `SELECT toUnixTimestamp(bucket) * 1000 AS bucket_ms, sum(throttles) AS throttles FROM (${throttleQuery.sql}) GROUP BY bucket`,
+    throttleQuery.params,
+  );
+  const throttles = new Map(throttleRows.map((row) => [row.bucket_ms, row.throttles]));
+
   const byBucket = new Map(rows.map((row) => [row.bucket_ms, row]));
   const items = [];
   for (let ts = first; ts < range.to; ts += stepMs) {
@@ -45,6 +54,7 @@ export async function getTimeseries(c: Context) {
       invocations: row?.invocations ?? 0,
       errors: row?.errors ?? 0,
       p95_ms: row ? round(row.quantiles[1], 1) : 0,
+      throttles: throttles.get(ts) ?? 0,
     });
   }
   return c.json({ items });

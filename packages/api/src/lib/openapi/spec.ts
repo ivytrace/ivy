@@ -118,13 +118,13 @@ export const openApiDocument = {
     },
     '/api/errors': {
       get: {
-        tags: ['Traces'], summary: 'Error groups (function + error type + normalized message)', operationId: 'listErrorGroups',
+        tags: ['Traces'], summary: 'Error groups (function + error type + normalized message), plus one `Throttled` group per throttled function', operationId: 'listErrorGroups',
         parameters: [...range, fn], responses: { 200: json(ref('ErrorGroupList')), ...bad },
       },
     },
     '/api/stats/timeseries': {
       get: {
-        tags: ['Traces'], summary: 'Invocations, errors and p95 per bucket', operationId: 'getTimeseries',
+        tags: ['Traces'], summary: 'Invocations, errors, p95 and throttles per bucket', operationId: 'getTimeseries',
         parameters: [
           ...range, fn,
           query('bucket', 'Bucket size; default keeps about 100 points or fewer.', { type: 'string', enum: ['1m', '5m', '15m', '1h', '1d'] }),

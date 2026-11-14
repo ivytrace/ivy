@@ -24,7 +24,10 @@ export interface FunctionSummary {
   p50_ms: number;
   p95_ms: number;
   p99_ms: number;
-  last_invoked: string;
+  /** null when the function was only throttled in the range. */
+  last_invoked: string | null;
+  /** Requests Lambda rejected (CloudWatch Throttles); they never reached the function. */
+  throttles: number;
 }
 
 export interface Invocation {
@@ -54,7 +57,9 @@ export interface ErrorGroup {
   count: number;
   first_seen: string;
   last_seen: string;
-  sample_trace_id: string;
+  /** null for the synthetic Throttled group (no trace). */
+  sample_trace_id: string | null;
+  kind: "error" | "throttle";
 }
 
 export interface TimeseriesPoint {
@@ -62,6 +67,7 @@ export interface TimeseriesPoint {
   invocations: number;
   errors: number;
   p95_ms: number;
+  throttles: number;
 }
 
 export interface ListResponse<T> {
@@ -109,6 +115,8 @@ export interface AwsAccount {
   verified_at: string | null;
   last_sync_at: string | null;
   syncing: boolean;
+  throttle_metrics: boolean;
+  throttle_status: "ok" | "missing_permission" | "error" | null;
   counts: Record<TraceState | "total", number>;
   quick_create_url: string | null;
   template_download_url: string;

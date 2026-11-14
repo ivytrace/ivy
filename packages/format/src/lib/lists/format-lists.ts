@@ -32,10 +32,12 @@ export function formatInvocations(items: Invocation[], messageChars?: number): s
 export function formatErrorGroups(items: ErrorGroup[]): string {
   if (!items.length) return "No errors found.";
   return items
-    .map(
-      (g) =>
-        `${g.count}× ${g.function} · ${oneLine(`${g.error_type}: ${g.error_message}`, 160)}` +
-        ` · first ${shortIso(g.first_seen)} · last ${shortIso(g.last_seen)} · sample trace ${g.sample_trace_id}`,
+    .map((g) =>
+      g.kind === "throttle"
+        ? `${g.count}× ${g.function} · Throttled: Lambda rejected these invocations, so they never reached the function` +
+          ` and there is no trace · first ${shortIso(g.first_seen)} · last ${shortIso(g.last_seen)}`
+        : `${g.count}× ${g.function} · ${oneLine(`${g.error_type}: ${g.error_message}`, 160)}` +
+          ` · first ${shortIso(g.first_seen)} · last ${shortIso(g.last_seen)} · sample trace ${g.sample_trace_id}`,
     )
     .join("\n");
 }

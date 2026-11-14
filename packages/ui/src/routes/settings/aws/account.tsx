@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowLeft, MapPin, RefreshCw, Trash2 } from "lucide-react";
 
-import { AccountStatus, DeleteAccountDialog, EditRegionsDialog, FunctionCounts } from "@/components/aws/account-parts";
+import { AccountStatus, DeleteAccountDialog, EditRegionsDialog, FunctionCounts, ThrottleSetting } from "@/components/aws/account-parts";
 import { regionSummary } from "@/components/aws/region-picker";
 import { TRACE_STATE_LABELS, TraceStateLabel, TracingToggle } from "@/components/aws/trace-state";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
@@ -146,6 +146,7 @@ export default function AwsAccountPage() {
           {a.error}
         </pre>
       )}
+      {a.status !== "pending" && <ThrottleSetting account={a} />}
       {toggleError && (
         <div className="mb-4 flex items-start justify-between gap-4 rounded border border-red-400/30 bg-red-400/10 px-3 py-2 text-sm text-red-300">
           {toggleError}
