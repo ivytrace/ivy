@@ -35,11 +35,16 @@ export function buildServiceGraph(spans: Span[]): { nodes: GraphNode[]; edges: G
     if (llm && (llm.kind === "tool" || llm.kind === "step")) continue;
     const parent = byId.get(span.parent_span_id);
     const parentLlm = parent && describeSpan(parent).llm;
-    const insideCall = !llm && !!parentLlm && (parentLlm.kind === "call" || parentLlm.kind === "embedding");
+    // The provider request under a model call (also when it is itself an LLM span: an AI SDK Bedrock
+    // call's Bedrock Runtime request) belongs to the model call's node and isn't counted again.
+    const insideCall =
+      !!parentLlm && (parentLlm.kind === "call" || parentLlm.kind === "embedding") && (!llm || llm.kind === "call" || llm.kind === "embedding");
     const id = d.isInvocation ? `fn:${span.name}` : insideCall ? describeSpan(parent!).groupingKey : d.groupingKey;
     if (llm || insideCall) {
       const counts = llmNodes.get(id) ?? { calls: 0, operations: 0 };
-      if (llm?.kind === "operation") counts.operations++;
+      if (insideCall) {
+        // counted with the parent
+      } else if (llm?.kind === "operation") counts.operations++;
       else if (llm) counts.calls++;
       llmNodes.set(id, counts);
     }

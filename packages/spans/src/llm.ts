@@ -1,3 +1,4 @@
+import { describeBedrock } from "./bedrock.js";
 import type { Span } from "./types.js";
 
 /**
@@ -7,7 +8,8 @@ import type { Span } from "./types.js";
  * - OpenTelemetry GenAI semantic conventions (`gen_ai.*`: AI SDK 7's `OpenTelemetry`, OpenAI/Anthropic/
  *   Bedrock/LangChain instrumentations), including the older indexed (`gen_ai.prompt.0.content`) and
  *   event-based message formats,
- * - OpenInference (`llm.*`, `openinference.span.kind`).
+ * - OpenInference (`llm.*`, `openinference.span.kind`),
+ * - direct Amazon Bedrock Runtime calls (`bedrock.ts`, from the captured request and response bodies).
  */
 
 export type LlmKind = "operation" | "step" | "call" | "tool" | "embedding";
@@ -40,9 +42,15 @@ export interface LlmSpan {
   kind: LlmKind;
   /** Short operation name: `generateText`, `streamText`, `chat`, `invoke_agent`, `tool`, `step 2`, `embed`, … */
   operation: string;
+  /** Display name when the span's own name doesn't fit (`BedrockRuntime.InvokeModel` for an HTTP-level Bedrock span). */
+  name?: string;
   provider?: string;
   providerLabel?: string;
+  /** The model's maker when the provider hosts several (`Anthropic` on Amazon Bedrock). */
+  vendor?: string;
   model?: string;
+  /** Full model ID when `model` is a shortened form (`eu.anthropic.claude-haiku-5-5-20261001-v1:0`). */
+  modelId?: string;
   responseModel?: string;
   functionId?: string;
   streaming: boolean;
@@ -201,7 +209,7 @@ function toPart(p: unknown): LlmPart | undefined {
   }
 }
 
-function toParts(content: unknown): LlmPart[] {
+export function toParts(content: unknown): LlmPart[] {
   if (content === undefined || content === null) return [];
   if (typeof content === "string") return content ? [{ type: "text", text: content }] : [];
   if (Array.isArray(content)) return content.map(toPart).filter((p): p is LlmPart => !!p);
@@ -209,7 +217,7 @@ function toParts(content: unknown): LlmPart[] {
 }
 
 /** Chat messages in the AI SDK (`{role, content}`), GenAI (`{role, parts}`) or OpenAI (`{role, content, tool_calls}`) shapes. */
-function toMessages(value: unknown): LlmMessage[] {
+export function toMessages(value: unknown): LlmMessage[] {
   if (value === undefined) return [];
   if (typeof value === "string") return [{ role: "prompt", parts: [{ type: "text", text: value }] }];
   if (!Array.isArray(value)) return isRecord(value) ? toMessages([value]) : [];
@@ -435,6 +443,8 @@ export function describeLlm(span: Span): LlmSpan | undefined {
 }
 
 function build(span: Span): LlmSpan | undefined {
+  const bedrock = describeBedrock(span);
+  if (bedrock) return bedrock;
   const c = classify(span);
   if (!c) return undefined;
   const a = span.attributes;

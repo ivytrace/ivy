@@ -26,3 +26,12 @@ support-answerTicket → OpenAI [LLM generateText, 2 calls, 1630ms]
 support-answerTicket → orders-prod [DynamoDB GetItem, 17.6ms]
 support-answerTicket → Anthropic [LLM streamText, 489ms]"
 `;
+
+exports[`formatServiceGraph > shows direct Bedrock calls as one node per model maker 1`] = `
+"Service graph of support-triageTicket (trace 6af84d6db3d70c4a11e2f3a4b5c6d7e8): 6 nodes, 5 edges
+SQS → support-triageTicket [Lambda, 2392ms]
+support-triageTicket → Bedrock · Anthropic [LLM InvokeModel, 702ms]
+support-triageTicket → orders-prod [DynamoDB GetItem, 17.6ms]
+support-triageTicket → Bedrock · Amazon [LLM Converse, 2 calls, 1215ms]
+support-triageTicket → tickets-prod [DynamoDB UpdateItem, 21.2ms]"
+`;

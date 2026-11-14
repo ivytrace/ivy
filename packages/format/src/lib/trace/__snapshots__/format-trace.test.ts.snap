@@ -146,6 +146,26 @@ trace 6af84ce61c2d3e4f5a6b7c8d9e0f1a2b · request 1b2c3d4e-5f60-4718-a9b0-c1d2e3
    +262ms             log info: Order ord_3Lm8p2Zq77 created"
 `;
 
+exports[`formatTrace > renders direct Amazon Bedrock calls as LLM calls 1`] = `
+"support-triageTicket · SQS · warm · 2392ms · ok
+trace 6af84d6db3d70c4a11e2f3a4b5c6d7e8 · request 3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f · eu-west-1 · 2026-11-14T12:00:45.000Z · 121 MB used · 6 spans · 3 LLM calls 1125→128 tok
+
+   +0.0ms   2392ms  support-triageTicket [invocation] SQS  ok
+                      req: {"Records":[{"messageId":"m-71","body":"{\\"ticketId\\":\\"tkt_4410\\",\\"message\\":\\"My order ord_8812 still hasn't arrived and the tracking page has said 'in transit' for…","eventSource":"aws:sqs"}]}
+                      res: {"batchItemFailures":[]}
+   +6.0ms    702ms    BedrockRuntime.InvokeModel claude-haiku-5-5 412→38 tok  ok
+                        prompt: My order ord_8812 still hasn't arrived and the tracking page has said 'in transit' for six days. Can you check?
+                        response: {"category":"shipping","priority":"normal","summary":"Order ord_8812 stuck in transit for six days."}
+   +712ms   17.6ms    DynamoDB.GetItem orders-prod (1 item returned)  ok
+   +733ms    812ms    BedrockRuntime.Converse nova-lite 655→61 tok  ok
+                        prompt: ← {"orderId":"ord_8812","status":"shipped","carrier":"DHL","trackingNumber":"JD014600006281","eta":"2026-11-19"}
+                        response: Your order **ord_8812** shipped yesterday with DHL. - Tracking number: \`JD014600006281\` - Expected delivery: Thursday, 19 November Sorry for the delay!
+  +1549ms    403ms    BedrockRuntime.InvokeModel nova-lite 58→29 tok  ok
+                        prompt: Hi Ada! Good news: your order ord_8812 is on its way with DHL (tracking JD014600006281) and should arrive on Thursday. Sorry it's later than planned!
+                        response: Hoi Ada! Goed nieuws: je bestelling ord_8812 is onderweg met DHL en komt donderdag aan.
+  +1955ms   21.2ms    DynamoDB.UpdateItem tickets-prod  ok"
+`;
+
 exports[`formatTrace > renders summary spans of collapsed calls and the spans omitted at the limit 1`] = `
 "checkout-importOrders · S3 · warm · 9812ms · ok (with failed calls)
 trace 6af84d68c011a95edca11500000000aa · request 1d2e3f40-5a6b-4c7d-8e9f-a0b1c2d3e4f5 · eu-west-1 · 2026-11-14T12:00:40.000Z · 188 MB used · 17 spans
