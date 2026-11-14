@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { describeSpan, getException, getLogs, parsePayload, parseStringArray } from "./services";
-import type { Span } from "./types";
+import { describeSpan, getException, getLogs, parsePayload, parseStringArray } from "./services.js";
+import type { Span } from "./types.js";
 
 const span = (overrides: Partial<Span> & { attributes?: Record<string, string> }): Span => ({
   span_id: "s1",

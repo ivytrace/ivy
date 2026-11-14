@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { traceResponse } from '../../lib/format/text-trace.js';
 import { dataQuery } from '../../lib/tenancy/context.js';
 import { normalizeKind, normalizeStatus } from '../../lib/traces/otel.js';
 import { isTraceId, traceIdTimestamp } from '../../lib/traces/trace-id.js';
@@ -52,7 +53,7 @@ export async function getTrace(c: Context) {
   if (rows.length === 0) rows = await fetchSpans(c, traceId);
   if (rows.length === 0) return c.json({ error: 'Trace not found' }, 404);
 
-  return c.json({
+  return traceResponse(c, {
     trace_id: traceId,
     spans: rows.map((row) => {
       const durationMs = row.duration_ns / 1e6;
