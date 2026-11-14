@@ -2,6 +2,7 @@ import { now } from '../tracer/clock.js';
 import { recordError, StatusCode, type Span } from '../tracer/span.js';
 import type { Tracer } from '../tracer/tracer.js';
 import { awsServiceAttributes, operationFromCommandName, serviceFromClientName } from './aws-attributes.js';
+import { BEDROCK_OPERATIONS, BEDROCK_SERVICE, bedrockRequestAttributes, bedrockResponseAttributes, decodeJson, isBedrockConverse, isBedrockStream, tapBedrockStream } from './bedrock.js';
 import { SKIP_HTTP } from './http-span.js';
 import { onRequire } from './require-hook.js';
 
@@ -24,6 +25,7 @@ function tracingMiddleware(tracer: Tracer, client: any) {
   return (next: any, context: any) => async (args: any) => {
     let span: Span | undefined;
     let service = '';
+    let bedrock: string | undefined;
     try {
       if (tracer.active) {
         service = serviceFromClientName(context?.clientName) ?? 'AWS';
@@ -35,6 +37,12 @@ function tracingMiddleware(tracer: Tracer, client: any) {
           span.attributes['rpc.method'] = operation;
           // Targets (table, bucket, queue) from the input right away: collapsing groups calls by them.
           Object.assign(span.attributes, awsServiceAttributes(service, args?.input, undefined));
+          if (service === BEDROCK_SERVICE && BEDROCK_OPERATIONS.has(operation)) {
+            bedrock = operation;
+            const input = args?.input;
+            const body = isBedrockConverse(operation) ? input : decodeJson(input?.body);
+            Object.assign(span.attributes, bedrockRequestAttributes(input?.modelId, body));
+          }
           span.payloads.push({ key: 'ivy.payload.request', value: args?.input });
           context[SPAN] = span;
         }
@@ -46,20 +54,37 @@ function tracingMiddleware(tracer: Tracer, client: any) {
 
     const s = span;
     const regionPromise = resolveRegion(client?.config);
-    const finish = async (output: any, err: any) => {
+    /** A streamed Bedrock response: the span ends, and gets its response, when the app has read the stream. */
+    const tapStream = (output: any): boolean => {
+      if (!bedrock || !isBedrockStream(bedrock) || !output) return false;
       try {
-        s.endMs = now();
+        const key = bedrock === 'ConverseStream' ? 'stream' : 'body';
+        if (!output[key] || typeof output[key][Symbol.asyncIterator] !== 'function') return false;
+        output[key] = tapBedrockStream(s, output[key]);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const finish = async (result: any, err: any, streaming = false) => {
+      try {
+        const output = result?.output;
+        if (!streaming) s.endMs = now();
         const region = await regionPromise;
         if (region) s.attributes['cloud.region'] = region;
         const meta = output?.$metadata ?? err?.$metadata;
         if (meta?.requestId) s.attributes['aws.request_id'] = meta.requestId;
         if (meta?.httpStatusCode) s.attributes['http.response.status_code'] = meta.httpStatusCode;
         Object.assign(s.attributes, awsServiceAttributes(service, args?.input, output, region));
-        if (err) recordError(s, err, s.endMs);
-        else {
-          s.status = { code: StatusCode.UNSET };
+        if (err) recordError(s, err, s.endMs ?? now());
+        else if (!streaming) {
+          if (s.status.code !== StatusCode.ERROR) s.status = { code: StatusCode.UNSET };
           const { $metadata: _ignored, ...rest } = output ?? {};
           s.payloads.push({ key: 'ivy.payload.response', value: rest });
+          if (bedrock) {
+            const body = isBedrockConverse(bedrock) ? output : decodeJson(output?.body);
+            Object.assign(s.attributes, bedrockResponseAttributes(body, result?.response?.headers));
+          }
         }
       } catch {
         // ignore
@@ -67,7 +92,7 @@ function tracingMiddleware(tracer: Tracer, client: any) {
     };
     try {
       const result = await next(args);
-      finish(result?.output, undefined);
+      finish(result, undefined, tapStream(result?.output));
       return result;
     } catch (err) {
       finish(undefined, err);

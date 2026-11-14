@@ -4,6 +4,7 @@ import { recordError, StatusCode, type Span } from '../tracer/span.js';
 import type { Tracer } from '../tracer/tracer.js';
 import { redactHeaders, redactUrl } from '../utils/redact.js';
 import { awsServiceAttributes, operationFromHttp, parseSigV4, serviceFromSigningName } from './aws-attributes.js';
+import { BEDROCK_SERVICE, bedrockFromPath, bedrockRequestAttributes, bedrockResponseAttributes, decodeJson } from './bedrock.js';
 
 /** Marks HTTP requests issued by an instrumented AWS SDK client, which already has its own span. */
 export const SKIP_HTTP = Symbol.for('ivy.skip-http');
@@ -94,6 +95,15 @@ export function startHttpSpan(tracer: Tracer, info: HttpRequestInfo): Span | und
   span.attributes['url.full'] = redactUrl(formatUrl(info), tracer.isSecret);
   span.attributes['server.address'] = info.host;
   span.attributes['server.port'] = info.port ?? (info.protocol === 'https:' ? 443 : 80);
+  // Bedrock Runtime requests of SDK copies we could not patch: an LLM call from the start (collapsing).
+  const bedrock = bedrockFromPath(info.host, info.path);
+  if (bedrock) {
+    span.name = `${BEDROCK_SERVICE}.${bedrock.operation}`;
+    span.attributes['rpc.system'] = 'aws-api';
+    span.attributes['rpc.service'] = BEDROCK_SERVICE;
+    span.attributes['rpc.method'] = bedrock.operation;
+    Object.assign(span.attributes, bedrockRequestAttributes(bedrock.modelId, undefined));
+  }
   return span;
 }
 
@@ -145,6 +155,14 @@ function enrichAwsHttpSpan(
   resBody: string | undefined,
 ): void {
   const sig = parseSigV4(headerValue(reqHeaders, 'authorization'));
+  if (span.attributes['rpc.service'] === BEDROCK_SERVICE) {
+    if (sig) span.attributes['cloud.region'] = sig.region;
+    const requestId = headerValue(resHeaders, 'x-amzn-requestid');
+    if (requestId) span.attributes['aws.request_id'] = requestId;
+    Object.assign(span.attributes, bedrockRequestAttributes(span.attributes['gen_ai.request.model'] as string, decodeJson(reqBody)));
+    Object.assign(span.attributes, bedrockResponseAttributes(decodeJson(resBody), resHeaders));
+    return;
+  }
   if (!sig) return;
   const service = serviceFromSigningName(sig.service);
   const operation = operationFromHttp(headerValue(reqHeaders, 'x-amz-target'), reqBody);
