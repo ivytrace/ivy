@@ -91,7 +91,7 @@ const createOrder: FunctionDef = {
         },
       },
     });
-    if (chance(0.01)) {
+    if (chance(0.015)) {
       throw new InvocationError('ValidationError', `Invalid quantity for SKU ${pick(PRODUCTS).sku}: must be between 1 and ${randomInt(5, 20)}`);
     }
 
@@ -187,7 +187,7 @@ const getOrder: FunctionDef = {
       inv.log('info', `Order ${id} not found`);
       return { response: jsonResponse(404, { error: 'not_found' }), httpStatus: 404 };
     }
-    maybeFail(ctx, 0.03, 'TypeError', "Cannot read properties of undefined (reading 'items')");
+    maybeFail(ctx, 0.045, 'TypeError', "Cannot read properties of undefined (reading 'items')");
     return { response: jsonResponse(200, { id, status: 'shipped' }), httpStatus: 200 };
   },
 };
@@ -463,7 +463,7 @@ const login: FunctionDef = {
       inv.log('warn', `Invalid credentials for ${email}`);
       return { response: jsonResponse(401, { error: 'invalid_credentials' }), httpStatus: 401 };
     }
-    maybeFail(ctx, 0.03, 'JsonWebTokenError', 'invalid signature');
+    maybeFail(ctx, 0.04, 'JsonWebTokenError', 'invalid signature');
     inv.aws('DynamoDB', 'PutItem', {
       ms: latency(9, 0.4),
       attributes: { 'aws.dynamodb.table_names': ['sessions-prod'] },
