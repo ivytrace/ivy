@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { Archive, ArchiveRestore, KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { SectionHeader } from "@/components/common/section-header";
+import { ArchiveDefaultDialog } from "@/components/workspaces/archive-default";
 import { ErrorState, LoadingState } from "@/components/common/states";
 import { KeyReveal } from "@/components/workspaces/key-reveal";
 import { errorMessage, NameDialog, UrlSetting } from "@/components/workspaces/name-dialog";
@@ -11,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { useKeys, useProjects } from "@/lib/api/hooks";
 import type { CreatedKey, Project } from "@/lib/api/types";
-import { createKey, createProject, refreshWorkspace, revokeKey, updateProject } from "@/lib/api/workspaces";
+import { createKey, createProject, refreshWorkspace, revokeKey, updateProject, updateWorkspace } from "@/lib/api/workspaces";
 import { pageLink } from "@/lib/links/links";
 import { useWorkspace } from "@/lib/links/use-scope";
 import { cn } from "@/lib/utils/cn";
@@ -22,16 +23,22 @@ export default function ProjectsSettings() {
   const projects = useProjects(workspace, true);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Project | null>(null);
+  const [archivingDefault, setArchivingDefault] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function setArchived(p: Project, archived: boolean) {
+  async function run(action: () => Promise<unknown>) {
     setError(null);
     try {
-      await updateProject(workspace, p.slug, { archived });
+      await action();
       await refreshWorkspace(workspace);
     } catch (err) {
       setError(errorMessage(err));
     }
+  }
+
+  function setArchived(p: Project, archived: boolean) {
+    if (archived && p.default) setArchivingDefault(p);
+    else void run(() => updateProject(workspace, p.slug, { archived }));
   }
 
   return (
@@ -58,12 +65,22 @@ export default function ProjectsSettings() {
               workspace={workspace}
               project={p}
               onEdit={() => setEditing(p)}
-              onArchive={(archived) => void setArchived(p, archived)}
+              onArchive={(archived) => setArchived(p, archived)}
+              onMakeDefault={() => void run(() => updateWorkspace(workspace, { default_project: p.slug }))}
             />
           ))}
         </div>
       )}
 
+      {archivingDefault && projects.data ? (
+        <ArchiveDefaultDialog
+          key={archivingDefault.id}
+          workspace={workspace}
+          project={archivingDefault}
+          projects={projects.data.items}
+          onClose={() => setArchivingDefault(null)}
+        />
+      ) : null}
       <NameDialog
         open={creating}
         onOpenChange={setCreating}
@@ -106,7 +123,19 @@ export default function ProjectsSettings() {
   );
 }
 
-function ProjectCard({ workspace, project, onEdit, onArchive }: { workspace: string; project: Project; onEdit: () => void; onArchive: (archived: boolean) => void }) {
+function ProjectCard({
+  workspace,
+  project,
+  onEdit,
+  onArchive,
+  onMakeDefault,
+}: {
+  workspace: string;
+  project: Project;
+  onEdit: () => void;
+  onArchive: (archived: boolean) => void;
+  onMakeDefault: () => void;
+}) {
   const [showKeys, setShowKeys] = useState(false);
   return (
     <div className={cn("rounded-md border p-4", project.archived && "opacity-60")}>
@@ -121,11 +150,18 @@ function ProjectCard({ workspace, project, onEdit, onArchive }: { workspace: str
           )}
           <div className="font-mono text-xs text-muted-foreground">
             /w/{workspace}/{project.slug}
-            {project.default && <span className="ml-2 font-sans">· default</span>}
-            {project.archived && <span className="ml-2 font-sans">· archived</span>}
+            {project.default ? <span className="ml-2 font-sans">· default</span> : null}
+            {project.archived ? <span className="ml-2 font-sans">· archived</span> : null}
           </div>
         </div>
         <div className="flex items-center gap-1">
+          {!project.archived && !project.default ? (
+            <Tooltipped title="Keys without a project and new auto-traced functions without a rule go to the default project">
+              <Button variant="ghost" size="sm" onClick={onMakeDefault}>
+                Make default
+              </Button>
+            </Tooltipped>
+          ) : null}
           {!project.archived && (
             <Button variant="outline" size="sm" onClick={() => setShowKeys((v) => !v)}>
               <KeyRound className="mr-2 size-4" />
@@ -137,13 +173,11 @@ function ProjectCard({ workspace, project, onEdit, onArchive }: { workspace: str
               <Pencil className="size-4" />
             </Button>
           </Tooltipped>
-          {!project.default && (
-            <Tooltipped title={project.archived ? "Unarchive" : "Archive: stops its keys and its traced functions"}>
-              <Button variant="ghost" size="icon" onClick={() => onArchive(!project.archived)} aria-label={project.archived ? "Unarchive" : "Archive"}>
-                {project.archived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
-              </Button>
-            </Tooltipped>
-          )}
+          <Tooltipped title={project.archived ? "Unarchive" : "Archive: stops its keys and its traced functions"}>
+            <Button variant="ghost" size="icon" onClick={() => onArchive(!project.archived)} aria-label={project.archived ? `Unarchive ${project.name}` : `Archive ${project.name}`}>
+              {project.archived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+            </Button>
+          </Tooltipped>
         </div>
       </div>
       {showKeys && <ProjectKeys workspace={workspace} project={project.slug} />}

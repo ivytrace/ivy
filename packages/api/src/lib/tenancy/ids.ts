@@ -33,3 +33,11 @@ export const keyPrefix = (key: string) => key.slice(0, key.startsWith('ivy_') ? 
  */
 export const defaultProjectId = (tenantId: string) =>
   `prj_${createHash('sha256').update(`ivy-default-project:${tenantId}`, 'utf8').digest('hex').slice(0, 21)}`;
+
+/**
+ * The project a workspace currently designates as its default: where keys without a project and
+ * auto-traced functions without a project go. Movable (`tenants.default_project_id`); rows that
+ * never set it fall back to the derived ID above.
+ */
+export const workspaceDefaultProject = (tenant: { id: string; default_project_id?: string }) =>
+  tenant.default_project_id || defaultProjectId(tenant.id);

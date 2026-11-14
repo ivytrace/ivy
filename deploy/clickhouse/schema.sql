@@ -228,8 +228,12 @@ CREATE TABLE IF NOT EXISTS ivy_control.tenants
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY id;
 
+-- The workspace's default project (keys without a project and auto-traced functions without one go
+-- there). '' means the project whose ID is derived from the tenant ID (see below).
+ALTER TABLE ivy_control.tenants ADD COLUMN IF NOT EXISTS `default_project_id` String DEFAULT '' AFTER shard_id;
+
 -- Projects group a workspace's functions and own its ingest keys. `slug` is unique per workspace.
--- Every workspace has a project whose ID is derived from the tenant ID (its default project):
+-- Every workspace starts with a project whose ID is derived from the tenant ID (its first default project):
 -- prj_ + the first 21 hex characters of sha256('ivy-default-project:' || tenant_id).
 CREATE TABLE IF NOT EXISTS ivy_control.projects
 (
@@ -246,7 +250,7 @@ ORDER BY (tenant_id, id);
 
 -- Keys are stored as sha256(key) plus a display prefix. `encrypted_key` is only set for keys Ivy
 -- hands out itself (the per-tenant auto-trace key), encrypted with IVY_SECRET_KEY.
--- Keys belong to a project; an empty `project_id` means the workspace's default project.
+-- Keys belong to a project; an empty `project_id` means the workspace's current default project.
 CREATE TABLE IF NOT EXISTS ivy_control.api_keys
 (
     `tenant_id` String,

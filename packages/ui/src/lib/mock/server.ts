@@ -242,7 +242,13 @@ export function createMockHandler(options: MockOptions = {}) {
 
   const find = (ref: string) => workspaces.find((w) => w.slug === ref || w.id === ref);
   const projectOf = (ws: MockWorkspace, ref: string) => ws.projects.find((p) => p.slug === ref || p.id === ref);
-  const present = ({ projects: _p, members: _m, invitations: _i, keys: _k, ...w }: MockWorkspace) => w;
+  const present = ({ projects, members: _m, invitations: _i, keys: _k, ...w }: MockWorkspace) => ({
+    ...w,
+    default_project_id: projects.find((p) => p.default)?.id ?? "",
+  });
+  const makeDefault = (ws: MockWorkspace, id: string) => {
+    for (const x of ws.projects) x.default = x.id === id;
+  };
   const ids = (ws: MockWorkspace) => new Map(ws.projects.map((p) => [p.slug, p.id]));
 
   function data(ws: MockWorkspace, project: string | null, rest: string, params: URLSearchParams): MockResponse | null {
@@ -275,7 +281,16 @@ export function createMockHandler(options: MockOptions = {}) {
         p.slug = body.slug;
       }
       if (typeof body.archived === "boolean") {
-        if (body.archived && p.default) return json(409, { error: "The workspace's default project can't be archived" });
+        if (body.archived && !p.archived) {
+          const others = ws.projects.filter((x) => !x.archived && x.id !== p.id);
+          if (!others.length) return json(409, { error: "A workspace needs at least one project" });
+          if (p.default) {
+            const ref = body.new_default;
+            const next = ref ? others.find((x) => x.id === ref || x.slug === ref) : others[0];
+            if (!next) return json(400, { error: `new_default: unknown project ${String(ref)}` });
+            makeDefault(ws, next.id);
+          }
+        }
         p.archived = body.archived;
       }
       return json(200, p);
@@ -310,6 +325,11 @@ export function createMockHandler(options: MockOptions = {}) {
         if (!slugOk(body.slug)) return json(400, { error: "Invalid slug" });
         if (workspaces.some((w) => w.slug === body.slug)) return json(409, { error: `The workspace slug "${body.slug}" is taken` });
         ws.slug = body.slug;
+      }
+      if (body.default_project !== undefined) {
+        const next = ws.projects.find((x) => !x.archived && (x.id === body.default_project || x.slug === body.default_project));
+        if (!next) return json(400, { error: `default_project: unknown project ${String(body.default_project)}` });
+        makeDefault(ws, next.id);
       }
       return json(200, present(ws));
     }

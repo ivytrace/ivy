@@ -88,7 +88,9 @@ are the exception for the untouched default project: naming it there also sets i
 **Settings.** General (name, URL, delete with the slug typed to confirm; owners only, not for the default workspace or
 in single-workspace mode), Members (multi-workspace mode only: roles, remove/leave, invitations with the link shown
 once to copy, "email sent" when SMTP is configured, pending list with revoke), Projects (create, rename, change URL,
-archive/unarchive, per-project ingest keys: create (shown once, with the environment variables), list, revoke), AWS
+archive/unarchive, "Make default"; archiving the default project opens a dialog that picks the new default and says
+what moves there and that the project's own keys stop working; per-project ingest keys: create (shown once, with the
+environment variables), list, revoke), AWS
 accounts (below). The AWS entry shows the number of new untraced functions.
 
 **Onboarding.** The first time a workspace with no data in the last 7 days and no AWS accounts is opened, the Functions

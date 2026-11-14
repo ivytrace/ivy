@@ -6,10 +6,11 @@ server from the API key, and the routing seams for sharding by tenant exist now,
 ## Model
 
 - **Tenant** = **workspace** in the product (`workspaces-projects.md`): `ivy_control.tenants`, ID
-  `ten_<21 base62>` (the self-hosted tenant is just `default`), a slug, a name and a `shard_id` (default `shard-1`).
+  `ten_<21 base62>` (the self-hosted tenant is just `default`), a slug, a name, a `shard_id` (default `shard-1`) and
+  a `default_project_id` ('' = the project with the derived ID, see `workspaces-projects.md`).
 - **Project**: `ivy_control.projects`, ID `prj_…`, belongs to one tenant; every span belongs to one project.
 - **API key**: `ivy_control.api_keys`, ID `key_<21 base62>`, belongs to one tenant and one project (`project_id`;
-  empty for keys from before projects, meaning the default project). The key itself is
+  empty for keys from before projects and the bootstrap key, meaning the workspace's current default project). The key itself is
   `ivy_<40 base62>` (~238 bits), shown once at creation. Ivy stores `sha256(key)` and a display prefix
   (`ivy_` + 6 characters), never the key. `kind` is `user`, `bootstrap` (from `IVY_INGEST_API_KEY`) or `auto-trace`
   (see below). Revoking sets `revoked_at`.
@@ -185,7 +186,9 @@ revoked).
 ## Self-hosted bootstrap
 
 On startup, the API and the router each ensure tenant `default` (slug `default`, shard `shard-1`) and its default
-project exist, and, if `IVY_INGEST_API_KEY` is set, that it is an active `bootstrap` key of that project. The API
+project exist, and, if `IVY_INGEST_API_KEY` is set, that it is an active `bootstrap` key without a project, so it
+follows whichever project is the default (bootstrap keys written before that named the first default project and are
+rewritten on startup). The API
 also gives every existing tenant a slug and a default project (`ensureWorkspaceDefaults`). The key ID is derived from the hash, so
 concurrent or repeated runs write the same row. Changing the variable revokes the previous bootstrap key; unsetting it
 revokes nothing. The dev flow (`dev-ingest-key`) and single-tenant installs work as before, now through the router.

@@ -113,7 +113,7 @@ export const openApiDocument = {
     '/api/w/{workspace}': {
       get: { tags: ['Workspaces'], summary: 'The workspace and your role', operationId: 'getWorkspace', parameters: [ws], responses: { 200: json(ref('Workspace')), ...notFound } },
       patch: {
-        tags: ['Workspaces'], summary: 'Rename or change the slug (owner)', operationId: 'updateWorkspace', parameters: [ws],
+        tags: ['Workspaces'], summary: 'Rename or change the slug (owner), or change the default project', operationId: 'updateWorkspace', parameters: [ws],
         requestBody: body('WorkspaceUpdate'), responses: { 200: json(ref('Workspace')), ...bad, ...owner, ...notFound, 409: error('Slug taken') },
       },
       delete: {
@@ -173,7 +173,10 @@ export const openApiDocument = {
       get: { tags: ['Projects'], summary: 'One project', operationId: 'getProject', parameters: [ws, prj], responses: { 200: json(ref('Project')), ...notFound } },
       patch: {
         tags: ['Projects'], summary: 'Rename, change the slug, archive or unarchive', operationId: 'updateProject', parameters: [ws, prj],
-        requestBody: body('ProjectUpdate'), responses: { 200: json(ref('Project')), ...bad, ...notFound, 409: error('Slug taken, or archiving the default project') },
+        description:
+          'Archiving the default project first makes `new_default` (or the oldest remaining active project) the default. ' +
+          'Keys without a project follow the default; keys created for an archived project stop working.',
+        requestBody: body('ProjectUpdate'), responses: { 200: json(ref('Project')), ...bad, ...notFound, 409: error('Slug taken, or archiving the last active project') },
       },
     },
     '/api/w/{workspace}/p/{project}/keys': {

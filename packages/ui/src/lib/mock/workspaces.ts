@@ -2,7 +2,8 @@ import type { ApiKey, Invitation, Member, Project, Role, Workspace } from "../ap
 
 /** Mock control plane: workspaces, projects, members, invitations and ingest keys. */
 
-export interface MockWorkspace extends Workspace {
+/** `default_project_id` is derived from the projects' `default` flags when presented. */
+export interface MockWorkspace extends Omit<Workspace, "default_project_id"> {
   projects: Project[];
   members: Member[];
   invitations: (Invitation & { token: string })[];

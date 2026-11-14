@@ -22,9 +22,11 @@ User (OIDC subject) ──member of──▶ Workspace ──has──▶ Projec
 - **Environments are separate projects** (`checkout-prod`, `checkout-staging`), not a filter. A project is usually one
   app in one environment, which is also what one CloudFormation stack usually is, so auto-trace's stack rules map
   stacks onto projects.
-- Every workspace has a **default project** from creation (slug `default`, renamable, not archivable). Its ID is
-  derived from the tenant ID (`prj_` + 21 hex chars of `sha256('ivy-default-project:' + tenant)`), so every process
-  agrees on it without a lookup, and creating it is idempotent.
+- Every workspace has a **default project**: where keys without a project and functions traced without a project go.
+  It is a movable designation (`tenants.default_project_id`), not a fixed project; see "The default project is a
+  designation". The first one is created with the workspace (slug `default`, renamable) with an ID derived from the
+  tenant ID (`prj_` + 21 hex chars of `sha256('ivy-default-project:' + tenant)`), so creating it is idempotent and a
+  tenant whose `default_project_id` is empty (never moved, or from before the column) falls back to it.
 - **Members** (`tenant_members`): `owner` or `member`. A workspace always keeps one owner.
 - **Invitations** (`invitations`): ID `inv_…`, email, role, `sha256(token)`, inviter, `expires_at` (7 days),
   `accepted_at`/`accepted_by`, `revoked_at`.
@@ -69,10 +71,42 @@ Span tables are keyed `(tenant, project, …)`. `scopedQuery` refuses SQL on `ot
 explicitly; and the routes that may do that are mounted with `allProjects()`. Row policies on the project
 (`SQL_ivy_project`) back it up. See `tenancy.md`, "Guards".
 
+### The default project is a designation
+
+Users asked to delete the default project. Archiving is the closest thing Ivy has to deleting a project (data stays
+until retention), so the default project can now be archived like any other, and "default" moved from a fixed derived
+ID to a column on the tenant, `default_project_id` (added with `ADD COLUMN IF NOT EXISTS`; '' means the derived ID).
+One helper, `workspaceDefaultProject(tenant)` (`lib/tenancy/ids.ts`), resolves it, and `defaultProjectOf(tenantId)`
+(`projects.ts`) reads it fresh from the control database. Everything that used the derived ID as a fallback uses it:
+
+- keys with an empty `project_id` (keys from before projects and the `IVY_INGEST_API_KEY` bootstrap key, which is now
+  written without a project so it follows the default) in `findKeyByHash`, the router's key cache and the key routes;
+- auto-trace: `ivy:trace=true` and manual "trace" without a project (`loadAssigner`, the rule dry run), and the
+  auto-trace key when no project is named;
+- `targetProject` when a rule or manual choice gives no project. That resolves the default **when the rule is
+  saved** and stores its ID, so an existing rule keeps its project when the default moves later (and stops matching if
+  that project is archived, like any rule pointing at an archived project);
+- throttles of traced functions with an empty project.
+
+Changing it: `PATCH /api/w/:workspace { default_project }` (any member, since members manage projects; name and slug
+stay owner-only), or archiving the default project. Archiving the default with `new_default` (ID or slug) makes that
+the default, without it the oldest remaining active project. Archiving the last active project is refused with 409
+"A workspace needs at least one project".
+
+ClickHouse has no transactions, so archiving the default writes the tenant row (new default) **before** the project
+row (archived). A failure in between leaves the old default still active and no longer the default, which is
+harmless; the other order could leave a default that is archived, which would reject every key without a project.
+Writes to the tenant row re-read it first (`updateWorkspace`), so a rename doesn't put back an older default.
+
+After the move, keys without a project send to the new default within the router's one-minute key cache, and keys
+created explicitly for the archived project are rejected (401), as for any archived project. Functions traced into
+the old default by tag or manual choice without a project move to the new default at the next sync (the archive
+triggers one); functions whose rule names the old project stop being traced into it.
+
 ### Ingest stamps the project server-side
 
-The router resolves key → tenant **and** project (keys from before projects belong to the default project; keys of
-archived or missing projects are rejected with 401) and forwards `x-ivy-project` next to `x-ivy-tenant`. The collector
+The router resolves key → tenant **and** project (keys without a project belong to the workspace's current default
+project; keys of archived or missing projects are rejected with 401) and forwards `x-ivy-project` next to `x-ivy-tenant`. The collector
 deletes any client-sent `ivy.project_id` and inserts the header's value, exactly like the tenant, and drops spans
 without either. `otel_traces.ProjectId` defaults from that attribute. Verified on the pinned collector (0.165.0): a
 forged `ivy.project_id` (and `ivy.tenant_id`) is overwritten, and a request without the project header stores nothing.
@@ -122,9 +156,11 @@ UI. Success marks the invitation accepted (single use) and adds the membership; 
 concurrent accepts by the same user write the same membership row, so they're harmless; nobody else can use the token
 because the email must match.
 
-**Projects.** Create (slug from the name unless given), rename/re-slug, archive/unarchive. Archiving keeps the data
-readable, stops the project's keys at the router (within the key cache TTL of a minute), refuses new keys, and
-re-syncs AWS so rules pointing at it stop tracing into it.
+**Projects.** Create (slug from the name unless given), rename/re-slug, archive/unarchive, make default. Archiving
+keeps the data readable, stops the project's keys at the router (within the key cache TTL of a minute), refuses new
+keys, and re-syncs AWS so rules pointing at it stop tracing into it. Archiving the default project moves the default
+first (above). Settings → Projects shows "· default" next to the default, a "Make default" action on the others, and
+for the default an archive dialog with a select for the new default that spells out what moves and what stops.
 
 **Keys.** Per project: create (the key is shown once), list (prefix only), revoke. The auto-trace key of a project is
 listed as `auto-trace` and can be revoked to rotate it.
@@ -151,7 +187,12 @@ The app's own paths that CloudFront must send to the app (in addition to those i
   last owner, invitations: email sent, link format, token not stored, accept once, reuse 410, wrong email 403,
   unverified email 403 from the token and from userinfo, expired, revoked, replaced, single-workspace mode),
   `lib/tenancy/members.test.ts`, `tenants.test.ts` (default projects, slugs, old keys → default project, per-project
-  keys and auto-trace keys), `routes/tenant-scope.test.ts` and `lib/clickhouse/scoped.test.ts` (project guard),
+  keys and auto-trace keys), `routes/projects/projects.test.ts` (archiving the default with and without
+  `new_default`, bad `new_default`, the last project, `default_project` on the workspace, and what follows the
+  default: empty-project keys through the key cache, the bootstrap key, auto-trace keys, `targetProject`, the
+  assigner), `lib/aws/throttles.test.ts` (throttles under the moved default), the UI's
+  `components/workspaces/archive-default.test.tsx` (the archive dialog) and `lib/mock/server.test.ts` (the mock API
+  mirrors it), `routes/tenant-scope.test.ts` and `lib/clickhouse/scoped.test.ts` (project guard),
   `lib/ingest/router.test.ts` (`x-ivy-project`, old keys, archived/missing projects).
 - Schema: a ClickHouse volume created with the previous schema was refused by the new `init.sh` with the reset
   instructions; after `reset.sql` the new `init.sh` created all 14 tables and ran again as a no-op. (A data-preserving

@@ -216,7 +216,7 @@ CloudWatch through the same role (`lib/aws/throttles.ts`):
   explicitly workspace-wide). Only non-zero minutes are written; re-reading a minute replaces its row, and reads use
   `FINAL`.
 - **Projects.** A row's `project_id` is the project the function sends to when it is polled (its tag, manual choice or
-  rule; an empty assignment is the workspace's default project). Only traced functions are polled, so throttles of
+  rule; an empty assignment is the workspace's current default project). Only traced functions are polled, so throttles of
   untraced or unassigned functions are dropped rather than parked in a default project: they belong to no project
   and nobody looks at them there. A function that moves project keeps its earlier minutes under the old project, like
   its invocations.

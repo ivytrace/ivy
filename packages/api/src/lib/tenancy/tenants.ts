@@ -1,4 +1,5 @@
 import { defaultProjectId, hashKey, keyPrefix, newApiKey, newKeyId, newTenantId } from './ids.js';
+import { defaultProjectOf } from './projects.js';
 import { decrypt, encrypt, serverSecret } from './secret-box.js';
 import { DEFAULT_SHARD, shardConfigs } from './shards.js';
 import { claimSlug, slugify } from './slugs.js';
@@ -27,8 +28,9 @@ export function claimWorkspaceSlug(tenant: TenantRecord, base: string): Promise<
 }
 
 /**
- * The project every workspace starts with. Its ID is derived from the tenant ID (`defaultProjectId`),
- * so creating it is idempotent and keys from before projects (`project_id = ''`) resolve to it.
+ * The project every workspace starts with, and its default until another project is made the
+ * default (`tenants.default_project_id`). Its ID is derived from the tenant ID (`defaultProjectId`),
+ * so creating it is idempotent and tenants that never moved their default agree on it without a lookup.
  */
 export async function ensureDefaultProject(tenantId: string): Promise<ProjectRecord> {
   const store = tenancyStore();
@@ -79,8 +81,8 @@ function keyRecord(tenantId: string, projectId: string, key: string, name: strin
   };
 }
 
-/** The project a key belongs to (keys from before projects belong to the default project). */
-export const keyProjectId = (key: Pick<ApiKeyRecord, 'tenant_id' | 'project_id'>) => key.project_id || defaultProjectId(key.tenant_id);
+/** The project a key belongs to: keys without a project follow the workspace's default (`defaultId`). */
+export const keyProjectId = (key: Pick<ApiKeyRecord, 'project_id'>, defaultId: string) => key.project_id || defaultId;
 
 /** Mints an ingest key for a project. The plaintext is returned once and only its hash is stored. */
 export async function createApiKey(tenantId: string, projectId: string, name: string): Promise<{ key: string; record: ApiKeyRecord }> {
@@ -99,15 +101,16 @@ export async function revokeApiKey(tenantId: string, keyId: string): Promise<Api
   if (!record) throw new Error(`Unknown key ${keyId} for tenant ${tenantId}`);
   const revoked = { ...record, revoked_at: record.revoked_at ?? Date.now() };
   await tenancyStore().saveKey(revoked);
-  if (record.kind === 'auto-trace') autoTraceKeys.delete(`${tenantId}/${keyProjectId(record)}`);
+  if (record.kind === 'auto-trace') autoTraceKeys.delete(`${tenantId}/${keyProjectId(record, await defaultProjectOf(tenantId))}`);
   return revoked;
 }
 
 /**
  * Self-hosted bootstrap: the `default` tenant (with its default project) always exists, and
- * IVY_INGEST_API_KEY (when set) is a key of that project. The key ID is derived from the hash, so
- * concurrent or repeated runs write the same row. Setting the variable to a new value revokes the
- * previous bootstrap key; unsetting it revokes nothing (use the tenants CLI).
+ * IVY_INGEST_API_KEY (when set) is a key without a project, so it follows whichever project is the
+ * workspace's default. The key ID is derived from the hash, so concurrent or repeated runs write the
+ * same row. Setting the variable to a new value revokes the previous bootstrap key; unsetting it
+ * revokes nothing (use the tenants CLI).
  */
 export async function ensureDefaultTenant(envKey = process.env.IVY_INGEST_API_KEY?.trim()): Promise<void> {
   const store = tenancyStore();
@@ -121,8 +124,12 @@ export async function ensureDefaultTenant(envKey = process.env.IVY_INGEST_API_KE
   }
   const id = `key_bootstrap_${hash.slice(0, 16)}`;
   const existing = keys.find((k) => k.id === id);
-  if (existing && existing.revoked_at === null) return;
-  await store.saveKey(keyRecord(DEFAULT_TENANT, defaultProjectId(DEFAULT_TENANT), envKey, 'IVY_INGEST_API_KEY', 'bootstrap', id));
+  if (existing && existing.revoked_at === null) {
+    // Bootstrap keys used to name the first default project explicitly.
+    if (existing.project_id) await store.saveKey({ ...existing, project_id: '' });
+    return;
+  }
+  await store.saveKey(keyRecord(DEFAULT_TENANT, '', envKey, 'IVY_INGEST_API_KEY', 'bootstrap', id));
 }
 
 /**
@@ -143,15 +150,18 @@ export async function ensureWorkspaceDefaults(): Promise<void> {
 const autoTraceKeys = new Map<string, Promise<string | null>>();
 
 /**
- * The ingest key written into the Lambda functions of a project. For the default tenant's default
- * project with IVY_INGEST_API_KEY set, that key (its plaintext already lives in the environment).
+ * The ingest key written into the Lambda functions of a project (default: the workspace's default
+ * project). For the default tenant's default project with IVY_INGEST_API_KEY set, that key (its
+ * plaintext already lives in the environment, and it follows the default project).
  * Otherwise a system-managed "auto-trace" key of the project, minted on first use and stored hashed
  * plus encrypted with IVY_SECRET_KEY so it can be written into new functions later. Null when
  * neither is possible.
  */
-export function autoTraceKey(tenantId: string, projectId = defaultProjectId(tenantId)): Promise<string | null> {
+export async function autoTraceKey(tenantId: string, project?: string): Promise<string | null> {
+  const defaultId = await defaultProjectOf(tenantId);
+  const projectId = project || defaultId;
   const envKey = process.env.IVY_INGEST_API_KEY?.trim();
-  if (tenantId === DEFAULT_TENANT && projectId === defaultProjectId(DEFAULT_TENANT) && envKey) return Promise.resolve(envKey);
+  if (tenantId === DEFAULT_TENANT && projectId === defaultId && envKey) return envKey;
   const cacheKey = `${tenantId}/${projectId}`;
   let pending = autoTraceKeys.get(cacheKey);
   if (!pending) {
@@ -166,9 +176,10 @@ async function loadOrMintAutoTraceKey(tenantId: string, projectId: string): Prom
   const secret = serverSecret();
   if (!secret) return null;
   const store = tenancyStore();
-  // The oldest active one, so that every process picks the same key if two were ever minted at once.
+  // Auto-trace keys always name their project. The oldest active one, so that every process picks
+  // the same key if two were ever minted at once.
   const existing = (await store.listKeys(tenantId))
-    .filter((k) => k.kind === 'auto-trace' && k.revoked_at === null && k.encrypted_key && keyProjectId(k) === projectId)
+    .filter((k) => k.kind === 'auto-trace' && k.revoked_at === null && k.encrypted_key && k.project_id === projectId)
     .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
   for (const k of existing) {
     try {
