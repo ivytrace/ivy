@@ -110,6 +110,10 @@ live in `docs/implementation/`.
   customer). What is left out is said on the trace ("N spans omitted") and in one line in the function's logs.
 - Each invocation has a payload budget (1 MB): the invocation's own event and response first, then failing spans,
   then the slowest; spans past it keep their timing and attributes but not their bodies.
+- Long-running invocations appear as in progress while they run. After 5 s (`IVY_INPROGRESS_AFTER_MS`, 0 turns it
+  off) the extension sends one small provisional record, refreshed every minute; the final invocation always
+  replaces it and it is never counted or billed as a trace. Without a final record past the deadline it shows as
+  "No completion recorded". Shorter invocations cost nothing extra. Implementation: `docs/implementation/layer.md`.
 
 ## LLM spans
 - Ivy captures OpenTelemetry spans from libraries such as the Vercel AI SDK and renders LLM calls (messages,

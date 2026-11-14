@@ -235,7 +235,7 @@ Function overview for the range.
 reached the function. A function that was only throttled in the range is listed with 0 invocations and `last_invoked: null`.
 
 ### `GET …/invocations`
-Query: `function`, `status` (`ok`|`error`), `q` (free text: matches request ID, trace ID, error message, HTTP path), `limit` (default 50, max 500), `cursor` (opaque; from `next_cursor`).
+Query: `function`, `status` (`ok`|`error`|`in_progress`), `q` (free text: matches request ID, trace ID, error message, HTTP path), `limit` (default 50, max 500), `cursor` (opaque; from `next_cursor`), `ids` (comma-separated span IDs, up to 100: only those invocations, in their current state; the dashboard's Live mode uses it to refresh in-progress rows, and `from` to fetch rows newer than the newest one it has).
 ```json
 { "items": [ {
   "trace_id": "673f1a2b…", "span_id": "…", "ts": "…",
@@ -244,7 +244,8 @@ Query: `function`, `status` (`ok`|`error`), `q` (free text: matches request ID, 
   "request_id": "…", "trigger": "aws:apigatewayv2",
   "http_method": "POST", "http_path": "/orders", "http_status": 200,
   "error_type": null, "error_message": null, "memory_used_mb": 88,
-  "memory_limit_mb": 256, "failure_phase": null, "failure_kind": null, "synthetic": false, "init_duration_ms": null
+  "memory_limit_mb": 256, "failure_phase": null, "failure_kind": null, "synthetic": false, "init_duration_ms": null,
+  "deadline": null, "last_seen": null
 } ], "next_cursor": "…" | null }
 ```
 Sorted by `ts` descending. Pagination is keyset on `(ts, span_id)`, so workspace-wide pages run across projects
@@ -256,6 +257,14 @@ have `failure_phase` `init` or `invoke` and a `failure_kind`: `init_failed`, `ou
 Tracer-reported timeouts (`error_type` `Timeout`) are `timed_out` too. `synthetic: true` means the extension created
 the invocation span itself (the trace has no tracer spans). `request_id` is `""` for an init failure that had no
 request. `memory_limit_mb` comes from the `faas.max_memory` resource attribute, `init_duration_ms` is set on cold starts.
+
+Long-running invocations the extension reported while they ran (`layer.md`, "Long-running invocations") are listed
+with `status: "in_progress"` until their final invocation span arrives, then as that final row (same `trace_id` and
+`span_id`, never both). They have `deadline` and `last_seen` (ISO; `null` on other rows), `duration_ms` from the start
+to `last_seen`, no HTTP, error or memory fields, and `trigger` `unknown`. Clients show "Running…" with the time since
+`ts` while now is before `deadline` + 15 s (`inProgressState()` in `/spans`), and "No completion recorded" after.
+In-progress rows come from `invocations_in_progress` (`storage.md`), so counts, charts, error groups and usage never
+include them.
 
 ### `GET …/traces/:traceId`
 All spans of a trace, sorted by start time.
@@ -275,6 +284,8 @@ Update spans (`ivy.update = true`: Lambda report data the extension sends after 
 `span-conventions.md`) are merged into the span with the same span ID (`mergeUpdateSpans` in `@ivy/spans`) and never
 returned themselves, so `ivy.billed_duration_ms`, `ivy.memory_max_used_mb` and `ivy.memory_size_mb` appear on the
 invocation span once the report has arrived.
+An in-progress record (`ivy.in_progress = true`) gives way to the final invocation span with the same span ID
+(`mergeInProgressSpans`); while there is none, only the newest record is returned (its end time is the last report).
 JSON-valued attributes (`ivy.payload.*`, headers, arrays) are JSON strings for the UI to parse.
 404 if not found.
 
