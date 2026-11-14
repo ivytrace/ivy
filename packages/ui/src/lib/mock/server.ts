@@ -2,6 +2,7 @@ import type { ErrorGroup, FunctionSummary, Invocation, InvocationsResponse, Time
 import { createAlertsMock } from "./alerts.ts";
 import { createAwsMock, type MockOptions } from "./aws.ts";
 import { buildTrace, INVOCATIONS, type MockInvocation } from "./fixtures.ts";
+import { liveRows, progressRows } from "./progress.ts";
 import { mockUsage, MOCK_BILLING_URL } from "./usage.ts";
 import { newInvitation, newKey, newProject, newWorkspace, seedWorkspaces, slugFrom, slugOk, type MockWorkspace } from "./workspaces.ts";
 import { THROTTLED_MESSAGE, THROTTLES, type MockThrottle } from "./throttles.ts";
@@ -54,7 +55,7 @@ type Row = MockInvocation & { project: string };
 function range(params: URLSearchParams): [number, number] {
   const from = params.get("from");
   const to = params.get("to");
-  if (from && to) return [new Date(from).getTime(), new Date(to).getTime()];
+  if (from) return [new Date(from).getTime(), to ? new Date(to).getTime() : Date.now()];
   const since = SINCE_MS[params.get("since") ?? "24h"] ?? SINCE_MS["24h"];
   const now = Date.now();
   return [now - since, now];
@@ -77,13 +78,16 @@ function throttlesInRange(pool: ThrottleRow[], params: URLSearchParams): Throttl
   return pool.filter((t) => t.minute >= from && t.minute < to && (!fn || t.function === fn));
 }
 
+/** Aggregates count finished invocations only, like the API (in-progress records are not in `invocations`). */
+const finished = (rows: Row[]) => rows.filter((r) => r.status !== "in_progress");
+
 const percentile = (sorted: number[], p: number) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] : 0);
 const round = (n: number) => Math.round(n * 10) / 10;
 const strip = ({ seed: _seed, project: _project, ...rest }: Row): Invocation => rest;
 
 function functions(pool: Row[], throttles: ThrottleRow[], params: URLSearchParams, byProject: boolean, ids: Map<string, string>): FunctionSummary[] {
   const groups = new Map<string, Row[]>();
-  for (const inv of inRange(pool, params)) {
+  for (const inv of finished(inRange(pool, params))) {
     const key = `${byProject ? inv.project : ""}|${inv.function}`;
     groups.set(key, [...(groups.get(key) ?? []), inv]);
   }
@@ -119,8 +123,9 @@ function invocations(pool: Row[], params: URLSearchParams, ids?: Map<string, str
   const q = params.get("q")?.toLowerCase();
   const limit = Math.min(Number(params.get("limit") ?? 50) || 50, 500);
   const offset = Number(params.get("cursor") ? atob(params.get("cursor")!) : 0);
+  const only = params.get("ids") ? new Set(params.get("ids")!.split(",")) : null;
   const found = inRange(pool, params).filter(
-    (i) => (!status || i.status === status) && (!q || [i.request_id, i.trace_id, i.error_message, i.http_path].some((v) => v?.toLowerCase().includes(q))),
+    (i) => (!only || only.has(i.span_id)) && (!status || i.status === status) && (!q || [i.request_id, i.trace_id, i.error_message, i.http_path].some((v) => v?.toLowerCase().includes(q))),
   );
   const page = found.slice(offset, offset + limit);
   const next = offset + limit < found.length ? btoa(String(offset + limit)) : null;
@@ -132,7 +137,7 @@ function invocations(pool: Row[], params: URLSearchParams, ids?: Map<string, str
 
 function errors(pool: Row[], throttles: ThrottleRow[], params: URLSearchParams, byProject: boolean, ids: Map<string, string>): ErrorGroup[] {
   const groups = new Map<string, Row[]>();
-  for (const inv of inRange(pool, params).filter((i) => i.status === "error")) {
+  for (const inv of finished(inRange(pool, params)).filter((i) => i.status === "error")) {
     const key = `${byProject ? inv.project : ""}|${inv.function}|${inv.error_type}|${inv.error_message}`;
     groups.set(key, [...(groups.get(key) ?? []), inv]);
   }
@@ -186,7 +191,7 @@ function timeseries(pool: Row[], throttles: ThrottleRow[], params: URLSearchPara
   const start = Math.floor(from / bucket) * bucket;
   const buckets = new Map<number, number[]>();
   const errs = new Map<number, number>();
-  for (const inv of inRange(pool, params)) {
+  for (const inv of finished(inRange(pool, params))) {
     const b = Math.floor(new Date(inv.ts).getTime() / bucket) * bucket;
     buckets.set(b, [...(buckets.get(b) ?? []), inv.duration_ms]);
     if (inv.status === "error") errs.set(b, (errs.get(b) ?? 0) + 1);
@@ -223,6 +228,9 @@ export function createMockHandler(options: MockOptions = {}) {
   const aws = new Map<string, ReturnType<typeof createAwsMock>>();
   const live = new Map<string, Row[]>();
   const alerts = createAlertsMock({ configured: !options.noAlerts });
+  const created = Date.now();
+  /** Set by the first live poll (`from` without `to`): from then on new invocations keep arriving. */
+  let liveStart: number | null = null;
 
   const awsOf = (ws: MockWorkspace) => {
     let mock = aws.get(ws.id);
@@ -236,8 +244,11 @@ export function createMockHandler(options: MockOptions = {}) {
   const seeded = (ws: MockWorkspace) => !options.empty && ws.slug === "acme";
 
   const poolOf = (ws: MockWorkspace, project: string | null): Row[] => {
+    const now = Date.now();
     const rows: Row[] = seeded(ws)
-      ? INVOCATIONS.map((i) => ({ ...i, project: projectOfInvocation(i) }))
+      ? [...liveRows(liveStart, now), ...progressRows(created, liveStart, now), ...INVOCATIONS]
+          .map((i) => ({ ...i, project: projectOfInvocation(i) }))
+          .sort((a, b) => b.ts.localeCompare(a.ts))
       : (live.get(ws.id) ?? []);
     return project ? rows.filter((r) => r.project === project) : rows;
   };
@@ -268,6 +279,7 @@ export function createMockHandler(options: MockOptions = {}) {
   const ids = (ws: MockWorkspace) => new Map(ws.projects.map((p) => [p.slug, p.id]));
 
   function data(ws: MockWorkspace, project: string | null, rest: string, params: URLSearchParams): MockResponse | null {
+    if (rest === "/invocations" && params.get("from") && !params.get("to")) liveStart ??= Date.now();
     const pool = poolOf(ws, project);
     const throttles = throttlePoolOf(ws, project);
     const all = project === null;

@@ -5,6 +5,7 @@ import {
   describeSpan,
   isAwsSpan,
   isHttpSpan,
+  isInProgressSpan,
   isInvocationSpan,
   requestedTools,
   triggerLabel,
@@ -129,4 +130,4 @@ export function callKey(span: Span): string {
   return span.name;
 }
 
-export const statusText = (span: Span) => (span.status_code === "ERROR" ? "ERROR" : "ok");
+export const statusText = (span: Span) => (span.status_code === "ERROR" ? "ERROR" : isInProgressSpan(span) ? "in progress" : "ok");

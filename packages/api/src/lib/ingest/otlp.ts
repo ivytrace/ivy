@@ -75,19 +75,20 @@ const children = (buf: Buffer, parent: Pick<Field, 'start' | 'end'>, num: number
 
 export interface TrafficCount {
   spans: number;
-  /** Spans marked `ivy.invocation = true`: one per Lambda invocation, i.e. one trace (a row of `invocations`). */
+  /** Spans marked `ivy.invocation = true` (in-progress records excluded): one per Lambda invocation, i.e. one trace (a row of `invocations`). */
   invocations: number;
 }
 
 const INVOCATION_KEY = Buffer.from('ivy.invocation', 'utf8');
+const IN_PROGRESS_KEY = Buffer.from('ivy.in_progress', 'utf8');
 const TRUE = Buffer.from('true', 'utf8');
 
 /** KeyValue (key = 1, value = 2) → AnyValue (string_value = 1, bool_value = 2). */
-function isInvocationAttribute(buf: Buffer, kv: Field): boolean {
+function isTrueAttribute(buf: Buffer, kv: Field, key: Buffer): boolean {
   let keyMatches = false;
   let value: Field | undefined;
   for (const f of fields(buf, kv.start, kv.end)) {
-    if (f.num === 1 && f.wire === 2) keyMatches = buf.subarray(f.start, f.end).equals(INVOCATION_KEY);
+    if (f.num === 1 && f.wire === 2) keyMatches = buf.subarray(f.start, f.end).equals(key);
     else if (f.num === 2 && f.wire === 2) value = f;
   }
   if (!keyMatches || !value) return false;
@@ -98,11 +99,11 @@ function isInvocationAttribute(buf: Buffer, kv: Field): boolean {
   return false;
 }
 
-function jsonIsInvocation(span: Record<string, any>): boolean {
-  return (span.attributes ?? []).some(
-    (a: Record<string, any>) => a?.key === 'ivy.invocation' && (a.value?.stringValue === 'true' || a.value?.boolValue === true),
-  );
-}
+const jsonIsTrue = (span: Record<string, any>, key: string): boolean =>
+  (span.attributes ?? []).some((a: Record<string, any>) => a?.key === key && (a.value?.stringValue === 'true' || a.value?.boolValue === true));
+
+/** An invocation span, except an in-progress record (the final span with the same ID is the one that counts). */
+const jsonIsInvocation = (span: Record<string, any>): boolean => jsonIsTrue(span, 'ivy.invocation') && !jsonIsTrue(span, 'ivy.in_progress');
 
 /**
  * Spans and invocations in an ExportTraceServiceRequest:
@@ -126,7 +127,8 @@ export function countTraffic(body: Buffer, format: OtlpFormat): TrafficCount {
     for (const ss of children(body, rs, 2)) {
       for (const span of children(body, ss, 2)) {
         out.spans++;
-        if (children(body, span, 9).some((kv) => isInvocationAttribute(body, kv))) out.invocations++;
+        const attributes = children(body, span, 9);
+        if (attributes.some((kv) => isTrueAttribute(body, kv, INVOCATION_KEY)) && !attributes.some((kv) => isTrueAttribute(body, kv, IN_PROGRESS_KEY))) out.invocations++;
       }
     }
   }

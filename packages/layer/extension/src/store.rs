@@ -13,6 +13,8 @@ const GRACE_AFTER_ERROR: Duration = Duration::from_millis(50);
 /// The grace restarts while batches for the request keep arriving (a large invocation is handed over in
 /// chunks after the invocation span), up to this long after the platform said the runtime was done.
 const MAX_GRACE: Duration = Duration::from_millis(1000);
+/// Requests reported as in progress whose IDs are remembered (late chunks still get the right trace ID).
+const MAX_IN_PROGRESS: usize = 16;
 
 /// Spans that share one OTLP resource.
 #[derive(Debug, Clone, PartialEq)]
@@ -58,9 +60,15 @@ struct Inner {
     /// Requests already covered by an init failure span, so a `runtimeDone` for them adds nothing.
     init_failed_requests: HashSet<String>,
     init_failed: bool,
+    /// Requests reported as in progress: (request ID, trace ID, span ID) of their provisional invocation span.
+    in_progress: VecDeque<(String, String, String)>,
 }
 
 impl Inner {
+    fn in_progress_ids(&self, request_id: &str) -> Option<(String, String)> {
+        self.in_progress.iter().find(|p| p.0 == request_id).map(|p| (p.1.clone(), p.2.clone()))
+    }
+
     fn entry(&mut self, request_id: &str) -> &mut Entry {
         if !self.entries.contains_key(request_id) {
             self.order.push(request_id.to_string());
@@ -141,10 +149,16 @@ impl SpanStore {
         if resource.as_array().is_some_and(|a| !a.is_empty()) {
             inner.last_resource = Some(resource.clone());
         }
+        // The tracer derives the same IDs, but its trace ID's time prefix can be a second off the one the
+        // extension already exported for an in-progress invocation.
+        let trace_id = inner.in_progress_ids(request_id).map(|(t, _)| Value::String(t));
         let entry = inner.entry(request_id);
         entry.resource = resource;
         entry.last_add = Some(Instant::now());
-        for span in spans {
+        for mut span in spans {
+            if let (Some(t), Some(obj)) = (&trace_id, span.as_object_mut()) {
+                obj.insert("traceId".into(), t.clone());
+            }
             entry.push(span);
         }
         if is_final {
@@ -194,6 +208,52 @@ impl SpanStore {
         }
     }
 
+    /// Waits until the invocation is over: the tracer's final batch arrived or the platform reported the
+    /// runtime done. No grace; true when it is over.
+    pub fn wait_settled(&self, request_id: &str, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        self.wait_while(self.lock(), deadline, |i| i.entries.get(request_id).is_some_and(|e| e.is_final) || i.platform.done(request_id).is_some()).1
+    }
+
+    /// At `INVOKE`: an earlier attempt with the same request ID (Lambda retries async invocations with the same
+    /// ID) was another trace, so its in-progress IDs no longer apply.
+    pub fn start_invocation(&self, request_id: &str) {
+        self.lock().in_progress.retain(|p| p.0 != request_id);
+    }
+
+    /// A provisional invocation span (`ivy.in_progress`) for a request that is still running, with the IDs its
+    /// final span will have. `None` once the invocation is over. Spans the tracer already handed over (a timeout
+    /// snapshot) get its trace ID.
+    pub fn in_progress(&self, ctx: &InvocationContext, deadline_ms: i64, now_ms: i64, opts: &FinishOptions) -> Option<Batch> {
+        let request_id = ctx.request_id.as_deref()?;
+        let mut inner = self.lock();
+        if inner.entries.get(request_id).is_some_and(|e| e.is_final) || inner.platform.done(request_id).is_some() {
+            return None;
+        }
+        let start_ms = inner.platform.start_of(request_id).unwrap_or(ctx.start_ms);
+        let (trace_id, span_id) = match inner.in_progress_ids(request_id) {
+            Some(ids) => ids,
+            None => {
+                let ids = spans::derived_ids(request_id, start_ms);
+                if inner.in_progress.len() >= MAX_IN_PROGRESS {
+                    inner.in_progress.pop_front();
+                }
+                inner.in_progress.push_back((request_id.to_string(), ids.0.clone(), ids.1.clone()));
+                ids
+            }
+        };
+        if let Some(e) = inner.entries.get_mut(request_id) {
+            for s in e.spans.iter_mut().filter_map(Value::as_object_mut) {
+                s.insert("traceId".into(), Value::String(trace_id.clone()));
+            }
+        }
+        let resource = inner.last_resource.clone().unwrap_or_else(|| opts.fallback_resource.clone());
+        let name = spans::function_name(&resource).unwrap_or_else(|| "unknown".into());
+        let root_ctx = InvocationContext { start_ms, ..ctx.clone() };
+        let root = spans::in_progress_root(&root_ctx, &name, &trace_id, &span_id, deadline_ms, now_ms);
+        Some(Batch { resource, spans: vec![root] })
+    }
+
     /// At shutdown: waits for telemetry that may still be in Lambda's buffer (the init outcome, the
     /// last invocation's outcome, reports for exported roots). Only when telemetry arrives at all.
     pub fn wait_for_telemetry(&self, last_request: Option<&str>, timeout: Duration) {
@@ -222,7 +282,8 @@ impl SpanStore {
             let request_id = ctx.and_then(|c| c.request_id.clone());
             let start_ms = init.start_ms.unwrap_or(f.time_ms - f.duration_ms.unwrap_or(0.0) as i64);
             let root_ctx = InvocationContext { request_id: request_id.clone(), function_arn: ctx.and_then(|c| c.function_arn.clone()), start_ms, cold_start: true };
-            let mut root = spans::synthetic_root(&root_ctx, &name);
+            let ids = request_id.as_deref().and_then(|id| inner.in_progress_ids(id));
+            let mut root = spans::synthetic_root(&root_ctx, &name, ids);
             let (error_type, message) = describe(f, "init");
             spans::apply_failure(&mut root, &error_type, &message, "init", &f.status, f.time_ms, &f.logs, &redact);
             if let Some(d) = f.duration_ms {
@@ -251,6 +312,7 @@ impl SpanStore {
             let (error_type, message) = describe(&f, "invoke");
             let ctx_for = ctx.filter(|c| c.request_id.as_deref() == Some(request_id.as_str()));
             let start_ms = start.or(ctx_for.map(|c| c.start_ms)).unwrap_or(f.time_ms - f.duration_ms.unwrap_or(0.0) as i64);
+            let ids = inner.in_progress_ids(&request_id);
             let entry = inner.entry(&request_id);
             if entry.resource.as_array().is_none_or(|a| a.is_empty()) {
                 entry.resource = resource.clone();
@@ -267,7 +329,7 @@ impl SpanStore {
                         start_ms,
                         cold_start: ctx_for.is_some_and(|c| c.cold_start),
                     };
-                    let mut root = spans::synthetic_root(&root_ctx, &name);
+                    let mut root = spans::synthetic_root(&root_ctx, &name, ids);
                     spans::apply_failure(&mut root, &error_type, &message, "invoke", &f.status, f.time_ms, &f.logs, &redact);
                     entry.push(root);
                 }
@@ -284,6 +346,25 @@ impl SpanStore {
                 if let Some(d) = restore_ms {
                     spans::set_attr(root, "ivy.restore_duration_ms", Attr::Double(d));
                 }
+            }
+        }
+        // Reported as in progress, but the tracer's spans never came: a closing root replaces the provisional one,
+        // so the invocation does not show as running until its deadline.
+        if let Some(c) = ctx {
+            let id = c.request_id.as_deref().unwrap_or_default();
+            let ids = inner.in_progress_ids(id);
+            let has_root = inner.entries.get(id).is_some_and(|e| e.spans.iter().any(spans::is_root));
+            if let (Some(ids), false) = (ids, has_root) {
+                let start_ms = inner.platform.start_of(id).unwrap_or(c.start_ms);
+                let mut root = spans::synthetic_root(&InvocationContext { start_ms, ..c.clone() }, &name, Some(ids));
+                if let Some(obj) = root.as_object_mut() {
+                    obj.insert("endTimeUnixNano".into(), spans::nanos(spans::epoch_ms().max(start_ms)));
+                }
+                let entry = inner.entry(id);
+                if entry.resource.as_array().is_none_or(|a| a.is_empty()) {
+                    entry.resource = resource.clone();
+                }
+                entry.push(root);
             }
         }
         if let Some(id) = ctx.and_then(|c| c.request_id.as_deref()) {
@@ -677,6 +758,87 @@ mod tests {
         t.join().unwrap();
         let out = s.finish(None, &opts());
         assert_eq!(a(&out[0].spans[0], "ivy.update").unwrap()["boolValue"], true);
+    }
+
+    fn long_ctx() -> InvocationContext {
+        InvocationContext { start_ms: 1_717_236_000_999, ..ctx("req-long", false) }
+    }
+
+    #[test]
+    fn in_progress_span_has_the_derived_ids_and_the_tracers_spans_get_its_trace_id() {
+        let s = SpanStore::default();
+        let batch = s.in_progress(&long_ctx(), 1_717_236_900_000, 1_717_236_006_000, &opts()).unwrap();
+        let p = &batch.spans[0];
+        let (trace, span) = spans::derived_ids("req-long", 1_717_236_000_999);
+        assert_eq!((p["traceId"].as_str().unwrap(), p["spanId"].as_str().unwrap()), (trace.as_str(), span.as_str()));
+        assert_eq!(p["endTimeUnixNano"], "1717236006000000000");
+        assert_eq!(a(p, "ivy.last_seen_ms").unwrap()["intValue"], "1717236006000");
+        assert_eq!(p["name"], "checkout");
+
+        // The tracer started a moment later, in the next second: same suffix and span ID, other prefix.
+        let tracer_trace = format!("{:08x}{}", 1_717_236_001u32, &trace[8..]);
+        let mut final_root = root(&span);
+        final_root["traceId"] = json!(tracer_trace);
+        let mut c = child("c1");
+        c["traceId"] = json!(tracer_trace);
+        c["parentSpanId"] = json!(span);
+        s.add("req-long", true, json!([]), vec![final_root]);
+        let late_chunk = c.clone();
+        let out = s.finish(Some(&long_ctx()), &opts());
+        s.add("req-long", true, json!([]), vec![late_chunk]);
+        let late = s.drain();
+        assert_eq!(roots(&out).len(), 1);
+        assert_eq!(roots(&out)[0]["traceId"], trace.as_str());
+        assert!(a(&roots(&out)[0], "ivy.in_progress").is_none());
+        assert_eq!(late[0].spans[0]["traceId"], trace.as_str(), "a chunk arriving after the export gets it too");
+    }
+
+    #[test]
+    fn a_retry_with_the_same_request_id_keeps_its_own_trace_id() {
+        let s = SpanStore::default();
+        s.in_progress(&long_ctx(), 1_717_236_900_000, 1_717_236_006_000, &opts()).unwrap();
+        s.add("req-long", true, json!([]), vec![root("x")]);
+        s.finish(Some(&long_ctx()), &opts());
+        s.start_invocation("req-long");
+        let mut retry = root("x");
+        retry["traceId"] = json!("665af0b0bbbbbbbbbbbbbbbbbbbbbbbb");
+        s.add("req-long", true, json!([]), vec![retry]);
+        assert_eq!(s.drain()[0].spans[0]["traceId"], "665af0b0bbbbbbbbbbbbbbbbbbbbbbbb");
+    }
+
+    #[test]
+    fn no_in_progress_span_once_the_invocation_is_over() {
+        let s = SpanStore::default();
+        s.add("req-long", true, json!([]), vec![root("x")]);
+        assert!(s.in_progress(&long_ctx(), 1_717_236_900_000, 1_717_236_006_000, &opts()).is_none());
+        let s = SpanStore::default();
+        s.add_telemetry(vec![ev("platform.runtimeDone", T0, json!({ "requestId": "req-long", "status": "success" }))]);
+        assert!(s.in_progress(&long_ctx(), 1_717_236_900_000, 1_717_236_006_000, &opts()).is_none());
+    }
+
+    #[test]
+    fn a_crash_after_the_in_progress_span_keeps_its_ids() {
+        let s = SpanStore::default();
+        let p = s.in_progress(&long_ctx(), 1_717_236_900_000, 1_717_236_006_000, &opts()).unwrap().spans.remove(0);
+        s.add_telemetry(vec![ev("platform.runtimeDone", "2024-06-01T10:01:00.000Z", json!({ "requestId": "req-long", "status": "failure", "errorType": "Runtime.ExitError" }))]);
+        let r = roots(&s.finish(Some(&long_ctx()), &opts()));
+        assert_eq!(r.len(), 1);
+        assert_eq!((&r[0]["traceId"], &r[0]["spanId"]), (&p["traceId"], &p["spanId"]));
+        assert_eq!(a(&r[0], "error.type").unwrap()["stringValue"], "Runtime.ExitError");
+        assert!(a(&r[0], "ivy.in_progress").is_none());
+    }
+
+    #[test]
+    fn an_in_progress_invocation_whose_tracer_sent_nothing_is_closed() {
+        let s = SpanStore::default();
+        let p = s.in_progress(&long_ctx(), 1_717_236_900_000, 1_717_236_006_000, &opts()).unwrap().spans.remove(0);
+        s.add_telemetry(vec![ev("platform.runtimeDone", T0, json!({ "requestId": "req-long", "status": "success" }))]);
+        let r = roots(&s.finish(Some(&long_ctx()), &opts()));
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0]["spanId"], p["spanId"]);
+        assert_eq!(r[0]["status"]["code"], 0);
+        assert_eq!(a(&r[0], "ivy.synthetic").unwrap()["boolValue"], true);
+        assert!(s.finish(Some(&ctx("req-next", false)), &opts()).is_empty(), "only for the invocation that was reported");
     }
 
     /// Cost of the telemetry path for a healthy warm invocation (`cargo test --release -- --ignored --nocapture`).

@@ -24,7 +24,42 @@ async function mcp(): Promise<Client> {
   return (client = c);
 }
 
-const FIXTURES: Record<string, typeof checkoutFailed> = { support: supportBot, "support-genai": supportBotGenAi, import: importWorker };
+/** An import still running (or, with `stalled`, past its deadline): the root the extension exports while it runs, no children yet. */
+function inProgress(stalled: boolean): typeof checkoutFailed {
+  const root = importWorker.spans.find((s) => !s.parent_span_id) ?? importWorker.spans[0];
+  const start = Date.now() - (stalled ? 50 * 60_000 : 134_000);
+  const lastSeen = stalled ? start + 14 * 60_000 : Date.now();
+  return {
+    ...importWorker,
+    spans: [
+      {
+        ...root,
+        kind: "INTERNAL",
+        start: new Date(start).toISOString(),
+        end: new Date(lastSeen).toISOString(),
+        duration_ms: lastSeen - start,
+        status_code: "UNSET",
+        status_message: "",
+        events: [],
+        attributes: {
+          "ivy.invocation": "true",
+          "ivy.in_progress": "true",
+          "faas.invocation_id": root.attributes["faas.invocation_id"] ?? "",
+          "ivy.deadline_ms": String(start + 15 * 60_000),
+          "ivy.last_seen_ms": String(lastSeen),
+        },
+      },
+    ],
+  };
+}
+
+const FIXTURES: Record<string, typeof checkoutFailed> = {
+  support: supportBot,
+  "support-genai": supportBotGenAi,
+  import: importWorker,
+  "in-progress": inProgress(false),
+  "no-completion": inProgress(true),
+};
 
 function fixtureResult(tool: string, fixture: string): CallToolResult {
   const trace = FIXTURES[fixture] ?? (tool === "render_graph" ? queueFailed : checkoutFailed);

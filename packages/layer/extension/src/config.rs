@@ -18,6 +18,8 @@ pub struct Config {
     pub telemetry_port: u16,
     pub report_updates: bool,
     pub redact_keys: Vec<String>,
+    /// Report an invocation as in progress once it has run this long; 0 turns it off.
+    pub inprogress_after_ms: u64,
 }
 
 pub const DEFAULT_REDACT_KEYS: &str =
@@ -83,6 +85,7 @@ impl Config {
             telemetry_port: u16::try_from(int(env.get("IVY_TELEMETRY_PORT"), 9791)).unwrap_or(9791),
             report_updates: bool(env.get("IVY_REPORT_METRICS"), true),
             redact_keys: redact_keys(env.get("IVY_REDACT_KEYS")),
+            inprogress_after_ms: int(env.get("IVY_INPROGRESS_AFTER_MS"), 5000),
         }
     }
 }
@@ -106,6 +109,8 @@ mod tests {
         assert_eq!((c.flush_budget_ms, c.flush_budget_per_chunk_ms, c.flush_budget_max_ms), (2000, 500, 5000));
         assert!(c.telemetry && c.report_updates);
         assert_eq!(c.telemetry_port, 9791);
+        assert_eq!(c.inprogress_after_ms, 5000);
+        assert_eq!(Config::from_map(&env(&[("IVY_INPROGRESS_AFTER_MS", "0")])).inprogress_after_ms, 0);
         assert!(c.redact_keys.contains(&"apikey".to_string()) && c.redact_keys.contains(&"secretaccesskey".to_string()));
         let c = Config::from_map(&env(&[("IVY_PLATFORM_TELEMETRY", "false"), ("IVY_REDACT_KEYS", "X-Session_Id, pin")]));
         assert!(!c.telemetry);

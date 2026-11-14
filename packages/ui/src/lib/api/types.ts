@@ -140,7 +140,8 @@ export interface Invocation extends ProjectRef {
   ts: string;
   function: string;
   region: string;
-  status: "ok" | "error";
+  /** `in_progress`: still running, or past `deadline` with no completion recorded (`inProgressState`). */
+  status: "ok" | "error" | "in_progress";
   duration_ms: number;
   cold_start: boolean;
   request_id: string;
@@ -156,6 +157,9 @@ export interface Invocation extends ProjectRef {
   failure_kind: FailureKind | null;
   synthetic: boolean;
   init_duration_ms: number | null;
+  /** In-progress rows: the invocation's deadline and when the extension last reported it running. */
+  deadline?: string | null;
+  last_seen?: string | null;
 }
 
 export interface ErrorGroup extends ProjectRef {

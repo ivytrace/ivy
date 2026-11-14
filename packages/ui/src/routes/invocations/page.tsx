@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Search, X } from "lucide-react";
 
 import { DataTable } from "@/components/tables/data-table";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
+import { Elapsed, InProgressStatus, rowProgress } from "@/components/common/in-progress";
+import { LiveBanner, LiveToggle } from "@/components/common/live";
 import { ColdStart, InvocationStatus } from "@/components/common/status";
 import { TimeseriesChart } from "@/components/stats/timeseries-chart";
 import { Button } from "@/components/ui/button";
@@ -12,6 +14,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { useTimeRange } from "@/components/layout/time-range";
+import { rowKey } from "@/lib/live/live";
+import { useLiveInvocations } from "@/lib/live/use-live";
 import { useFunctions, useInvocations, useTimeseries } from "@/lib/api/hooks";
 import type { Invocation } from "@/lib/api/types";
 import { ALL_PROJECTS, errorsLink, invocationsLink, pageLink, rowScope, traceLink, type Scope } from "@/lib/links/links";
@@ -68,15 +72,18 @@ function columnsFor(scope: Scope): ColumnDef<Invocation, unknown>[] {
   {
     accessorKey: "status",
     header: "Result",
-    cell: ({ row }) => (
-      <InvocationStatus
-        ok={row.original.status === "ok"}
-        errorType={row.original.error_type}
-        errorMessage={row.original.error_message}
-        httpStatus={row.original.http_status}
-        failureKind={row.original.failure_kind}
-      />
-    ),
+    cell: ({ row }) =>
+      row.original.status === "in_progress" ? (
+        <InProgressStatus progress={rowProgress(row.original)} />
+      ) : (
+        <InvocationStatus
+          ok={row.original.status === "ok"}
+          errorType={row.original.error_type}
+          errorMessage={row.original.error_message}
+          httpStatus={row.original.http_status}
+          failureKind={row.original.failure_kind}
+        />
+      ),
   },
   {
     accessorKey: "trigger",
@@ -97,7 +104,7 @@ function columnsFor(scope: Scope): ColumnDef<Invocation, unknown>[] {
     header: "Duration",
     cell: ({ row }) => (
       <span className="flex items-center gap-2 whitespace-nowrap tabular-nums">
-        {formatDuration(row.original.duration_ms)}
+        {row.original.status === "in_progress" ? <Elapsed progress={rowProgress(row.original)} /> : formatDuration(row.original.duration_ms)}
         {row.original.cold_start && <ColdStart />}
       </span>
     ),
@@ -117,8 +124,9 @@ function columnsFor(scope: Scope): ColumnDef<Invocation, unknown>[] {
 function useFilterParams() {
   const [params, setParams] = useSearchParams();
   const fn = params.get("function") ?? undefined;
-  const status = (params.get("status") as "ok" | "error" | null) ?? undefined;
+  const status = (params.get("status") as "ok" | "error" | "in_progress" | null) ?? undefined;
   const q = params.get("q") ?? undefined;
+  const live = params.get("live") === "1";
   const update = (patch: Record<string, string | undefined>) => {
     const next = new URLSearchParams(params);
     for (const [k, v] of Object.entries(patch)) {
@@ -127,15 +135,15 @@ function useFilterParams() {
     }
     setParams(next, { replace: true });
   };
-  return { fn, status, q, update };
+  return { fn, status, q, live, update };
 }
 
 export default function Invocations() {
   const scope = useScope();
   const all = scope.project === ALL_PROJECTS;
   const columns = useMemo(() => columnsFor(scope), [scope.workspace, scope.project]);
-  const { range } = useTimeRange();
-  const { fn, status, q, update } = useFilterParams();
+  const { range, setRange } = useTimeRange();
+  const { fn, status, q, live, update } = useFilterParams();
   const [cursors, setCursors] = useState<string[]>([]);
   const [search, setSearch] = useState(q ?? "");
 
@@ -153,6 +161,27 @@ export default function Invocations() {
     cursor,
     limit: PAGE_SIZE,
   });
+  // Live follows "now", so it needs a relative time range.
+  const liveOn = live && "since" in range;
+  const reload = useCallback(() => void mutate(), [mutate]);
+  const liveFilters = useMemo(() => ({ function: fn, status, q }), [fn, status, q]);
+  const liveState = useLiveInvocations({
+    enabled: liveOn,
+    range,
+    filters: liveFilters,
+    base: cursor ? undefined : data?.items,
+    paginated: cursors.length > 0,
+    reload,
+  });
+  const setLive = (on: boolean) => {
+    if (on && !("since" in range)) setRange({ since: "1h" });
+    update({ live: on ? "1" : undefined });
+  };
+  const resumeLive = () => {
+    setCursors([]);
+    liveState.resume();
+  };
+  const items = (!cursor && liveState.rows) || data?.items || [];
   const functions = useFunctions(range);
   const series = useTimeseries(range, { function: fn });
 
@@ -243,8 +272,10 @@ export default function Invocations() {
             <SelectItem value={ALL}>Any status</SelectItem>
             <SelectItem value="ok">Successful</SelectItem>
             <SelectItem value="error">Failed</SelectItem>
+            <SelectItem value="in_progress">Running</SelectItem>
           </SelectContent>
         </Select>
+        <LiveToggle on={liveOn} paused={liveState.paused} failing={liveState.failing} onChange={setLive} />
         {(fn || status || q) && (
           <Button variant="ghost" size="sm" onClick={() => update({ function: undefined, status: undefined, q: undefined })}>
             <X className="mr-1 size-4" />
@@ -252,6 +283,8 @@ export default function Invocations() {
           </Button>
         )}
       </div>
+
+      {liveOn && <LiveBanner paused={liveState.paused} pending={liveState.pending} more={liveState.more} onResume={resumeLive} />}
 
       {error ? (
         <ErrorState error={error} onRetry={() => void mutate()} className="rounded-md border" />
@@ -261,9 +294,10 @@ export default function Invocations() {
         <div className={isValidating ? "opacity-70 transition-opacity" : undefined}>
           <DataTable
             columns={columns}
-            data={data.items}
+            data={items}
             manualSorting
             getRowId={(i) => i.span_id + i.trace_id}
+            rowClassName={(i) => (liveState.fresh.has(rowKey(i)) ? "live-fresh" : undefined)}
             empty={<EmptyState title="No invocations" description="Nothing matches these filters in this time range." />}
           />
         </div>
@@ -272,7 +306,7 @@ export default function Invocations() {
       <div className="flex items-center justify-between py-4">
         <div className="text-xs text-muted-foreground">
           Page {cursors.length + 1}
-          {data ? ` (${data.items.length} items)` : ""}
+          {data ? ` (${items.length} items)` : ""}
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setCursors((c) => c.slice(0, -1))} disabled={!cursors.length}>

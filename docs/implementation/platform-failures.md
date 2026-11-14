@@ -91,7 +91,9 @@ it get one?
 - If there is no root at all (crash before the tracer's first batch, which is the normal case since the tracer only
   sends at the end), a synthetic root is created with the same attributes and the request ID.
 
-The span keeps one span ID per invocation in every case, so there is never a duplicate invocation.
+The span keeps one span ID per invocation in every case, so there is never a duplicate invocation. When the invocation was
+already reported as in progress (`layer.md`, "Long-running invocations"), a synthetic root takes the in-progress
+record's IDs, so it replaces that record.
 
 **Status message.** The error group fingerprint is `function + error.type + normalized message`
 (`storage.md`), so the message is chosen to be the most telling single line: the `errorMessage` of a JSON error the

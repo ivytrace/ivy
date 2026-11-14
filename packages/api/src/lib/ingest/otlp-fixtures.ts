@@ -37,6 +37,12 @@ export function protobufInvocations(invocations: number, others = 0): Buffer {
   return ld(1, resource, ld(2, ld(1, ld(1, Buffer.from('s'))), ...spans));
 }
 
+/** An invocation reported as in progress (`ivy.in_progress`) and its final span: one invocation. */
+export function protobufInProgressAndFinal(): Buffer {
+  const spans = [span('inv', attr('ivy.invocation', true), attr('ivy.in_progress', true)), span('inv', attr('ivy.invocation', true))];
+  return ld(1, resource, ld(2, ld(1, ld(1, Buffer.from('s'))), ...spans));
+}
+
 export function jsonInvocations(invocations: number, others = 0) {
   const spans = [
     ...Array.from({ length: invocations }, () => ({ name: 'inv', attributes: [{ key: 'ivy.invocation', value: { boolValue: true } }] })),

@@ -19,6 +19,7 @@ export function DataTable<TData>({
   manualSorting = false,
   empty,
   getRowId,
+  rowClassName,
 }: {
   columns: ColumnDef<TData, unknown>[];
   data: TData[];
@@ -26,6 +27,7 @@ export function DataTable<TData>({
   manualSorting?: boolean;
   empty?: ReactNode;
   getRowId?: (row: TData) => string;
+  rowClassName?: (row: TData) => string | undefined;
 }) {
   const [sorting, setSorting] = useState<SortingState>(defaultSorting);
   const table = useReactTable({
@@ -77,7 +79,7 @@ export function DataTable<TData>({
         <TableBody>
           {table.getRowModel().rows.length ? (
             table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id}>
+              <TableRow key={row.id} className={rowClassName?.(row.original)}>
                 {row.getVisibleCells().map((cell) => (
                   <TableCell key={cell.id} className={cn("py-2.5", cell.column.columnDef.meta?.className)}>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}

@@ -109,7 +109,7 @@ export function useTimeseries(range: TimeRange, params: { function?: string; buc
 
 export interface InvocationFilters {
   function?: string;
-  status?: "ok" | "error";
+  status?: "ok" | "error" | "in_progress";
   q?: string;
   cursor?: string;
   limit?: number;
