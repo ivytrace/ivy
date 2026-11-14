@@ -56,6 +56,8 @@ services:
     build:
       context: ..
       dockerfile: packages/api/Dockerfile
+      args:
+        BUILD_UI: ${IVY_BUILD_UI:-auto}
     environment:
       <<: *clickhouse-env
       IVY_CLICKHOUSE_URL: http://clickhouse:8123
