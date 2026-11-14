@@ -94,7 +94,10 @@ stream ends the span gets its end time, `gen_ai.response.time_to_first_chunk`, t
 assembled response in the family's non-streaming shape as `ivy.payload.response`. Assembled text is capped at
 256 KB per block. SDK copies the layer cannot patch (bundled) are seen as HTTP requests to
 `bedrock-runtime.<region>.amazonaws.com/model/{id}/{invoke|converse|…}`: the HTTP span is named and tagged from
-the URL at start and gets usage from the body and headers when finalized.
+the URL at start and gets usage from the body and headers when finalized. About 7 KB of the minified
+`handler.mjs`; nothing runs unless a Bedrock Runtime command is sent. Tests (`bedrock.test.ts`) drive the
+real `@aws-sdk/client-bedrock-runtime` with a fake request handler, event streams encoded with smithy's
+`EventStreamCodec`.
 
 **Rendering** (`packages/spans/src/bedrock.ts`, called first by `describeLlm`). Works from the payloads, so
 spans stored by older layers (HTTP-level ones too, whose `rpc.service` is `Bedrock` and title used to be the

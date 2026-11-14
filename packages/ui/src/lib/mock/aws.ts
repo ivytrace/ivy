@@ -70,6 +70,7 @@ const PROD: Seed[] = [
   ["auth-legacySaml", "eu-central-1", "nodejs16.x", "billing-api-prod", { fixed: { state: "unsupported", reason: "Runtime nodejs16.x is not supported" } }],
   ["reports-nightlyExport", "us-east-1", "nodejs22.x", "billing-api-staging"],
   ["support-answerTicket", "eu-west-1", "nodejs22.x", "support-api-prod"],
+  ["support-triageTicket", "eu-west-1", "nodejs22.x", "support-api-prod"],
   ["staging-api-handler", "us-east-1", "nodejs22.x", "billing-api-staging", { tags: { team: "api" } }],
   ["reports-pdfRender", "us-east-1", "python3.12", "billing-api-staging", { fixed: { state: "unsupported", reason: "Runtime python3.12 is not supported" } }],
   ["search-indexer", "us-east-1", "nodejs22.x", null, { fixed: { state: "conflict", reason: "AWS_LAMBDA_EXEC_WRAPPER is already set to /opt/datadog_wrapper" } }],

@@ -1,9 +1,21 @@
 import type { FailureKind } from "@ivy/spans";
 import type { Invocation, Span, SpanEvent } from "../api/types.ts";
-import { RATE_LIMIT, SUPPORT_TIMELINE_MS, supportEvent, supportResponse, supportSpans, type AiSpanSpec } from "./ai.ts";
+import {
+  RATE_LIMIT,
+  SUPPORT_TIMELINE_MS,
+  supportEvent,
+  supportResponse,
+  supportSpans,
+  TRIAGE_TIMELINE_MS,
+  triageEvent,
+  triageSpans,
+  type AiSpanSpec,
+} from "./ai.ts";
 import { IMPORT_FUNCTION, IMPORT_TIMELINE_MS, IMPORT_TRACE_ID, importLogs, importRootAttributes, importSpans } from "./import.ts";
 
 const SUPPORT_FUNCTION = "support-answerTicket";
+/** Calls Amazon Bedrock directly with the AWS SDK. */
+const TRIAGE_FUNCTION = "support-triageTicket";
 
 function rng(seed: number) {
   let s = seed >>> 0 || 1;
@@ -82,6 +94,14 @@ export const FUNCTIONS: FunctionDef[] = [
     weight: 2,
     errorRate: 0.06,
   },
+  {
+    name: TRIAGE_FUNCTION,
+    region: "eu-west-1",
+    trigger: "aws:sqs",
+    kind: "CONSUMER",
+    weight: 1,
+    errorRate: 0,
+  },
   // Not picked at random: importInvocations() runs it every three hours.
   {
     name: IMPORT_FUNCTION,
@@ -126,7 +146,13 @@ function buildInvocations(): MockInvocation[] {
       ? (initMs ?? 200)
       : error?.kind === "timed_out"
         ? 30_000
-        : Math.round((fn.name === SUPPORT_FUNCTION ? supportTimeline(isError) * (0.85 + base / 1000) : base) * 10) / 10;
+        : Math.round(
+            (fn.name === SUPPORT_FUNCTION
+              ? supportTimeline(isError) * (0.85 + base / 1000)
+              : fn.name === TRIAGE_FUNCTION
+                ? TRIAGE_TIMELINE_MS * (0.85 + base / 1000)
+                : base) * 10,
+          ) / 10;
     const traceId = Math.floor(t / 1000).toString(16).padStart(8, "0") + hex(r, 24);
     // At init Lambda may have no request yet; a retried invoke gives the extension one.
     const requestId = initBroken && r() < 0.3 ? "" : `${hex(r, 8)}-${hex(r, 4)}-4${hex(r, 3)}-a${hex(r, 3)}-${hex(r, 12)}`;
@@ -656,6 +682,7 @@ function logsFor(inv: MockInvocation, startMs: number): SpanEvent[] {
     if (inv.status === "error") logs.push(log(160, "warn", "Stripe returned 402 card_declined"));
   }
   if (inv.function === SUPPORT_FUNCTION) logs.push(log(4, "info", "Answering ticket for cus_ada"));
+  if (inv.function === TRIAGE_FUNCTION) logs.push(log(4, "info", "Triaging ticket tkt_4410"));
   if (inv.status === "error") logs.push(log(inv.duration_ms - 2, "error", `${inv.error_type}: ${inv.error_message}`));
   else logs.push(log(inv.duration_ms - 1, "info", "Done"));
   return logs;
@@ -674,6 +701,7 @@ const STACKS: Record<string, string> = {
 
 function triggerEvent(inv: MockInvocation): unknown {
   if (inv.function === SUPPORT_FUNCTION) return supportEvent();
+  if (inv.function === TRIAGE_FUNCTION) return triageEvent();
   switch (inv.trigger) {
     case "aws:apigatewayv2":
       return {
@@ -882,6 +910,7 @@ export function buildTrace(inv: MockInvocation): Span[] {
     const ttft = Math.round((240 + r() * 260) * 10) / 10;
     return addScaled(supportSpans(failed, ttft), inv.duration_ms / supportTimeline(failed));
   }
+  if (fn.name === TRIAGE_FUNCTION) return addScaled(triageSpans(), inv.duration_ms / TRIAGE_TIMELINE_MS);
   const scale = inv.duration_ms / 300;
   // A crash or timeout leaves only the calls made before it (the tracer's provisional snapshot).
   const children = childrenFor(inv, r).filter((spec) => !kind || spec.offset < 100);
