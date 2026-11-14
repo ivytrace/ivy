@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { authenticate } from './lib/auth/middleware.js';
 import { serveUi } from './lib/static/serve-ui.js';
+import { singleTenantResolver, tenantContext, type TenantResolver } from './lib/tenancy/context.js';
 import { deleteAwsAccount } from './routes/aws/accounts/delete.js';
 import { getAwsAccount, getAwsAccounts } from './routes/aws/accounts/get.js';
 import { patchAwsAccount } from './routes/aws/accounts/patch.js';
@@ -21,12 +22,16 @@ import { getInvocations } from './routes/invocations/get.js';
 import { getTimeseries } from './routes/stats/timeseries.js';
 import { getTrace } from './routes/traces/get.js';
 
-export function createApp(options: { uiDir: string }) {
+export function createApp(options: { uiDir: string; tenants?: TenantResolver }) {
   const app = new Hono();
 
   app.use('/api/*', authenticate());
+  // Routes without a tenant: registered before the tenant middleware so it never runs for them.
   app.get('/api/health', getHealth);
   app.get('/api/config', getConfig);
+  app.post('/api/aws/events', postAwsEvent);
+
+  app.use('/api/*', tenantContext(options.tenants ?? singleTenantResolver()));
   app.get('/api/functions', getFunctions);
   app.get('/api/invocations', getInvocations);
   app.get('/api/traces/:traceId', getTrace);
@@ -34,7 +39,6 @@ export function createApp(options: { uiDir: string }) {
   app.get('/api/stats/timeseries', getTimeseries);
   app.get('/api/aws/setup', getAwsSetup);
   app.get('/api/aws/template.yaml', getAwsTemplate);
-  app.post('/api/aws/events', postAwsEvent);
   app.get('/api/aws/accounts', getAwsAccounts);
   app.post('/api/aws/accounts', postAwsAccount);
   app.get('/api/aws/accounts/:id', getAwsAccount);

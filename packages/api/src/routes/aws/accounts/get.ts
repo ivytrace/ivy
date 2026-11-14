@@ -3,10 +3,10 @@ import { principalArn } from '../../../lib/aws/clients.js';
 import { presentAccount } from '../../../lib/aws/present.js';
 import { loadAccount } from '../../../lib/aws/requests.js';
 import { awsStore } from '../../../lib/aws/store.js';
-import { tenantOf } from '../../../lib/clickhouse/tenant.js';
+import { tenantOf } from '../../../lib/tenancy/context.js';
 
 export async function getAwsAccounts(c: Context) {
-  const tenant = tenantOf(c);
+  const tenant = tenantOf(c).id;
   const [accounts, counts, principal] = await Promise.all([
     awsStore().listAccounts(tenant),
     awsStore().functionCounts(tenant),

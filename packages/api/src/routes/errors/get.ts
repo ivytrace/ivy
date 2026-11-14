@@ -1,6 +1,5 @@
 import type { Context } from 'hono';
-import { query } from '../../lib/clickhouse/client.js';
-import { tenantOf } from '../../lib/clickhouse/tenant.js';
+import { dataQuery } from '../../lib/tenancy/context.js';
 import { isoFromMs } from '../../lib/utils/format.js';
 import { parseTimeRange } from '../../lib/utils/time-range.js';
 
@@ -18,7 +17,8 @@ interface ErrorGroupRow {
 export async function getErrors(c: Context) {
   const params = c.req.query();
   const range = parseTimeRange(params);
-  const rows = await query<ErrorGroupRow>(
+  const rows = await dataQuery<ErrorGroupRow>(
+    c,
     `SELECT error_fingerprint AS fingerprint, function,
        argMax(error_type, ts) AS error_type,
        argMax(error_message, ts) AS error_message,
@@ -34,7 +34,7 @@ export async function getErrors(c: Context) {
      GROUP BY fingerprint, function
      ORDER BY count DESC, last_seen_ms DESC
      LIMIT 500`,
-    { tenant: tenantOf(c), from: range.from, to: range.to, function: params.function ?? '' },
+    { from: range.from, to: range.to, function: params.function ?? '' },
   );
 
   return c.json({

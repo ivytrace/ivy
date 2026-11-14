@@ -1,6 +1,5 @@
 import type { Context } from 'hono';
-import { query } from '../../lib/clickhouse/client.js';
-import { tenantOf } from '../../lib/clickhouse/tenant.js';
+import { dataQuery } from '../../lib/tenancy/context.js';
 import { buildRollupSource } from '../../lib/stats/rollup-query.js';
 import { isoFromMs, round } from '../../lib/utils/format.js';
 import { parseTimeRange } from '../../lib/utils/time-range.js';
@@ -18,8 +17,9 @@ interface FunctionRow {
 
 export async function getFunctions(c: Context) {
   const range = parseTimeRange(c.req.query());
-  const source = buildRollupSource({ tenant: tenantOf(c), range, useRollup: true });
-  const rows = await query<FunctionRow>(
+  const source = buildRollupSource({ range, useRollup: true });
+  const rows = await dataQuery<FunctionRow>(
+    c,
     `SELECT function, region,
        sum(invocations) AS invocations,
        sum(errors) AS errors,

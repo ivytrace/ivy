@@ -1,6 +1,5 @@
 import type { Context } from 'hono';
-import { query } from '../../lib/clickhouse/client.js';
-import { tenantOf } from '../../lib/clickhouse/tenant.js';
+import { dataQuery } from '../../lib/tenancy/context.js';
 import { decodeCursor, encodeCursor } from '../../lib/utils/cursor.js';
 import { emptyToNull, isoFromMs, round, zeroToNull } from '../../lib/utils/format.js';
 import { badRequest } from '../../lib/utils/http-error.js';
@@ -41,7 +40,7 @@ export async function getInvocations(c: Context) {
     'ts >= fromUnixTimestamp64Milli({from:Int64})',
     'ts < fromUnixTimestamp64Milli({to:Int64})',
   ];
-  const queryParams: Record<string, unknown> = { tenant: tenantOf(c), from: range.from, to: range.to, limit: limit + 1 };
+  const queryParams: Record<string, unknown> = { from: range.from, to: range.to, limit: limit + 1 };
 
   if (params.function) {
     where.push('function = {function:String}');
@@ -68,7 +67,8 @@ export async function getInvocations(c: Context) {
     queryParams.cursor_span = cursor.spanId;
   }
 
-  const rows = await query<InvocationRow>(
+  const rows = await dataQuery<InvocationRow>(
+    c,
     `SELECT toUnixTimestamp64Milli(ts) AS ts_ms, trace_id, span_id, function, region, status, duration_ms,
        cold_start, request_id, trigger, http_method, http_path, http_status, error_type, error_message, memory_used_mb
      FROM invocations

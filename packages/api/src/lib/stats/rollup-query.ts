@@ -1,7 +1,6 @@
 import { splitOnHours, type TimeRange } from '../utils/time-range.js';
 
 export interface RollupSourceOptions {
-  tenant: string;
   range: TimeRange;
   /** Bucket width in seconds; adds a `bucket` column when set. */
   bucketSeconds?: number;
@@ -54,7 +53,6 @@ export function buildRollupSource(opts: RollupSourceOptions): { sql: string; par
   return {
     sql,
     params: {
-      tenant: opts.tenant,
       from: opts.range.from,
       to: opts.range.to,
       h1,

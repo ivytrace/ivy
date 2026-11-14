@@ -7,8 +7,9 @@ contrib `clickhouse` exporter (pinned `otel/opentelemetry-collector-contrib:0.16
 its standard `otel_traces` table. Everything Ivy-specific is derived inside ClickHouse with materialized views.
 
 Why:
-- No custom ingest code to maintain. The Collector gives us OTLP gRPC+HTTP, auth, batching,
-  retries and a persistent on-disk queue (`file_storage`) for free, and any OTLP producer works.
+- Little custom ingest code. The Collector gives us OTLP decoding, batching, retries and a persistent on-disk
+  queue (`file_storage`) for free, and any OTLP/HTTP producer works. In front of it, the ingest router
+  (`tenancy.md`) only authenticates keys and forwards bodies unchanged.
 - The exporter's span shape (attribute maps, nested events) holds everything in
   `span-conventions.md`. Attributes arrive as strings (arrays as JSON strings), which matches what the API
   contract already promises.
@@ -20,10 +21,15 @@ Trade-offs:
   Collector, diff its DDL (run it once with `create_schema: true` against a scratch database).
 - The exporter writes `SpanKind` as `Server`/`Client`/… and `StatusCode` as `Ok`/`Error`/`Unset`. The API
   normalizes them to `SERVER`/`ERROR`/….
-- Ingest-side tenant resolution (API key → tenant) is not done yet. `TenantId` defaults from the resource
-  attribute `ivy.tenant_id`, or `'default'` when that attribute is missing.
+- `TenantId` defaults from the resource attribute `ivy.tenant_id`, which the collector sets from the ingest
+  router's `x-ivy-tenant` header after deleting whatever the client sent (`tenancy.md`). The tenant is
+  therefore always the one of the API key, never the payload's.
 
 ## Tables (`deploy/clickhouse/schema.sql`)
+
+Span data lives in the `ivy` database (one per cell/shard, see `tenancy.md`); the control plane (`tenants`,
+`api_keys` and the auto-trace tables, `auto-trace.md`) in `ivy_control`. Every table has the tenant first in
+`ORDER BY`.
 
 | table | engine | ORDER BY | purpose |
 |---|---|---|---|
@@ -35,6 +41,8 @@ Trade-offs:
   `invocations`. A trace lookup is a range scan over about 3 hour buckets, plus a binary search on TraceId.
 - Retention: `TTL … + toIntervalDay(IVY_RETENTION_DAYS)` (default 30) on all three tables,
   `ttl_only_drop_parts = 1` so whole daily partitions are dropped.
+- Row policies `ivy_tenant` on the three tables limit reads to the tenant in the `SQL_ivy_tenant` setting when
+  a query sets it (the API always does). See `tenancy.md` for why they pass everything when it isn't set.
 - Skip indexes: bloom filters on `TraceId`/`trace_id`/`request_id`/`error_fingerprint` and on span
   attribute keys/values; ngram bloom filters on `http_path` and `error_message`.
 - `invocations` fields: `error_type` = `error.type` or the `exception` event's type, and `error_message` =
@@ -56,6 +64,11 @@ Trade-offs:
 ## Schema application
 
 The ClickHouse image runs `deploy/clickhouse/init.sh` on first start (empty volume only). The script fills in the
-retention days in `schema.sql` and applies it. All statements are `IF NOT EXISTS`, so re-running is safe:
-`docker compose exec clickhouse /docker-entrypoint-initdb.d/init.sh`. Changing retention on an
-existing volume needs `ALTER TABLE … MODIFY TTL`. A real migration runner is still to do.
+retention days in `schema.sql` and applies it. Every statement is idempotent (`IF NOT EXISTS`, `OR REPLACE`, an
+`ALTER … MODIFY COLUMN` to the current definition), so re-running is safe and brings an existing volume up to date:
+`docker compose exec clickhouse /docker-entrypoint-initdb.d/init.sh`. `pnpm dev` runs it on every start.
+Changing retention on an existing volume needs `ALTER TABLE … MODIFY TTL`. A real migration runner is still to do.
+
+Pre-release schema changes are applied this way, without migrations. The move of the auto-trace tables from `ivy`
+to `ivy_control` is the one step that isn't a plain `CREATE … IF NOT EXISTS`: `init.sh` renames
+`ivy.aws_*` to `ivy_control.aws_*` when the old table exists and the new one doesn't.

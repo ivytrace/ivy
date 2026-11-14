@@ -1,5 +1,5 @@
 /** Hits every endpoint of a running API and checks response shapes against docs/implementation/api.md. */
-const base = (process.argv[2] ?? process.env.IVY_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+const base = (process.argv.slice(2).find((a) => a !== '--') ?? process.env.IVY_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
 type Shape = Record<string, string>;
 let failures = 0;

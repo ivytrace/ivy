@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { autoTraceKey } from '../tenancy/tenants.js';
 
 export const LAYER_NAME = 'ivy-trace-nodejs';
 export const EXEC_WRAPPER = '/opt/ivy-wrapper';
@@ -13,11 +14,12 @@ export interface IngestConfig {
 
 const env = (name: string) => process.env[name]?.trim() || undefined;
 
-/** Ingest settings written into each traced function. Single-tenant for now; M6 maps tenants to their own keys. */
-export function ingestConfig(_tenant: string): IngestConfig | null {
+/** Ingest settings written into each traced function of a tenant (see autoTraceKey). */
+export async function ingestConfig(tenant: string): Promise<IngestConfig | null> {
   const endpoint = env('IVY_INGEST_PUBLIC_URL');
-  const apiKey = env('IVY_INGEST_API_KEY');
-  if (!endpoint || !apiKey) return null;
+  if (!endpoint) return null;
+  const apiKey = await autoTraceKey(tenant);
+  if (!apiKey) return null;
   return { endpoint: endpoint.replace(/\/$/, ''), apiKey };
 }
 

@@ -1,6 +1,5 @@
 import type { Context } from 'hono';
-import { query } from '../../lib/clickhouse/client.js';
-import { tenantOf } from '../../lib/clickhouse/tenant.js';
+import { dataQuery } from '../../lib/tenancy/context.js';
 import { normalizeKind, normalizeStatus } from '../../lib/traces/otel.js';
 import { isTraceId, traceIdTimestamp } from '../../lib/traces/trace-id.js';
 import { isoFromMs, round } from '../../lib/utils/format.js';
@@ -24,12 +23,13 @@ interface SpanRow {
 
 const WINDOW_S = 3600;
 
-function fetchSpans(tenant: string, traceId: string, around?: number) {
+function fetchSpans(c: Context, traceId: string, around?: number) {
   const timeFilter =
     around === undefined
       ? ''
       : 'AND Timestamp >= toDateTime({lo:UInt32}) AND Timestamp <= toDateTime({hi:UInt32})';
-  return query<SpanRow>(
+  return dataQuery<SpanRow>(
+    c,
     `SELECT SpanId AS span_id, ParentSpanId AS parent_span_id, SpanName AS name, SpanKind AS kind,
        ServiceName AS service, toUnixTimestamp64Milli(Timestamp) AS start_ms, Duration AS duration_ns,
        StatusCode AS status_code, StatusMessage AS status_message,
@@ -39,7 +39,7 @@ function fetchSpans(tenant: string, traceId: string, around?: number) {
      FROM otel_traces
      WHERE TenantId = {tenant:String} AND TraceId = {trace_id:String} ${timeFilter}
      ORDER BY Timestamp, SpanId`,
-    { tenant, trace_id: traceId, lo: (around ?? 0) - WINDOW_S, hi: (around ?? 0) + WINDOW_S },
+    { trace_id: traceId, lo: (around ?? 0) - WINDOW_S, hi: (around ?? 0) + WINDOW_S },
   );
 }
 
@@ -47,10 +47,9 @@ export async function getTrace(c: Context) {
   const traceId = (c.req.param('traceId') ?? '').toLowerCase();
   if (!isTraceId(traceId)) return c.json({ error: 'Trace not found' }, 404);
 
-  const tenant = tenantOf(c);
   const around = traceIdTimestamp(traceId);
-  let rows = around === undefined ? [] : await fetchSpans(tenant, traceId, around);
-  if (rows.length === 0) rows = await fetchSpans(tenant, traceId);
+  let rows = around === undefined ? [] : await fetchSpans(c, traceId, around);
+  if (rows.length === 0) rows = await fetchSpans(c, traceId);
   if (rows.length === 0) return c.json({ error: 'Trace not found' }, 404);
 
   return c.json({

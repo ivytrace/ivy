@@ -3,6 +3,13 @@ name: ivy
 x-clickhouse-env: &clickhouse-env
   IVY_CLICKHOUSE_USER: ${IVY_CLICKHOUSE_USER:-ivy}
   IVY_CLICKHOUSE_PASSWORD: ${IVY_CLICKHOUSE_PASSWORD:-ivy}
+  IVY_CLICKHOUSE_URL: http://clickhouse:8123
+
+x-api-build: &api-build
+  context: ..
+  dockerfile: packages/api/Dockerfile
+  args:
+    BUILD_UI: ${IVY_BUILD_UI:-auto}
 
 services:
   clickhouse:
@@ -22,7 +29,7 @@ services:
     ulimits:
       nofile: { soft: 262144, hard: 262144 }
     healthcheck:
-      test: ["CMD-SHELL", "clickhouse client --user \"$$CLICKHOUSE_USER\" --password \"$$CLICKHOUSE_PASSWORD\" -q 'EXISTS TABLE ivy.invocations_hourly' | grep -q 1"]
+      test: ["CMD-SHELL", "clickhouse client --user \"$$CLICKHOUSE_USER\" --password \"$$CLICKHOUSE_PASSWORD\" -q 'EXISTS TABLE ivy_control.aws_function_settings' | grep -q 1"]
       interval: 3s
       timeout: 5s
       retries: 40
@@ -34,37 +41,59 @@ services:
     volumes:
       - collector-queue:/var/lib/otelcol/file_storage
 
+  # Internal only: no published ports. Clients send to the ingest router, which forwards here
+  # with IVY_COLLECTOR_TOKEN and the tenant header (docs/implementation/tenancy.md).
   collector:
     image: otel/opentelemetry-collector-contrib:0.165.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     environment:
       <<: *clickhouse-env
-      IVY_INGEST_API_KEY: ${IVY_INGEST_API_KEY:-dev-ingest-key}
+      IVY_COLLECTOR_TOKEN: ${IVY_COLLECTOR_TOKEN:-dev-collector-token}
       IVY_CLICKHOUSE_ENDPOINT: tcp://clickhouse:9000?dial_timeout=10s
     volumes:
       - ./collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
       - collector-queue:/var/lib/otelcol/file_storage
-    ports:
-      - "${IVY_OTLP_GRPC_PORT:-4317}:4317"
-      - "${IVY_OTLP_HTTP_PORT:-4318}:4318"
     depends_on:
       clickhouse: { condition: service_healthy }
       collector-volume-init: { condition: service_completed_successfully }
     restart: unless-stopped
 
-  api:
-    build:
-      context: ..
-      dockerfile: packages/api/Dockerfile
-      args:
-        BUILD_UI: ${IVY_BUILD_UI:-auto}
+  # Public OTLP/HTTP endpoint: API key → tenant → shard collector. Same image as the API.
+  ingest:
+    image: ivy-api:local
+    build: *api-build
+    command: ["node", "ingest.mjs"]
     environment:
       <<: *clickhouse-env
-      IVY_CLICKHOUSE_URL: http://clickhouse:8123
-      IVY_CLICKHOUSE_DATABASE: ivy
-      PORT: 3000
-      # Auto-trace (docs/implementation/auto-trace.md)
+      IVY_COLLECTOR_URL: http://collector:4318
+      IVY_COLLECTOR_TOKEN: ${IVY_COLLECTOR_TOKEN:-dev-collector-token}
       IVY_INGEST_API_KEY: ${IVY_INGEST_API_KEY:-dev-ingest-key}
+      IVY_INGEST_TRUST_PROXY: ${IVY_INGEST_TRUST_PROXY:-}
+      IVY_INGEST_MAX_BODY_BYTES: ${IVY_INGEST_MAX_BODY_BYTES:-}
+      IVY_SHARDS: ${IVY_SHARDS:-}
+    ports:
+      - "${IVY_OTLP_HTTP_PORT:-4318}:4318"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4318/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      clickhouse: { condition: service_healthy }
+      collector: { condition: service_started }
+    restart: unless-stopped
+
+  api:
+    image: ivy-api:local
+    build: *api-build
+    environment:
+      <<: *clickhouse-env
+      IVY_CLICKHOUSE_DATABASE: ivy
+      IVY_SHARDS: ${IVY_SHARDS:-}
+      PORT: 3000
+      # Tenancy and auto-trace (docs/implementation/tenancy.md, auto-trace.md)
+      IVY_INGEST_API_KEY: ${IVY_INGEST_API_KEY:-dev-ingest-key}
+      IVY_SECRET_KEY: ${IVY_SECRET_KEY:-}
       IVY_INGEST_PUBLIC_URL: ${IVY_INGEST_PUBLIC_URL:-}
       IVY_PUBLIC_URL: ${IVY_PUBLIC_URL:-}
       IVY_CFN_TEMPLATE_URL: ${IVY_CFN_TEMPLATE_URL:-}

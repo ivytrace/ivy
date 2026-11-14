@@ -3,12 +3,16 @@
 Served by `packages/api` (Hono) on port `3000`. All JSON. Timestamps in responses are
 ISO 8601 strings with millisecond precision (UTC). Durations are milliseconds (float).
 
+Every `/api/*` route except `/api/health`, `/api/config` and `/api/aws/events` runs for one tenant, resolved by
+middleware from the request (today always `default`; after OIDC, the user's tenant). Data is only ever read for
+that tenant. See `tenancy.md`.
+
 Time range params, accepted by every list endpoint:
 - `since=15m|1h|24h|7d` (default `24h`), or
 - `from` / `to` as ISO strings (override `since`).
 
 ## `GET /api/health`
-`{ "ok": true, "clickhouse": true }`
+`{ "ok": true, "clickhouse": true }` (the control database and every shard answer a ping; 503 otherwise)
 
 ## `GET /api/config`
 `{ "version": "0.1.0", "auth": { "enabled": false } }`
@@ -84,7 +88,7 @@ Server-side configuration the connect flow needs.
   "events_url": "https://ivy.example.com/api/aws/events" | null, "public_url": "…" | null,
   "ingest_endpoint": "https://ingest.example.com" | null, "layer_sha256": "…" | null,
   "default_region": "us-east-1", "regions": ["us-east-1", "…"], "sync_interval_seconds": 300,
-  "issues": ["IVY_INGEST_PUBLIC_URL and IVY_INGEST_API_KEY must be set …"] }
+  "issues": ["Set IVY_INGEST_PUBLIC_URL, plus IVY_SECRET_KEY (or IVY_INGEST_API_KEY for the default tenant), …"] }
 ```
 
 ### `GET /api/aws/template.yaml`
@@ -143,3 +147,16 @@ Body `{ "tracing_enabled": false }`. Stores the setting, then attaches/detaches 
 ### `POST /api/aws/events`
 EventBridge API destination target, authenticated with the `x-ivy-event-secret` header (per connection), not user auth.
 Syncs the event's region. 202, or 401/403.
+
+## Ingest (separate service, port 4318)
+
+Not part of the API process: the ingest router (`tenancy.md`) serves OTLP/HTTP.
+
+### `POST /v1/traces`
+OTLP/HTTP `ExportTraceServiceRequest`, `application/x-protobuf` or `application/json`, optionally
+`content-encoding: gzip`/`deflate`. Authenticated with `Authorization: Bearer <key>` or `x-api-key: <key>`.
+Answers as OTLP/HTTP: the collector's response on success; 400, 401, 413, 415, 429 (`Retry-After`) or 503
+(`Retry-After`) with a `google.rpc.Status` body otherwise. `/v1/logs` and `/v1/metrics` are 404; there is no gRPC.
+
+### `GET /health`
+`{ "ok": true }`

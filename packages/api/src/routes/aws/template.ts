@@ -4,7 +4,7 @@ import { eventsUrl } from '../../lib/aws/config.js';
 import { roleNameOf } from '../../lib/aws/present.js';
 import { awsStore } from '../../lib/aws/store.js';
 import { templateYaml, type TemplateParams } from '../../lib/aws/template.js';
-import { tenantOf } from '../../lib/clickhouse/tenant.js';
+import { tenantOf } from '../../lib/tenancy/context.js';
 
 /**
  * Without `account`: the generic template (only the trusted principal has a default), suitable for
@@ -15,7 +15,7 @@ export async function getAwsTemplate(c: Context) {
   const params: TemplateParams = { principalArn: await principalArn() };
   const id = c.req.query('account');
   if (id) {
-    const account = await awsStore().getAccount(tenantOf(c), id);
+    const account = await awsStore().getAccount(tenantOf(c).id, id);
     if (!account) return c.json({ error: 'Account not found' }, 404);
     Object.assign(params, {
       externalId: account.external_id,
