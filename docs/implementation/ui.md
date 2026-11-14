@@ -18,7 +18,10 @@ Vitest, with tests next to their sources.
 | `pnpm --filter @ivy/ui build` | Static build in `packages/ui/dist`, served by the API |
 | `pnpm --filter @ivy/ui test` / `typecheck` | Vitest / `tsc --noEmit` |
 
-The mock (`src/lib/mock/`) is a Vite middleware plugin, enabled only when `VITE_MOCK=1`. It serves every
+The mock (`src/lib/mock/`) is a Vite middleware plugin, enabled only when `VITE_MOCK=1`. The `/api/aws/*` part
+(`aws.ts`) keeps state while the dev server runs: two connected accounts with functions in every state, and new
+connections verify 8 s after they're created. `VITE_MOCK_EMPTY=1` starts with no accounts and no trace data (the
+"connect an account" empty state); `VITE_MOCK_NO_TEMPLATE=1` shows the template download fallback. It serves every
 endpoint in `api.md` from deterministic generated data: a week of invocations across four functions,
 filters, `since`/`from`/`to`, cursor pagination, error groups, timeseries buckets, and full traces with
 DynamoDB, S3, SQS, SNS, EventBridge, SES, Lambda, Secrets Manager and fetch spans, logs and exceptions.
@@ -52,6 +55,13 @@ src/routes/        functions/, invocations/, traces/, errors/
   stays out of the main bundle.
 - `/errors?function=`: groups from `/api/errors`, linking to the sample trace and to
   `/invocations?function=…&status=error&q=<message>`.
+- `/settings/aws`: AWS accounts (see `auto-trace.md`). A "Connect AWS account" dialog (account ID, stack region,
+  regions → quick-create link opened in a new tab, or template download + upload instructions when the server has no
+  template URL → verify, polled every 10 s), and one card per account with status, regions, last sync, function
+  counts by state, sync errors, and Sync / Regions / Disconnect actions. Pending accounts get "Finish setup".
+- `/settings/aws/:id`: the account's functions with state, reason and a tracing toggle, filterable by state.
+  The Functions page has the same toggle and state in a "Tracing" column (matched by region + name; functions not in a
+  connected account show "Manual"), and its empty state links to the connect dialog when no account is connected.
 - Global: a time range picker (presets map to `since`, custom ranges to `from`/`to`; the preset is stored in
   localStorage), a ⌘K search (functions, jump to a trace ID, search invocations), and the "Authentication
   disabled" banner shown when `GET /api/config` returns `auth.enabled: false`.

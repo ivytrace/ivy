@@ -72,3 +72,74 @@ Query: `function` (optional), `bucket` (`1m`|`5m`|`15m`|`1h`|`1d`, default picke
 ```json
 { "items": [ { "ts": "…", "invocations": 10, "errors": 1, "p95_ms": 300.1 } ] }
 ```
+
+## AWS accounts (auto-trace)
+
+Design and flow: `auto-trace.md`. Request bodies are JSON. Errors are `{ "error": "…" }` with 400/404/409.
+
+### `GET /api/aws/setup`
+Server-side configuration the connect flow needs.
+```json
+{ "principal_arn": "arn:aws:iam::999999999999:role/ivy" | null, "template_url": "https://…/ivy-trace.yaml" | null,
+  "events_url": "https://ivy.example.com/api/aws/events" | null, "public_url": "…" | null,
+  "ingest_endpoint": "https://ingest.example.com" | null, "layer_sha256": "…" | null,
+  "default_region": "us-east-1", "regions": ["us-east-1", "…"], "sync_interval_seconds": 300,
+  "issues": ["IVY_INGEST_PUBLIC_URL and IVY_INGEST_API_KEY must be set …"] }
+```
+
+### `GET /api/aws/template.yaml`
+The CloudFormation template (`text/yaml`). `account=<id>` fills in that connection's parameters as defaults;
+`download=1` adds `content-disposition: attachment`.
+
+### `GET /api/aws/accounts`, `GET /api/aws/accounts/:id`
+```json
+{ "items": [ {
+  "id": "7695fb70-…", "name": "Production", "account_id": "123456789012",
+  "role_arn": "arn:aws:iam::123456789012:role/IvyTrace-7695fb70", "external_id": "ivy-…",
+  "stack_name": "ivy-trace-7695fb70", "stack_region": "eu-west-1",
+  "regions": ["eu-west-1"], "all_regions": false,
+  "status": "pending" | "connected" | "error", "error": "…" | null,
+  "created_at": "…", "verified_at": "…" | null, "last_sync_at": "…" | null, "syncing": false,
+  "counts": { "traced": 12, "opted_out": 1, "unsupported": 3, "conflict": 1, "error": 0, "pending": 0, "total": 17 },
+  "quick_create_url": "https://eu-west-1.console.aws.amazon.com/cloudformation/home?…" | null,
+  "template_download_url": "/api/aws/template.yaml?account=…&download=1"
+} ] }
+```
+`error` on a connected account lists per-region sync errors, one per line.
+
+### `POST /api/aws/accounts`
+Body: `{ "account_id": "123456789012", "name"?: "Production", "regions": ["eu-west-1"], "all_regions"?: false, "stack_region"?: "eu-west-1" }`.
+The stack region is added to `regions`. 201 with the account (status `pending`). 409 if the AWS account is already connected.
+
+### `PATCH /api/aws/accounts/:id`
+Body: any of `name`, `regions`, `all_regions`. Starts a sync for connected accounts. Returns the account.
+
+### `POST /api/aws/accounts/:id/verify`
+Tries `AssumeRole`. `{ "verified": true|false, "account": {…} }`; on success the account becomes `connected` and the first sync starts.
+
+### `POST /api/aws/accounts/:id/sync`
+202 `{ "started": true }`; the sync runs in the background (`?wait=1` waits). 409 while pending.
+
+### `DELETE /api/aws/accounts/:id?detach=true|false`
+Removes the layer from all functions first unless `detach=false` (or the account is pending), then deletes the connection.
+`{ "deleted": true, "detached": true, "detach_errors": ["eu-west-1/fn: …"] }`.
+
+### `GET /api/aws/functions?account=<12-digit id>`
+Tracing state of every function in the connected accounts.
+```json
+{ "items": [ {
+  "account_id": "123456789012", "region": "eu-west-1", "name": "checkout-createOrder",
+  "arn": "arn:aws:lambda:…", "runtime": "nodejs22.x",
+  "state": "traced" | "opted_out" | "unsupported" | "conflict" | "error" | "pending", "reason": "…" | null,
+  "tracing_enabled": true, "updated_at": "…"
+} ] }
+```
+`tracing_enabled` is the dashboard setting; a function opted out by its `ivy:trace=false` tag has `state: "opted_out"` and `tracing_enabled: true`.
+
+### `PUT /api/aws/functions/:accountId/:region/:name`
+Body `{ "tracing_enabled": false }`. Stores the setting, then attaches/detaches right away.
+`{ "applied": true, "error": null, "function": {…} | null }`. If applying fails the setting is kept and the next sync retries.
+
+### `POST /api/aws/events`
+EventBridge API destination target, authenticated with the `x-ivy-event-secret` header (per connection), not user auth.
+Syncs the event's region. 202, or 401/403.

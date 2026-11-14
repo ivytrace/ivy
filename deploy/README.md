@@ -18,6 +18,9 @@ Environment variables (set in your shell or a `deploy/.env` file):
 | `IVY_INGEST_API_KEY` | `dev-ingest-key` | ingest key; only `Authorization: Bearer` is accepted (no `x-api-key`) |
 | `IVY_RETENTION_DAYS` | `30` | applied when the ClickHouse volume is first created |
 | `IVY_CLICKHOUSE_USER` / `IVY_CLICKHOUSE_PASSWORD` | `ivy` / `ivy` | |
+| `IVY_INGEST_PUBLIC_URL` | | collector URL that Lambda functions can reach; needed for auto-trace (`docs/implementation/auto-trace.md`) |
+| `IVY_AWS_PRINCIPAL_ARN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION` | | Ivy's AWS identity for assuming the roles in connected accounts |
+| `IVY_CFN_TEMPLATE_URL`, `IVY_PUBLIC_URL`, `IVY_AWS_DEFAULT_REGION`, `IVY_AWS_SYNC_INTERVAL_SECONDS` | | optional auto-trace settings |
 | `IVY_BUILD_UI` | `auto` | `false` builds an API-only image |
 | `IVY_API_PORT`, `IVY_OTLP_GRPC_PORT`, `IVY_OTLP_HTTP_PORT`, `IVY_CLICKHOUSE_HTTP_PORT` | 3000, 4317, 4318, 8123 | host ports |
 

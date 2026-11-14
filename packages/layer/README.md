@@ -25,6 +25,9 @@ extensions/ivy-extension    Lambda extension that exports spans after the respon
 
 ## Publish
 
+With a connected AWS account (Settings → AWS accounts) Ivy publishes and attaches the layer itself; see
+[`docs/implementation/auto-trace.md`](../../docs/implementation/auto-trace.md). The steps below are for doing it by hand.
+
 ```sh
 aws lambda publish-layer-version \
   --layer-name ivy-trace-nodejs \
