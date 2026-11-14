@@ -1,0 +1,17 @@
+@import "../index.css";
+
+/* Views sit inside the host's conversation: transparent page, the card draws its own dark surface. */
+html,
+body {
+  background: transparent;
+}
+
+body {
+  margin: 0;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}

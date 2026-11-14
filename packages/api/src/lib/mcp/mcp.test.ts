@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type { ClickHouseClient } from '@clickhouse/client';
 import { checkoutFailed, checkoutOk, errorGroups, invocations } from '@ivy/format/fixtures';
 import type { Span, Trace } from '@ivy/spans';
@@ -84,7 +87,7 @@ const textOf = (result: unknown) => ((result as CallToolResult).content[0] as { 
 describe('MCP endpoint in the API', () => {
   it('serves every tool through the API route handlers, scoped to the request tenant', async () => {
     const client = await connect(createApp({ uiDir: '/nonexistent', tenants }));
-    expect((await client.listTools()).tools).toHaveLength(6);
+    expect((await client.listTools()).tools).toHaveLength(8);
 
     const calls = {
       find_failing_invocations: { function: 'checkout-createOrder' },
@@ -159,7 +162,7 @@ describe('MCP endpoint in the API', () => {
     expect(apiToken.headers.get('www-authenticate')).toContain('error="invalid_token"');
 
     const client = await connect(app, { authorization: 'Bearer mcp-token' });
-    expect((await client.listTools()).tools).toHaveLength(6);
+    expect((await client.listTools()).tools).toHaveLength(8);
     expect(verifyAccessToken).toHaveBeenCalledWith('mcp-token', { audience: 'https://ivytrace.dev/mcp' });
   });
 
@@ -170,6 +173,24 @@ describe('MCP endpoint in the API', () => {
     const app = createApp({ uiDir: '/nonexistent', tenants });
     const res = await app.request('/mcp', { method: 'POST', headers: { authorization: 'Bearer provider-down' } });
     expect(res.status).toBe(503);
+  });
+});
+
+describe('MCP Apps views', () => {
+  it('serves the views built into <uiDir>/mcp-apps and links the render tools to them', async () => {
+    const uiDir = mkdtempSync(path.join(tmpdir(), 'ivy-ui-'));
+    mkdirSync(path.join(uiDir, 'mcp-apps'));
+    writeFileSync(path.join(uiDir, 'mcp-apps', 'waterfall.html'), '<!doctype html><title>w</title>');
+    const client = await connect(createApp({ uiDir, tenants }));
+
+    const { tools } = await client.listTools();
+    expect(tools.find((t) => t.name === 'render_waterfall')?._meta).toMatchObject({ ui: { resourceUri: 'ui://ivy/waterfall.html' } });
+    expect(tools.find((t) => t.name === 'render_graph')?._meta?.ui).toBeUndefined();
+    const read = await client.readResource({ uri: 'ui://ivy/waterfall.html' });
+    expect(read.contents[0]).toMatchObject({ mimeType: 'text/html;profile=mcp-app', text: '<!doctype html><title>w</title>' });
+
+    const result = (await client.callTool({ name: 'render_waterfall', arguments: { trace_id: checkoutFailed.trace_id } })) as CallToolResult;
+    expect(result.structuredContent).toMatchObject({ workspace: { id: 'ten_a' }, trace: { trace_id: checkoutFailed.trace_id } });
   });
 });
 

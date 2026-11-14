@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { ServiceIcon } from "@/components/common/service-icon";
@@ -28,11 +29,14 @@ export function Waterfall({
   totalMs,
   openIds,
   onToggle,
+  details = (span) => <SpanDetails span={span} />,
 }: {
   rows: WaterfallRow[];
   totalMs: number;
   openIds: Set<string>;
   onToggle: (spanId: string) => void;
+  /** Content of an expanded row; the span's details by default. */
+  details?: (span: WaterfallRow["span"]) => ReactNode;
 }) {
   return (
     <div className="rounded-md border text-sm">
@@ -96,7 +100,7 @@ export function Waterfall({
               </button>
               {open && (
                 <div className="border-t bg-muted/10 px-4 py-4 md:px-8" style={{ paddingLeft: `${28 + row.depth * 16}px` }}>
-                  <SpanDetails span={row.span} />
+                  {details(row.span)}
                 </div>
               )}
             </div>

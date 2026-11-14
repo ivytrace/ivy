@@ -1,4 +1,5 @@
 import { Tooltipped } from "@/components/ui/tooltipped";
+import { serviceIconUrl } from "@/lib/spans/icon-url";
 import type { ServiceIcon as Icon } from "@/lib/spans/services";
 import { cn } from "@/lib/utils/cn";
 
@@ -13,7 +14,6 @@ export function ServiceIcon({
   size?: "mini" | "large";
   className?: string;
 }) {
-  const folder = size === "mini" ? "service-icons-mini" : "service-icons";
   return (
     <Tooltipped title={label}>
       <span
@@ -24,7 +24,7 @@ export function ServiceIcon({
           size === "mini" ? "size-4 rounded-sm" : "size-10 rounded-full",
           className,
         )}
-        style={{ backgroundImage: `url(/images/${folder}/${icon}.svg)` }}
+        style={{ backgroundImage: `url("${serviceIconUrl(icon, size)}")` }}
       />
     </Tooltipped>
   );

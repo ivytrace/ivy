@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ivy MCP Apps test host</title>
+    <style>
+      body { margin: 0; font: 14px system-ui, sans-serif; background: #f4f4f5; color: #18181b; }
+      body.dark { background: #1f1f23; color: #e4e4e7; }
+      header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 16px; border-bottom: 1px solid #d4d4d8; }
+      input, select, button { font: inherit; padding: 4px 8px; }
+      input[name="trace"] { width: 300px; font-family: ui-monospace, monospace; }
+      main { max-width: 860px; margin: 24px auto; padding: 0 16px; }
+      .bubble { margin-bottom: 12px; padding: 10px 14px; border-radius: 12px; background: #fff; white-space: pre-wrap; font: 12px ui-monospace, monospace; max-height: 160px; overflow: auto; }
+      body.dark .bubble { background: #2a2a30; }
+      iframe { width: 100%; border: 0; display: block; height: 200px; }
+      iframe.fullscreen { position: fixed; inset: 0; height: 100% !important; z-index: 10; background: #09090b; }
+      #status { color: #71717a; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <select name="tool">
+        <option value="render_waterfall">render_waterfall</option>
+        <option value="render_graph">render_graph</option>
+      </select>
+      <input name="trace" placeholder="trace ID (empty: fixture)" />
+      <input name="workspace" placeholder="workspace" size="10" />
+      <label><input type="checkbox" name="dark" /> dark host</label>
+      <button id="run">Call tool</button>
+      <span id="status"></span>
+    </header>
+    <main>
+      <div class="bubble" id="text"></div>
+      <div id="frame"></div>
+    </main>
+    <script type="module" src="../src/mcp-apps/dev-host.ts"></script>
+  </body>
+</html>

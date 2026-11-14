@@ -86,6 +86,8 @@ describe("MCP server", () => {
       "get_trace_summary",
       "list_error_groups",
       "list_workspaces",
+      "render_graph",
+      "render_waterfall",
       "search_invocations",
     ]);
     for (const tool of tools) {
@@ -225,7 +227,7 @@ describe("MCP auth", () => {
     const users: string[] = [];
     const app = mcpRoutes({ data: () => fakeData([prod]), auth, onAuthenticated: (_c, user) => users.push(user.sub) });
     const client = await connect(app, { authorization: "Bearer good" });
-    expect((await client.listTools()).tools).toHaveLength(6);
+    expect((await client.listTools()).tools).toHaveLength(8);
     expect(users.length).toBeGreaterThan(0);
   });
 
@@ -234,6 +236,6 @@ describe("MCP auth", () => {
     expect((await app.request("/.well-known/oauth-protected-resource")).status).toBe(404);
     expect((await app.request("/.well-known/oauth-protected-resource/mcp")).status).toBe(404);
     const client = await connect(app);
-    expect((await client.listTools()).tools).toHaveLength(6);
+    expect((await client.listTools()).tools).toHaveLength(8);
   });
 });

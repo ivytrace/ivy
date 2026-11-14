@@ -1,6 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { bearerAuth, protectedResourceMetadata, type AuthUser, type McpAuth } from "../auth/auth.js";
+import type { ViewHtml } from "../apps/views.js";
 import type { IvyData } from "../data/types.js";
 import { createIvyMcpServer } from "../server/server.js";
 
@@ -16,6 +17,8 @@ export interface McpRoutesOptions<U extends AuthUser = AuthUser> {
   /** Mount path of the endpoint (default `/mcp`). */
   path?: string;
   version?: string;
+  /** HTML of the MCP Apps views (read per request, so a later UI build is picked up). */
+  views?: () => ViewHtml | Promise<ViewHtml>;
 }
 
 /**
@@ -40,7 +43,8 @@ export function mcpRoutes<U extends AuthUser>(options: McpRoutesOptions<U>): Hon
   for (const middleware of options.middleware ?? []) app.use(path, middleware);
 
   app.all(path, async (c) => {
-    const server = createIvyMcpServer(options.data(c), options.version);
+    const views = (await options.views?.()) ?? {};
+    const server = createIvyMcpServer(options.data(c), { version: options.version, views });
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     return transport.handleRequest(c.req.raw);
