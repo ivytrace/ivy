@@ -48,8 +48,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .filter(Boolean),
     extensionPort: int(env.IVY_EXTENSION_PORT, 9790),
     timeoutMarginMs: int(env.IVY_TIMEOUT_MARGIN_MS, 100),
-    exportTimeoutMs: int(env.IVY_EXPORT_TIMEOUT_MS, 1500),
-    flushBudgetMs: int(env.IVY_FLUSH_BUDGET_MS, 2500),
+    exportTimeoutMs: int(env.IVY_EXPORT_TIMEOUT_MS, 1000),
+    flushBudgetMs: int(env.IVY_FLUSH_BUDGET_MS, 2000),
     maxQueueSpans: int(env.IVY_MAX_QUEUE_SPANS, 2000),
     captureLogs: bool(env.IVY_CAPTURE_LOGS, true),
   };

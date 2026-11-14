@@ -31,7 +31,7 @@ const upstream = await startCaptureServer({ port: CAPTURE_PORT - 1 });
 
 const containers = [];
 const logs = new Map();
-function startContainer(name, port, taskDir, handler, extraEnv = {}) {
+function startContainer(name, port, taskDir, handler, extraEnv = {}, { layer = true } = {}) {
   const cname = `ivy-e2e-${name}-${process.pid}`;
   const env = {
     AWS_LAMBDA_EXEC_WRAPPER: '/opt/ivy-wrapper',
@@ -47,7 +47,8 @@ function startContainer(name, port, taskDir, handler, extraEnv = {}) {
   };
   const args = ['run', '-d', '--rm', '--name', cname, '-p', `${port}:8080`, '--add-host=host.docker.internal:host-gateway'];
   for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
-  args.push('-v', `${opt}:/opt:ro`, '-v', `${join(root, 'example', taskDir)}:/var/task:ro`, IMAGE, handler);
+  if (layer) args.push('-v', `${opt}:/opt:ro`);
+  args.push('-v', `${join(root, 'example', taskDir)}:/var/task:ro`, IMAGE, handler);
   run('docker', args);
   containers.push(cname);
   const proc = spawn('docker', ['logs', '-f', cname]);
@@ -102,6 +103,8 @@ try {
   const cb = startContainer('callback', 9102, 'cjs', 'index.callbackHandler');
   const esm = startContainer('esm', 9103, 'esm', 'index.handler');
   const slow = startContainer('timeout', 9104, 'cjs', 'index.handler', { AWS_LAMBDA_FUNCTION_TIMEOUT: '2' });
+  const broken = startContainer('unreachable', 9105, 'cjs', 'index.handler', { IVY_ENDPOINT: 'http://host.docker.internal:1' });
+  const baseline = startContainer('baseline', 9106, 'cjs', 'index.handler', { AWS_LAMBDA_EXEC_WRAPPER: '', IVY_ENDPOINT: '' }, { layer: false });
 
   console.log('invoking…');
   const results = {
@@ -119,6 +122,31 @@ try {
   check(/Intentional failure/.test(results.error.body), 'handler error propagated unchanged');
   check(JSON.parse(results.callback.body).ok === true, 'callback-style handler result passed through');
   check(JSON.parse(results.esm.body).ok === true, 'ESM handler result passed through');
+
+  const brokenRuns = [];
+  for (let i = 0; i < 3; i++) brokenRuns.push(await invoke(broken, apiGwV2));
+  check(brokenRuns.every((r) => JSON.parse(r.body).statusCode === 200), `unreachable endpoint: results unchanged (${brokenRuns.map((r) => r.ms + 'ms').join(', ')})`);
+
+  await invoke(baseline, apiGwV2);
+  const median = async (port, n = 25) => {
+    const times = [];
+    for (let i = 0; i < n; i++) times.push((await invoke(port, apiGwV2)).ms);
+    return times.sort((a, b) => a - b)[Math.floor(n / 2)];
+  };
+  const tracedMs = await median(cjs);
+  const baselineMs = await median(baseline);
+  // The emulator only answers once extensions are done, so client latency includes the post-response
+  // export. RTDONE marks when the runtime posted the response, which is what callers see on real Lambda.
+  await new Promise((r) => setTimeout(r, 500));
+  const rtdone = (name) => {
+    const ds = logs.get(name).join('').match(/RTDONE\(status: success[^)]*duration: ([\d.]+)ms/g) ?? [];
+    const v = ds.map((l) => parseFloat(l.match(/duration: ([\d.]+)ms/)[1])).slice(-25).sort((a, b) => a - b);
+    return v[Math.floor(v.length / 2)];
+  };
+  console.log(`  warm median runtime duration (response posted): traced ${rtdone('cjs')}ms vs. no layer ${rtdone('baseline')}ms`);
+  const init = (name) => logs.get(name).join('').match(/INIT REPORT\(durationMs: ([\d.]+)\)/)?.[1];
+  console.log(`  init duration (cold start, single sample): traced ${init('cjs')}ms vs. no layer ${init('baseline')}ms`);
+  console.log(`  warm median emulator round trip (incl. extension flush): traced ${tracedMs}ms vs. no layer ${baselineMs}ms`);
 
   if (externalEndpoint) {
     console.log(`\nspans were sent to ${externalEndpoint}; check the collector / UI.`);
