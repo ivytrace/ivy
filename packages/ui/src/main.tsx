@@ -14,8 +14,13 @@ import AwsAccounts from "@/routes/settings/aws/page";
 import AwsAccountPage from "@/routes/settings/aws/account";
 import { TimeRangeProvider } from "@/components/layout/time-range";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AuthProvider } from "@/lib/auth/provider";
+import { CallbackPage, LoginPage, LogoutPage } from "@/routes/auth/pages";
 
 const router = createBrowserRouter([
+  { path: "/login", element: <LoginPage /> },
+  { path: "/auth/callback", element: <CallbackPage /> },
+  { path: "/logout", element: <LogoutPage /> },
   {
     path: "/",
     element: <Root />,
@@ -44,10 +49,12 @@ const router = createBrowserRouter([
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <TimeRangeProvider>
-      <TooltipProvider delayDuration={100}>
-        <RouterProvider router={router} />
-      </TooltipProvider>
-    </TimeRangeProvider>
+    <AuthProvider>
+      <TimeRangeProvider>
+        <TooltipProvider delayDuration={100}>
+          <RouterProvider router={router} />
+        </TooltipProvider>
+      </TimeRangeProvider>
+    </AuthProvider>
   </StrictMode>,
 );
