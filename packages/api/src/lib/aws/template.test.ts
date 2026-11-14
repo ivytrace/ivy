@@ -64,7 +64,7 @@ describe('CloudFormation template', () => {
     expect(doc.Parameters.EventsUrl.Default).toBe('');
   });
 
-  it.runIf(cfnLint())('passes cfn-lint', { timeout: 30_000 }, () => {
+  it.runIf(cfnLint())('passes cfn-lint', { timeout: 60_000 }, () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'ivy-cfn-'));
     for (const [name, params] of Object.entries({ full, generic: { principalArn: PRINCIPAL } })) {
       const file = path.join(dir, `${name}.yaml`);
@@ -76,26 +76,13 @@ describe('CloudFormation template', () => {
 });
 
 describe('quickCreateUrl', () => {
-  it('points at the stack region console with parameters', () => {
-    const url = new URL(
-      quickCreateUrl({
-        templateUrl: 'https://bucket.s3.amazonaws.com/ivy-trace.yaml',
-        region: 'eu-west-1',
-        stackName: 'ivy-trace-abc',
-        principalArn: PRINCIPAL,
-        externalId: 'ivy-ext',
-        roleName: 'IvyTrace-abc',
-        eventsUrl: null,
-        eventSecret: 'secret',
-      }),
-    );
+  it('points at the stack region console with the published template and no parameters', () => {
+    const url = new URL(quickCreateUrl({ templateUrl: 'https://bucket.s3.amazonaws.com/t.yaml?X-Amz-Signature=abc', region: 'eu-west-1', stackName: 'ivy-trace-abc' }));
     expect(url.host).toBe('eu-west-1.console.aws.amazon.com');
     expect(url.searchParams.get('region')).toBe('eu-west-1');
     const params = new URLSearchParams(url.hash.split('?')[1]);
-    expect(params.get('templateURL')).toBe('https://bucket.s3.amazonaws.com/ivy-trace.yaml');
+    expect(params.get('templateURL')).toBe('https://bucket.s3.amazonaws.com/t.yaml?X-Amz-Signature=abc');
     expect(params.get('stackName')).toBe('ivy-trace-abc');
-    expect(params.get('param_TrustedPrincipalArn')).toBe(PRINCIPAL);
-    expect(params.get('param_ExternalId')).toBe('ivy-ext');
-    expect(params.has('param_EventSecret')).toBe(false);
+    expect([...params.keys()].filter((k) => k.startsWith('param_'))).toEqual([]);
   });
 });

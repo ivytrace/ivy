@@ -73,25 +73,67 @@ function* fields(buf: Buffer, start: number, end: number): Generator<Field> {
 const children = (buf: Buffer, parent: Pick<Field, 'start' | 'end'>, num: number) =>
   [...fields(buf, parent.start, parent.end)].filter((f) => f.num === num && f.wire === 2);
 
+export interface TrafficCount {
+  spans: number;
+  /** Spans marked `ivy.invocation = true`: one per Lambda invocation, i.e. one trace (a row of `invocations`). */
+  invocations: number;
+}
+
+const INVOCATION_KEY = Buffer.from('ivy.invocation', 'utf8');
+const TRUE = Buffer.from('true', 'utf8');
+
+/** KeyValue (key = 1, value = 2) → AnyValue (string_value = 1, bool_value = 2). */
+function isInvocationAttribute(buf: Buffer, kv: Field): boolean {
+  let keyMatches = false;
+  let value: Field | undefined;
+  for (const f of fields(buf, kv.start, kv.end)) {
+    if (f.num === 1 && f.wire === 2) keyMatches = buf.subarray(f.start, f.end).equals(INVOCATION_KEY);
+    else if (f.num === 2 && f.wire === 2) value = f;
+  }
+  if (!keyMatches || !value) return false;
+  for (const f of fields(buf, value.start, value.end)) {
+    if (f.num === 1 && f.wire === 2) return buf.subarray(f.start, f.end).equals(TRUE);
+    if (f.num === 2 && f.wire === 0) return varint(buf, f.start)[0] === 1;
+  }
+  return false;
+}
+
+function jsonIsInvocation(span: Record<string, any>): boolean {
+  return (span.attributes ?? []).some(
+    (a: Record<string, any>) => a?.key === 'ivy.invocation' && (a.value?.stringValue === 'true' || a.value?.boolValue === true),
+  );
+}
+
 /**
- * Number of spans in an ExportTraceServiceRequest:
- * resource_spans (1) → scope_spans (2) → spans (2).
+ * Spans and invocations in an ExportTraceServiceRequest:
+ * resource_spans (1) → scope_spans (2) → spans (2) → attributes (9).
  */
-export function countSpans(body: Buffer, format: OtlpFormat): number {
+export function countTraffic(body: Buffer, format: OtlpFormat): TrafficCount {
+  const out = { spans: 0, invocations: 0 };
   if (format === 'json') {
     const req = JSON.parse(body.toString('utf8')) as Record<string, any>;
-    let n = 0;
     for (const rs of req.resourceSpans ?? req.resource_spans ?? []) {
-      for (const ss of rs.scopeSpans ?? rs.scope_spans ?? []) n += (ss.spans ?? []).length;
+      for (const ss of rs.scopeSpans ?? rs.scope_spans ?? []) {
+        for (const span of ss.spans ?? []) {
+          out.spans++;
+          if (jsonIsInvocation(span)) out.invocations++;
+        }
+      }
     }
-    return n;
+    return out;
   }
-  let n = 0;
   for (const rs of children(body, { start: 0, end: body.length }, 1)) {
-    for (const ss of children(body, rs, 2)) n += children(body, ss, 2).length;
+    for (const ss of children(body, rs, 2)) {
+      for (const span of children(body, ss, 2)) {
+        out.spans++;
+        if (children(body, span, 9).some((kv) => isInvocationAttribute(body, kv))) out.invocations++;
+      }
+    }
   }
-  return n;
+  return out;
 }
+
+export const countSpans = (body: Buffer, format: OtlpFormat): number => countTraffic(body, format).spans;
 
 /** gRPC status codes used in OTLP error responses. */
 export const GrpcCode = {

@@ -1,12 +1,14 @@
 import type { Context } from 'hono';
-import { principalArn } from '../../../lib/aws/clients.js';
-import { presentAccount } from '../../../lib/aws/present.js';
-import { jsonBody, loadAccount, parseRegions } from '../../../lib/aws/requests.js';
+import { jsonBody, loadAccount, parseRegions, presentAccounts } from '../../../lib/aws/requests.js';
+import { targetProject } from '../../../lib/aws/rules.js';
 import { triggerSync } from '../../../lib/aws/scheduler.js';
 import { awsStore } from '../../../lib/aws/store.js';
 import { badRequest } from '../../../lib/utils/http-error.js';
 
-/** Changes the name, the regions to scan or the throttle polling setting. A connected account is synced right away. */
+/**
+ * Changes the name, the regions to scan, the preselected project, the throttle polling setting, or marks the
+ * function list as reviewed. A connected account is synced right away when its regions change.
+ */
 export async function patchAwsAccount(c: Context) {
   const account = await loadAccount(c);
   const body = await jsonBody(c);
@@ -22,9 +24,14 @@ export async function patchAwsAccount(c: Context) {
     next.throttle_metrics = body.throttle_metrics;
   }
   if (!next.all_regions && !next.regions.length) throw badRequest('Pick at least one region, or all_regions');
+  if (body.default_project !== undefined) {
+    next.default_project_id = body.default_project === null ? '' : await targetProject(account.tenant_id, body.default_project);
+  }
+  if (body.reviewed === true) next.reviewed_at = Date.now();
 
   await awsStore().saveAccount(next);
-  if (next.status !== 'pending') void triggerSync(next);
-  const counts = await awsStore().functionCounts(next.tenant_id);
-  return c.json(presentAccount(next, await principalArn(), counts.get(next.account_id)));
+  const regionsChanged = next.all_regions !== account.all_regions || next.regions.join() !== account.regions.join();
+  if (next.status !== 'pending' && regionsChanged) void triggerSync(next);
+  const [presented] = await presentAccounts(c, [next]);
+  return c.json(presented);
 }

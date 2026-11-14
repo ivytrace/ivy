@@ -38,7 +38,13 @@ export const workspace = z
   .optional()
   .describe("Workspace ID or slug (see list_workspaces). Omit to cover all of your workspaces.");
 
-/** Prefix that tells the model which workspace a line belongs to (later `[workspace/project]`). */
+export const project = z
+  .string()
+  .min(1)
+  .optional()
+  .describe("Project slug or ID within the workspace(s), e.g. checkout-prod. Omit to cover all projects.");
+
+/** Prefix that tells the model which workspace a line belongs to. */
 export const label = (w: Workspace) => `[${w.slug}]`;
 
 export const text = (value: string): CallToolResult => ({ content: [{ type: "text", text: value }] });

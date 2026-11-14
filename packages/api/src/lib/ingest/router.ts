@@ -1,15 +1,19 @@
 import http from 'node:http';
 import type { FailureLimiter } from './failure-limiter.js';
+import type { QuotaGate } from '../limits/quota-gate.js';
 import type { KeyCache } from './key-cache.js';
-import { countSpans, decode, formatOf, GrpcCode, PayloadTooLargeError, statusBody, type OtlpFormat } from './otlp.js';
+import { countTraffic, decode, formatOf, GrpcCode, PayloadTooLargeError, statusBody, type OtlpFormat } from './otlp.js';
 import type { UsageCounters } from './usage.js';
 
 export const TENANT_HEADER = 'x-ivy-tenant';
+export const PROJECT_HEADER = 'x-ivy-project';
 
 export interface IngestOptions {
   keys: KeyCache;
   limiter: FailureLimiter;
   usage: UsageCounters;
+  /** Monthly trace quotas (docs/implementation/limits.md). Without it nothing is limited. */
+  quota?: QuotaGate;
   /** OTLP/HTTP base URL of a shard's collector. */
   collectorUrl: (shardId: string) => string;
   /** Shared secret the internal collectors accept (bearertokenauth). */
@@ -82,8 +86,9 @@ function send(res: http.ServerResponse, format: OtlpFormat | null, err: HttpErro
 }
 
 /**
- * OTLP/HTTP ingest router: authenticates the API key, resolves its tenant and shard, and forwards
- * the request body unchanged to that shard's collector with the tenant in `x-ivy-tenant`.
+ * OTLP/HTTP ingest router: authenticates the API key, resolves its tenant, project and shard, and
+ * forwards the request body unchanged to that shard's collector with the tenant in `x-ivy-tenant`
+ * and the project in `x-ivy-project`.
  * See docs/implementation/tenancy.md.
  */
 export function createIngestHandler(opts: IngestOptions): http.RequestListener {
@@ -125,6 +130,9 @@ export function createIngestHandler(opts: IngestOptions): http.RequestListener {
         throw new HttpError(401, GrpcCode.UNAUTHENTICATED, 'Invalid API key');
       }
 
+      const blockedByQuota = await opts.quota?.check(tenant.tenantId, tenant.shardId);
+      if (blockedByQuota) throw new HttpError(429, GrpcCode.RESOURCE_EXHAUSTED, blockedByQuota.message, blockedByQuota.retryAfter);
+
       if (!format) throw new HttpError(415, GrpcCode.INVALID_ARGUMENT, 'Use application/x-protobuf or application/json');
       if (Number(req.headers['content-length'] ?? 0) > maxBody) {
         throw new HttpError(413, GrpcCode.INVALID_ARGUMENT, `Body larger than ${maxBody} bytes`);
@@ -132,9 +140,9 @@ export function createIngestHandler(opts: IngestOptions): http.RequestListener {
       const body = await readBody(req, maxBody);
       bodyRead = true;
       const encoding = req.headers['content-encoding'];
-      let spans: number;
+      let traffic;
       try {
-        spans = countSpans(await decode(body, encoding, maxDecoded), format);
+        traffic = countTraffic(await decode(body, encoding, maxDecoded), format);
       } catch (err) {
         if (err instanceof PayloadTooLargeError) throw new HttpError(413, GrpcCode.INVALID_ARGUMENT, err.message);
         throw new HttpError(400, GrpcCode.INVALID_ARGUMENT, `Malformed request: ${(err as Error).message}`);
@@ -146,6 +154,7 @@ export function createIngestHandler(opts: IngestOptions): http.RequestListener {
           'content-type': req.headers['content-type']!,
           authorization: `Bearer ${opts.collectorToken}`,
           [TENANT_HEADER]: tenant.tenantId,
+          [PROJECT_HEADER]: tenant.projectId,
         };
         if (encoding) headers['content-encoding'] = encoding;
         upstream = await fetch(`${opts.collectorUrl(tenant.shardId)}/v1/traces`, {
@@ -160,7 +169,10 @@ export function createIngestHandler(opts: IngestOptions): http.RequestListener {
       }
 
       const out = Buffer.from(await upstream.arrayBuffer());
-      if (upstream.ok) opts.usage.add(tenant.tenantId, spans, body.length);
+      if (upstream.ok) {
+        opts.usage.add(tenant.tenantId, traffic.spans, body.length);
+        opts.quota?.add(tenant.tenantId, traffic.invocations);
+      }
       else opts.log?.(`collector ${tenant.shardId} answered ${upstream.status} for ${tenant.tenantId}`);
       // The collector only ever sees our token: its 401/403 is our misconfiguration, not the client's.
       const status = upstream.status === 401 || upstream.status === 403 ? 503 : upstream.status;

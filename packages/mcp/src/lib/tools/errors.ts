@@ -2,8 +2,8 @@ import { formatErrorGroups } from "@ivy/format";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { IvyData } from "../data/types.js";
 import { failureNote, fanOut } from "../workspaces/fan-out.js";
-import { selectWorkspaces } from "../workspaces/scope.js";
-import { failure, functionName, guarded, label, limit, READ_ONLY, since, text, workspace } from "./common.js";
+import { selectWorkspaces, scoped } from "../workspaces/scope.js";
+import { failure, functionName, guarded, label, limit, READ_ONLY, since, text, project, workspace } from "./common.js";
 
 export function registerErrorTools(server: McpServer, data: IvyData) {
   server.registerTool(
@@ -17,13 +17,13 @@ export function registerErrorTools(server: McpServer, data: IvyData) {
           "first and last seen (UTC), and a sample trace ID to pass to get_trace_summary. Init failures have no trace spans: " +
           "the sample trace holds only the platform report and the log tail. Lambda throttles appear as one \"Throttled\" " +
           "group per function with a count; throttled requests never reach the function, so they have no trace.",
-      inputSchema: { workspace, function: functionName, since: since("24h"), limit: limit(20) },
+      inputSchema: { workspace, project, function: functionName, since: since("24h"), limit: limit(20) },
       annotations: { title: "List error groups", ...READ_ONLY },
     },
     (args) =>
       guarded(async () => {
         const workspaces = await selectWorkspaces(data, args.workspace);
-        const result = await fanOut(workspaces, (w) => data.errors(w, { function: args.function, since: args.since }));
+        const result = await fanOut(workspaces, (w) => scoped(data, args).errors(w, { function: args.function, since: args.since }));
         if (!result.ok.length) return failure(`Could not read any workspace.${failureNote(result.failed)}`);
 
         const groups = result.ok.flatMap((r) => r.value.map((group) => ({ workspace: r.workspace, group })));

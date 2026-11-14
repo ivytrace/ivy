@@ -119,6 +119,9 @@ billed time. Instead:
 - At `SHUTDOWN` the extension waits up to 150 ms for telemetry still in Lambda's buffer (the init outcome, the last
   invocation's outcome and pending reports), then flushes. The shutdown phase is not billed.
 - `IVY_REPORT_METRICS=false` turns update spans off.
+- Projects: update spans and synthetic roots go out with the function's ingest key like every other span, so the
+  router stamps the same project on them (`workspaces-projects.md`). The project-scoped trace route merges an update
+  into its root as before; the ingest usage counter counts only `ivy.invocation` spans, so an update is never a trace.
 
 ### Waiting and billed time
 
@@ -176,7 +179,8 @@ them from CloudWatch through the existing cross-account role (`auto-trace.md`, "
 - every 5 minutes, per connected account and region, `GetMetricData` for the account-level `AWS/Lambda`
   `Throttles` (Sum, 1-minute period);
 - only when that is non-zero, per-function `Throttles` for the affected window, for the functions Ivy traces;
-- stored as per-function, per-minute counts in a small ClickHouse table, tenant-scoped, with the same retention;
+- stored as per-function, per-minute counts in a small ClickHouse table, keyed by tenant and project (the project the
+  function is traced into; throttles of untraced or unassigned functions are dropped), with the same retention;
 - shown as a count on the function overview, a series in the function's chart, and a synthetic "Throttled" error
   group (no trace; it links to the function). MCP `list_error_groups` includes it.
 

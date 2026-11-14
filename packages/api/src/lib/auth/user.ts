@@ -13,6 +13,8 @@ export interface AuthUser {
   sub: string;
   issuer: string;
   email?: string;
+  /** The provider's `email_verified` claim, when the access token carries it. */
+  emailVerified?: boolean;
   name?: string;
   /** Client the token was issued to (the dashboard's client ID, or the agent's). */
   clientId: string;

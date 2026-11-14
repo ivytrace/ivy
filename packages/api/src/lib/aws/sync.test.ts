@@ -18,7 +18,9 @@ import { memoryStore } from './memory-store.js';
 import { setAwsStore } from './store.js';
 import { setThrottleSinkForTests } from './throttles.js';
 import { detachAccount, syncAccount, syncFunction } from './sync.js';
-import type { AwsAccount } from './types.js';
+import type { AwsAccount, ProjectRule } from './types.js';
+import { createProject } from '../tenancy/projects.js';
+import { DEFAULT_PROJECT, resetTenancyForTests } from '../tenancy/testing.js';
 
 const lambda = mockClient(LambdaClient);
 const tagging = mockClient(ResourceGroupsTaggingAPIClient);
@@ -41,6 +43,8 @@ const account: AwsAccount = {
   event_secret: 'secret',
   stack_name: 'ivy-trace-abc',
   stack_region: 'eu-west-1',
+  default_project_id: '',
+  reviewed_at: 0,
   regions: ['eu-west-1'],
   all_regions: false,
   status: 'connected',
@@ -61,7 +65,13 @@ const IVY_ENV = { AWS_LAMBDA_EXEC_WRAPPER: '/opt/ivy-wrapper', IVY_ENDPOINT: 'ht
 
 let mem: ReturnType<typeof memoryStore>;
 
-beforeEach(() => {
+const everything: ProjectRule = {
+  tenant_id: 'default', id: 'rul_all', position: 0, account_id: '', region: '', stack: '', name: '*', tag: '',
+  project_id: DEFAULT_PROJECT, enabled: true, created_at: 1,
+};
+
+beforeEach(async () => {
+  await resetTenancyForTests();
   lambda.reset();
   tagging.reset();
   sts.reset();
@@ -111,7 +121,7 @@ describe('ensureLayer', () => {
 });
 
 describe('applyUpdate', () => {
-  const fn = { name: 'a', arn: arn('a'), runtime: 'nodejs22.x', packageType: 'Zip', layers: [], env: {}, envError: '', revisionId: 'r1', tags: {} };
+  const fn = { name: 'a', arn: arn('a'), runtime: 'nodejs22.x', packageType: 'Zip', layers: [], env: {}, envError: '', revisionId: 'r1', lastModified: '', tags: {} };
 
   it('retries while another update is in progress', async () => {
     const conflict = Object.assign(new Error('An update is in progress'), { name: 'ResourceConflictException' });
@@ -138,6 +148,7 @@ describe('applyUpdate', () => {
 describe('syncAccount', () => {
   beforeEach(async () => {
     await mem.store.saveAccount(account);
+    await mem.store.saveRules('default', [everything]);
     lambda.on(ListLayerVersionsCommand).resolves({ LayerVersions: [{ LayerVersionArn: LAYER_V2, Description: 'sha256:abc123' }] });
     lambda.on(UpdateFunctionConfigurationCommand).resolves({});
   });
@@ -153,7 +164,7 @@ describe('syncAccount', () => {
       ],
     });
     tagging.on(GetResourcesCommand).resolves({ ResourceTagMappingList: [{ ResourceARN: arn('tagged'), Tags: [{ Key: 'ivy:trace', Value: 'false' }] }] });
-    await mem.store.saveSetting('default', { account_id: ACCOUNT_ID, region: 'eu-west-1', function_name: 'muted', tracing_enabled: false });
+    await mem.store.saveSetting('default', { account_id: ACCOUNT_ID, region: 'eu-west-1', function_name: 'muted', mode: 'exclude', project_id: '' });
 
     await syncAccount(account);
 
@@ -257,10 +268,11 @@ describe('syncAccount', () => {
 });
 
 describe('syncFunction and detachAccount', () => {
-  it('applies a dashboard toggle to a single function', async () => {
+  it('applies a manual exclude to a single function', async () => {
     lambda.on(GetFunctionConfigurationCommand).resolves(config('a', { Layers: [{ Arn: LAYER_V2 }], Environment: { Variables: { ...IVY_ENV, X: '1' } } }));
     lambda.on(UpdateFunctionConfigurationCommand).resolves({});
-    const row = await syncFunction(account, 'eu-west-1', 'a', false);
+    await mem.store.saveSetting('default', { account_id: ACCOUNT_ID, region: 'eu-west-1', function_name: 'a', mode: 'exclude', project_id: '' });
+    const row = await syncFunction(account, 'eu-west-1', 'a');
     expect(row.state).toBe('opted_out');
     expect(lambda.commandCalls(UpdateFunctionConfigurationCommand)[0].args[0].input).toMatchObject({ Layers: [], Environment: { Variables: { X: '1' } } });
   });
@@ -274,5 +286,76 @@ describe('syncFunction and detachAccount', () => {
     const calls = lambda.commandCalls(UpdateFunctionConfigurationCommand);
     expect(calls).toHaveLength(1);
     expect(calls[0].args[0].input).toMatchObject({ FunctionName: arn('a'), Layers: [], Environment: { Variables: {} } });
+  });
+});
+
+describe('opt-in tracing with rules', () => {
+  const traced = (name: string, extra: Partial<FunctionConfiguration> = {}) =>
+    config(name, { Layers: [{ Arn: LAYER_V2 }], Environment: { Variables: { ...IVY_ENV } }, ...extra });
+  const updatesByName = () =>
+    Object.fromEntries(lambda.commandCalls(UpdateFunctionConfigurationCommand).map((c) => [c.args[0].input.FunctionName!.split(':').pop(), c.args[0].input]));
+  const stateOf = async () =>
+    Object.fromEntries((await mem.store.listFunctions('default')).map((f) => [f.function_name, [f.state, f.project_id, f.project_source, f.stack]]));
+
+  beforeEach(async () => {
+    await mem.store.saveAccount(account);
+    lambda.on(ListLayerVersionsCommand).resolves({ LayerVersions: [{ LayerVersionArn: LAYER_V2, Description: 'sha256:abc123' }] });
+    lambda.on(UpdateFunctionConfigurationCommand).resolves({});
+    vi.stubEnv('IVY_SECRET_KEY', 'server-secret');
+  });
+
+  it('traces nothing after connecting: functions are listed as available, with stack, tags and last modified', async () => {
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [config('a', { LastModified: '2026-11-10T09:12:44.000+0000' }), config('b')] });
+    tagging.on(GetResourcesCommand).resolves({ ResourceTagMappingList: [{ ResourceARN: arn('a'), Tags: [{ Key: 'aws:cloudformation:stack-name', Value: 'api-prod' }] }] });
+    await syncAccount(account);
+    expect(lambda.commandCalls(UpdateFunctionConfigurationCommand)).toHaveLength(0);
+    expect(lambda.commandCalls(ListLayerVersionsCommand)).toHaveLength(0);
+    const fns = await mem.store.listFunctions('default');
+    expect(fns.find((f) => f.function_name === 'a')).toMatchObject({
+      state: 'available', stack: 'api-prod', last_modified: '2026-11-10T09:12:44.000+0000', tags: { 'aws:cloudformation:stack-name': 'api-prod' },
+    });
+  });
+
+  it('traces matching functions into the rule’s project with that project’s key, and new ones on the next sync', async () => {
+    const prod = await createProject('default', { name: 'api-prod' });
+    await mem.store.saveRules('default', [{ ...everything, id: 'rul_stack', name: '', stack: 'api-prod', project_id: prod.id }]);
+    const stackTags = (...names: string[]) => ({
+      ResourceTagMappingList: names.map((n) => ({ ResourceARN: arn(n), Tags: [{ Key: 'aws:cloudformation:stack-name', Value: 'api-prod' }] })),
+    });
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [config('a'), config('loose')] });
+    tagging.on(GetResourcesCommand).resolves(stackTags('a'));
+    await syncAccount(account);
+    const first = updatesByName();
+    expect(Object.keys(first)).toEqual(['a']);
+    const key = first.a.Environment!.Variables!.IVY_API_KEY!;
+    expect(key).toMatch(/^ivy_/);
+    expect(key).not.toBe('ingest-key');
+    expect(await stateOf()).toMatchObject({ a: ['traced', prod.id, 'rule', 'api-prod'], loose: ['available', '', '', ''] });
+
+    // A new function in the stack is traced on the next sync, with the same key.
+    lambda.resetHistory();
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [traced('a', { Environment: { Variables: { ...IVY_ENV, IVY_API_KEY: key } } }), config('b'), config('loose')] });
+    tagging.on(GetResourcesCommand).resolves(stackTags('a', 'b'));
+    await syncAccount(account);
+    expect(Object.keys(updatesByName())).toEqual(['b']);
+    expect(updatesByName().b.Environment!.Variables!.IVY_API_KEY).toBe(key);
+  });
+
+  it('detaches functions that stop matching, and rewrites the key when a function moves project', async () => {
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [traced('a'), traced('b')] });
+    await mem.store.saveRules('default', [{ ...everything, name: 'a' }]);
+    await syncAccount(account);
+    const updates = updatesByName();
+    expect(Object.keys(updates)).toEqual(['b']);
+    expect(updates.b).toMatchObject({ Layers: [], Environment: { Variables: {} } });
+    expect(await stateOf()).toMatchObject({ a: ['traced', DEFAULT_PROJECT, 'rule', ''], b: ['available', '', '', ''] });
+
+    const staging = await createProject('default', { name: 'staging' });
+    await mem.store.saveSetting('default', { account_id: ACCOUNT_ID, region: 'eu-west-1', function_name: 'a', mode: 'trace', project_id: staging.id });
+    lambda.resetHistory();
+    await syncAccount(account);
+    const moved = updatesByName().a;
+    expect(moved.Environment!.Variables!.IVY_API_KEY).not.toBe('ingest-key');
+    expect(await stateOf()).toMatchObject({ a: ['traced', staging.id, 'manual', ''] });
   });
 });

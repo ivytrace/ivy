@@ -1,10 +1,14 @@
 import {
+  describeLlm,
   failureLabel,
   getException,
   invocationResources,
   isInvocationSpan,
+  llmUsage,
   missingTraceNote,
   spanFailureKind,
+  type LlmMessage,
+  type LlmPart,
   type Span,
   type SpanEvent,
   type Trace,
@@ -77,6 +81,7 @@ function header(trace: Trace, spans: Span[]): Line[] {
   const root = rootInvocation(spans);
   const { start, end } = traceBounds(spans);
   const failed = spans.some((s) => s.status_code === "ERROR");
+  const usage = llmUsage(spans);
   if (!root) {
     const first = buildTree(spans)[0].span;
     return [
@@ -105,6 +110,7 @@ function header(trace: Trace, spans: Span[]): Line[] {
     res.billedDurationMs !== null && `billed ${ms(res.billedDurationMs)}`,
     res.initDurationMs !== null && `init ${ms(res.initDurationMs)}`,
     plural(spans.length, "span"),
+    usage && usage.calls > 0 && `${plural(usage.calls, "LLM call")} ${usage.inputTokens}→${usage.outputTokens} tok`,
   ].filter(Boolean);
   const lines: Line[] = [
     { text: first.join(" · "), keep: true },
@@ -151,6 +157,37 @@ function payloadLines(span: Span, prefix: string, settings: Settings): Line[] {
   return lines;
 }
 
+const partText = (p: LlmPart): string => {
+  switch (p.type) {
+    case "text":
+      return p.text;
+    case "reasoning":
+      return `[reasoning] ${p.text}`;
+    case "tool_call":
+      return `→ ${p.name}(${p.arguments === undefined ? "" : JSON.stringify(p.arguments)})`;
+    case "tool_result":
+      return `← ${typeof p.result === "string" ? p.result : JSON.stringify(p.result)}`;
+    default:
+      return `[${p.label}]`;
+  }
+};
+const messageText = (m: LlmMessage) => m.parts.map(partText).join(" ");
+
+/** Prompt and response of LLM spans: the last input message and the output (normal), or every message (full). */
+function llmLines(span: Span, prefix: string, settings: Settings): Line[] {
+  const l = describeLlm(span);
+  if (!l || settings.payloads === "none") return [];
+  const chars = settings.payloadChars;
+  const line = (label: string, text: string | undefined): Line[] => (text ? [{ text: `${prefix}${label}: ${oneLine(text, chars)}` }] : []);
+  const json = (v: unknown) => (v === undefined ? undefined : typeof v === "string" ? v : JSON.stringify(v));
+  if (l.kind === "tool") return [...line("args", json(l.tool?.arguments)), ...line("result", json(l.tool?.result))];
+  if (l.kind === "step" || (l.kind === "operation" && settings.payloads !== "all")) return [];
+  const response = line("response", l.output.map(messageText).join(" "));
+  if (settings.payloads === "all") return [...l.messages.flatMap((m) => line(m.role, messageText(m))), ...response];
+  const last = [...l.messages].reverse().find((m) => m.role !== "system" && m.role !== "assistant");
+  return [...line(last?.role === "tool" ? "tool result" : "prompt", last && messageText(last)), ...response];
+}
+
 function render(trace: Trace, settings: Settings): Line[] {
   const spans = trace.spans;
   const { start } = traceBounds(spans);
@@ -165,7 +202,7 @@ function render(trace: Trace, settings: Settings): Line[] {
       keep: failed,
     });
     const prefix = `${GUTTER}${indent(depth + 1)}`;
-    lines.push(...errorLines(span, prefix, settings), ...payloadLines(span, prefix, settings));
+    lines.push(...errorLines(span, prefix, settings), ...payloadLines(span, prefix, settings), ...llmLines(span, prefix, settings));
 
     const logs = logEvents(span).filter((e) => settings.allLogs || /^(warn|error)/i.test(e.attributes["log.severity"] ?? ""));
     const entries: Entry[] = [

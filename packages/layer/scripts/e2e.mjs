@@ -4,7 +4,7 @@
 //   pnpm --filter @ivy/layer e2e
 //   IVY_ENDPOINT=http://host.docker.internal:4318 IVY_API_KEY=dev-ingest-key pnpm --filter @ivy/layer e2e
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
@@ -45,6 +45,25 @@ await esbuild.build({
   outfile: join(bundledDir, 'index.js'),
   logLevel: 'warning',
 });
+
+// AI SDK handlers (mock models, no LLM API calls). v6 is fully bundled (its own copy of @opentelemetry/api
+// inside the bundle); v7 keeps @opentelemetry/api in node_modules, as an unbundled app would.
+const aiDir = (v) => join(root, `dist/e2e-ai-${v}`);
+const esmRequire = "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);";
+for (const v of ['v6', 'v7']) {
+  await esbuild.build({
+    entryPoints: [join(root, `example/ai/${v}.mjs`)],
+    bundle: true,
+    platform: 'node',
+    target: 'node22',
+    format: 'esm',
+    banner: { js: esmRequire },
+    external: v === 'v7' ? ['@opentelemetry/api'] : [],
+    outfile: join(aiDir(v), 'index.mjs'),
+    logLevel: 'warning',
+  });
+}
+cpSync(realpathSync(join(root, 'node_modules/@opentelemetry/api')), join(aiDir('v7'), 'node_modules/@opentelemetry/api'), { recursive: true, dereference: true });
 
 const capture = await startCaptureServer({ port: CAPTURE_PORT, apiKey });
 // Fake upstreams (echo, DynamoDB) on a separate port: calls to the Ivy endpoint itself are never traced.
@@ -126,8 +145,10 @@ try {
   const slow = startContainer('timeout', 9104, 'cjs', 'index.handler', { AWS_LAMBDA_FUNCTION_TIMEOUT: '2' });
   const broken = startContainer('unreachable', 9105, 'cjs', 'index.handler', { IVY_ENDPOINT: 'http://host.docker.internal:1' });
   const bundled = startContainer('bundled', 9107, bundledDir, 'index.handler');
-  const importError = startContainer('importerror', 9108, 'failures', 'missing.handler');
-  const oom = startContainer('oom', 9109, 'failures', 'oom.handler', { NODE_OPTIONS: '--max-old-space-size=32' });
+  const aiV6 = startContainer('ai-v6', 9108, aiDir('v6'), 'index.handler');
+  const aiV7 = startContainer('ai-v7', 9109, aiDir('v7'), 'index.handler');
+  const importError = startContainer('importerror', 9110, 'failures', 'missing.handler');
+  const oom = startContainer('oom', 9111, 'failures', 'oom.handler', { NODE_OPTIONS: '--max-old-space-size=32' });
   const baseline = startContainer('baseline', 9106, 'cjs', 'index.handler', { AWS_LAMBDA_EXEC_WRAPPER: '', IVY_ENDPOINT: '' }, { layer: false });
 
   console.log('invoking…');
@@ -140,6 +161,8 @@ try {
     esm: await invoke(esm, sqs),
     bundled: await invoke(bundled, {}),
     timeout: await invoke(slow, { sleepMs: 4000 }),
+    aiV6: await invoke(aiV6, apiGwV2),
+    aiV7: await invoke(aiV7, apiGwV2),
   };
   results.importError = await invoke(importError, {});
   results.oom = await invoke(oom, {});
@@ -149,6 +172,7 @@ try {
   check(/Intentional failure/.test(results.error.body), 'handler error propagated unchanged');
   check(JSON.parse(results.callback.body).ok === true, 'callback-style handler result passed through');
   check(JSON.parse(results.esm.body).ok === true, 'ESM handler result passed through');
+  check(['aiV6', 'aiV7'].every((k) => /on its way/.test(JSON.parse(results[k].body).reply ?? '')), 'AI SDK handlers ran unchanged');
   check(JSON.parse(results.importError.body).errorType === 'Runtime.ImportModuleError', 'init failure reaches the caller unchanged (Runtime.ImportModuleError)');
   check(/signal: aborted/.test(JSON.parse(results.oom.body).errorMessage ?? ''), 'out of memory crash reaches the caller (Runtime.ExitError)');
 
@@ -182,8 +206,8 @@ try {
     await new Promise((r) => setTimeout(r, 3000));
   } else {
     const roots = () => capture.spans().filter((s) => s.attributes.some((a) => a.key === 'ivy.invocation'));
-    const arrived = await capture.waitFor(() => roots().length >= 8, 20000);
-    check(arrived, `received ${roots().length}/8+ invocation spans`);
+    const arrived = await capture.waitFor(() => roots().length >= 10, 20000);
+    check(arrived, `received ${roots().length}/10+ invocation spans`);
     const spans = capture.spans();
     const attr = (s, k) => {
       const v = s.attributes.find((a) => a.key === k)?.value;
@@ -232,6 +256,36 @@ try {
     const timeoutRoot = rootsBy('timeout')[0];
     check(!!timeoutRoot && attr(timeoutRoot, 'error.type') === 'Timeout', 'timeout recorded with error.type=Timeout');
 
+    const aiSpans = (fn) => {
+      const r = rootsBy(fn)[0];
+      const all = r ? spans.filter((s) => s.traceId === r.traceId && s !== r) : [];
+      return { r, all, named: (n) => all.filter((s) => (typeof n === 'string' ? s.name === n : n.test(s.name))) };
+    };
+    {
+      const { r, named } = aiSpans('ai-v6');
+      const [gen] = named('ai.generateText');
+      const steps = named('ai.generateText.doGenerate');
+      const [tool] = named('ai.toolCall');
+      const ddb = tool && named('DynamoDB.GetItem').find((s) => s.parentSpanId === tool.spanId);
+      check(!!gen && gen.parentSpanId === r.spanId && attr(gen, 'ai.model.id') === 'gpt-4o-mini' && attr(gen, 'ai.usage.inputTokens') === '1713', 'AI SDK 6: ai.generateText under the invocation, with model and usage');
+      check(steps.length === 2 && steps.every((s) => s.parentSpanId === gen?.spanId) && /"role":"system"/.test(attr(steps[0], 'ai.prompt.messages') ?? ''), 'AI SDK 6: two doGenerate steps with prompt messages');
+      check(!!tool && tool.parentSpanId === gen?.spanId && attr(tool, 'ai.toolCall.name') === 'getOrder', 'AI SDK 6: ai.toolCall span');
+      check(!!ddb, 'AI SDK 6: the tool’s DynamoDB call (bundled SDK) nests under the tool span');
+      check(/\[redacted\]/.test(attr(tool ?? { attributes: [] }, 'ai.toolCall.result') ?? '') && !/should-be-redacted/.test(attr(tool ?? { attributes: [] }, 'ai.toolCall.result') ?? ''), 'AI SDK 6: tool result redacted by key');
+      const [doStream] = named('ai.streamText.doStream');
+      check(!!doStream && Number(attr(doStream, 'ai.response.msToFirstChunk')) > 0 && doStream.events.some((e) => e.name === 'ai.stream.firstChunk'), 'AI SDK 6: streamText with time to first chunk');
+    }
+    {
+      const { r, named } = aiSpans('ai-v7');
+      const [agent] = named('invoke_agent gpt-4o-mini');
+      const chats = named('chat gpt-4o-mini');
+      const [tool] = named('execute_tool getOrder');
+      const ddb = tool && named('DynamoDB.GetItem').find((s) => s.parentSpanId === tool.spanId);
+      check(!!agent && agent.parentSpanId === r.spanId && attr(agent, 'gen_ai.provider.name') === 'openai', 'AI SDK 7: invoke_agent under the invocation (API package in node_modules)');
+      check(chats.length === 2 && !!tool && !!ddb, 'AI SDK 7: chat spans, execute_tool and the nested DynamoDB call');
+      const [stream] = named('chat claude-haiku-4-5');
+      check(!!stream && Number(attr(stream, 'gen_ai.client.operation.time_to_first_chunk')) > 0, 'AI SDK 7: streamed chat with time to first chunk');
+    }
     // The emulator has no Telemetry API ("Telemetry.NotSupported"), so failures outside the handler are
     // checked with a fake telemetry source: the real extension binary in the Lambda image, fed the platform
     // events Lambda would send plus the log lines the failing handlers above really printed.

@@ -1,5 +1,6 @@
 import { PayloadPreview } from "@/components/stats/payload-preview";
 import { ErrorBlock } from "@/components/trace/error-block";
+import { LlmDetails } from "@/components/trace/llm-details";
 import { describeSpan, getException } from "@/lib/spans/services";
 import type { Span } from "@/lib/spans/types";
 import { formatDuration, formatTimestamp } from "@/lib/utils/format";
@@ -40,6 +41,7 @@ export function SpanDetails({ span }: { span: Span }) {
     <div className="flex flex-col gap-3">
       <SpanFields span={span} />
       {exception && !d.isInvocation && <ErrorBlock exception={exception} />}
+      {d.llm && <LlmDetails llm={d.llm} />}
       <PayloadPreview title={d.isInvocation ? "Event" : "Request"} value={d.request} truncated={d.truncated} />
       <PayloadPreview title="Request headers" value={d.requestHeaders} defaultOpen={false} />
       <PayloadPreview title={d.isInvocation ? "Return value" : "Response"} value={d.response} truncated={d.truncated} />

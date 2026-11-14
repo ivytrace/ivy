@@ -2,6 +2,7 @@ import { CloudWatchClient, GetMetricDataCommand, type MetricDataQuery } from '@a
 import { shardClient } from '../clickhouse/client.js';
 import { insertRows } from '../clickhouse/scoped.js';
 import { lookupTenant } from '../tenancy/context.js';
+import { defaultProjectId } from '../tenancy/ids.js';
 import { assumeRole } from './clients.js';
 import type { AwsAccount, FunctionStatus, ThrottleStatus } from './types.js';
 
@@ -16,6 +17,7 @@ const MAX_QUERIES_PER_REQUEST = 500;
 
 export interface ThrottleRow {
   tenant_id: string;
+  project_id: string;
   function: string;
   region: string;
   minute: number;
@@ -109,7 +111,7 @@ export async function pollRegionThrottles(
   cw: CloudWatchClient,
   account: AwsAccount,
   region: string,
-  traced: string[],
+  traced: { name: string; project_id: string }[],
   window: { from: number; to: number },
 ): Promise<ThrottleRow[]> {
   const total = (await getMetricData(cw, [throttlesQuery('account')], window.from, window.to)).get('account') ?? [];
@@ -118,14 +120,14 @@ export async function pollRegionThrottles(
   const last = Math.max(...total.map((p) => p.ts));
   const results = await getMetricData(
     cw,
-    traced.map((name, i) => throttlesQuery(`f${i}`, name)),
+    traced.map((f, i) => throttlesQuery(`f${i}`, f.name)),
     first,
     last + MINUTE,
   );
   const rows: ThrottleRow[] = [];
-  traced.forEach((name, i) => {
+  traced.forEach((f, i) => {
     for (const p of results.get(`f${i}`) ?? []) {
-      rows.push({ tenant_id: account.tenant_id, function: name, region, minute: p.ts, account_id: account.account_id, throttles: Math.round(p.value) });
+      rows.push({ tenant_id: account.tenant_id, project_id: f.project_id, function: f.name, region, minute: p.ts, account_id: account.account_id, throttles: Math.round(p.value) });
     }
   });
   return rows;
@@ -154,8 +156,11 @@ export async function pollAccountThrottles(
   let denied = false;
   const rows: ThrottleRow[] = [];
   for (const region of regions) {
-    const traced = functions.filter((f) => f.region === region && f.state === 'traced').map((f) => f.function_name);
-    // Only regions with traced functions: throttles of other functions aren't stored anyway.
+    // Only traced functions, stored under the project they send to ('' is the workspace's default project).
+    // Throttles of untraced or unassigned functions are dropped: they belong to no project.
+    const traced = functions
+      .filter((f) => f.region === region && f.state === 'traced')
+      .map((f) => ({ name: f.function_name, project_id: f.project_id || defaultProjectId(account.tenant_id) }));
     if (!traced.length) continue;
     try {
       const cw = new CloudWatchClient({ region, credentials, maxAttempts: 3 });

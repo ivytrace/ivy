@@ -11,9 +11,14 @@ import { Hono } from 'hono';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../app.js';
 import { setClientsForTests } from '../clickhouse/client.js';
-import { TENANT_SETTING } from '../clickhouse/scoped.js';
+import { PROJECT_SETTING, TENANT_SETTING } from '../clickhouse/scoped.js';
 import { AuthError, verifyAccessToken } from '../auth/verify.js';
 import { mountAgentSurface } from './mount.js';
+import { createProject } from '../tenancy/projects.js';
+import { createTenant } from '../tenancy/tenants.js';
+import { fixedWorkspaceAccess } from '../tenancy/members.js';
+import { resetTenancyForTests } from '../tenancy/testing.js';
+import type { TenantRecord } from '../tenancy/store.js';
 
 vi.mock('../auth/verify.js', async (original) => ({
   ...(await original<typeof import('../auth/verify.js')>()),
@@ -92,9 +97,12 @@ const fake = {
   },
 } as unknown as ClickHouseClient;
 
-const tenants = { resolve: async () => ({ id: 'ten_a', shardId: 'shard-1' }) };
+let workspace: TenantRecord;
+const appWith = (uiDir = '/nonexistent') => createApp({ uiDir, access: fixedWorkspaceAccess(workspace) });
 
-beforeEach(() => {
+beforeEach(async () => {
+  await resetTenancyForTests();
+  workspace = await createTenant('Acme', undefined, 'ten_a', 'acme');
   captured = [];
   setClientsForTests({ shard: fake, control: fake });
 });
@@ -115,7 +123,7 @@ const textOf = (result: unknown) => ((result as CallToolResult).content[0] as { 
 
 describe('MCP endpoint in the API', () => {
   it('serves every tool through the API route handlers, scoped to the request tenant', async () => {
-    const client = await connect(createApp({ uiDir: '/nonexistent', tenants }));
+    const client = await connect(appWith());
     expect((await client.listTools()).tools).toHaveLength(8);
 
     const calls = {
@@ -145,7 +153,7 @@ describe('MCP endpoint in the API', () => {
   });
 
   it('labels failures outside the handler and says when there is no trace', async () => {
-    const client = await connect(createApp({ uiDir: '/nonexistent', tenants }));
+    const client = await connect(appWith());
     const failing = textOf(await client.callTool({ name: 'find_failing_invocations', arguments: { function: 'reports-export' } }));
     expect(failing).toContain("Init failed · Runtime.ImportModuleError: Error: Cannot find module 'left-pad' · no request");
     expect(failing).toContain('no trace: the runtime never started the handler');
@@ -160,10 +168,28 @@ describe('MCP endpoint in the API', () => {
   });
 
   it('turns API validation errors into tool errors', async () => {
-    const client = await connect(createApp({ uiDir: '/nonexistent', tenants }));
+    const client = await connect(appWith());
     const result = (await client.callTool({ name: 'search_invocations', arguments: { since: '0m' } })) as CallToolResult;
     expect(textOf(result)).toContain('(Invalid since: 0m)');
     expect(result.isError).toBe(true);
+  });
+
+  it('narrows reads to a project with `project`, and reads all projects without it', async () => {
+    const staging = await createProject('ten_a', { name: 'Checkout (staging)' });
+    const client = await connect(appWith());
+    const run = async (args: Record<string, unknown>) => {
+      captured = [];
+      await client.callTool({ name: 'find_failing_invocations', arguments: args });
+      return captured.filter((q) => /FROM invocations/.test(q.query));
+    };
+    for (const q of await run({ project: 'checkout-staging' })) {
+      expect(q.query_params).toMatchObject({ tenant: 'ten_a', project: staging.id });
+      expect(q.clickhouse_settings[PROJECT_SETTING]).toBe(staging.id);
+    }
+    expect(await run({ project: 'nope' })).toEqual([]);
+    const all = await run({});
+    expect(all.length).toBeGreaterThan(0);
+    for (const q of all) expect(q.query_params.project).toBeUndefined();
   });
 
   it('fans out over all workspaces, one tenant-scoped query per workspace, labelled', async () => {
@@ -192,7 +218,7 @@ describe('MCP endpoint in the API', () => {
     vi.stubEnv('IVY_OIDC_CLIENT_ID', 'ivy-dashboard');
     vi.stubEnv('IVY_MCP_RESOURCE', 'https://ivytrace.dev/mcp');
     const app = new Hono();
-    mountAgentSurface(app, tenants);
+    mountAgentSurface(app, fixedWorkspaceAccess(workspace));
 
     const metadata = await (await app.request('/.well-known/oauth-protected-resource/mcp')).json();
     expect(metadata).toMatchObject({ resource: 'https://ivytrace.dev/mcp', authorization_servers: ['https://auth.ivytrace.dev'] });
@@ -214,7 +240,7 @@ describe('MCP endpoint in the API', () => {
     vi.stubEnv('IVY_OIDC_ISSUER', 'https://auth.ivytrace.dev');
     vi.stubEnv('IVY_OIDC_CLIENT_ID', 'ivy-dashboard');
     vi.stubEnv('IVY_PUBLIC_URL', 'https://ivy.example.com');
-    const app = createApp({ uiDir: '/nonexistent', tenants });
+    const app = appWith();
     const res = await app.request('/mcp', { method: 'POST', headers: { authorization: 'Bearer provider-down' } });
     expect(res.status).toBe(503);
   });
@@ -225,7 +251,7 @@ describe('MCP Apps views', () => {
     const uiDir = mkdtempSync(path.join(tmpdir(), 'ivy-ui-'));
     mkdirSync(path.join(uiDir, 'mcp-apps'));
     writeFileSync(path.join(uiDir, 'mcp-apps', 'waterfall.html'), '<!doctype html><title>w</title>');
-    const client = await connect(createApp({ uiDir, tenants }));
+    const client = await connect(appWith(uiDir));
 
     const { tools } = await client.listTools();
     expect(tools.find((t) => t.name === 'render_waterfall')?._meta).toMatchObject({ ui: { resourceUri: 'ui://ivy/waterfall.html' } });
@@ -238,11 +264,14 @@ describe('MCP Apps views', () => {
   });
 });
 
-describe('GET /api/traces/:id?format=text', () => {
-  const app = createApp({ uiDir: '/nonexistent', tenants });
+describe('GET …/traces/:id?format=text', () => {
+  let app: ReturnType<typeof createApp>;
+  beforeEach(() => {
+    app = appWith();
+  });
 
   it('returns the text tree', async () => {
-    const res = await app.request(`/api/traces/${checkoutFailed.trace_id}?format=text&detail=summary`);
+    const res = await app.request(`/api/w/acme/p/default/traces/${checkoutFailed.trace_id}?format=text&detail=summary`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/plain');
     const text = await res.text();
@@ -251,12 +280,12 @@ describe('GET /api/traces/:id?format=text', () => {
   });
 
   it('validates detail and max_tokens', async () => {
-    expect((await app.request(`/api/traces/${checkoutFailed.trace_id}?format=text&detail=huge`)).status).toBe(400);
-    expect((await app.request(`/api/traces/${checkoutFailed.trace_id}?format=text&max_tokens=-1`)).status).toBe(400);
+    expect((await app.request(`/api/w/acme/p/default/traces/${checkoutFailed.trace_id}?format=text&detail=huge`)).status).toBe(400);
+    expect((await app.request(`/api/w/acme/p/default/traces/${checkoutFailed.trace_id}?format=text&max_tokens=-1`)).status).toBe(400);
   });
 
   it('merges update spans into the invocation span and leaves them out of the span list', async () => {
-    const res = await app.request(`/api/traces/${oomCrashed.trace_id}`);
+    const res = await app.request(`/api/w/acme/p/default/traces/${oomCrashed.trace_id}`);
     const { spans } = (await res.json()) as Trace;
     expect(spans).toHaveLength(oomCrashed.spans.length);
     expect(spans.filter((s) => s.span_id === oomRoot.span_id)).toHaveLength(1);
@@ -266,7 +295,7 @@ describe('GET /api/traces/:id?format=text', () => {
   });
 
   it('still returns JSON by default', async () => {
-    const res = await app.request(`/api/traces/${checkoutFailed.trace_id}`);
+    const res = await app.request(`/api/w/acme/p/default/traces/${checkoutFailed.trace_id}`);
     expect((await res.json()).spans).toHaveLength(checkoutFailed.spans.length);
   });
 });

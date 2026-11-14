@@ -31,7 +31,7 @@ services:
     ulimits:
       nofile: { soft: 262144, hard: 262144 }
     healthcheck:
-      test: ["CMD-SHELL", "clickhouse client --user \"$$CLICKHOUSE_USER\" --password \"$$CLICKHOUSE_PASSWORD\" -q 'EXISTS TABLE ivy_control.aws_function_settings' | grep -q 1"]
+      test: ["CMD-SHELL", "clickhouse client --user \"$$CLICKHOUSE_USER\" --password \"$$CLICKHOUSE_PASSWORD\" -q 'EXISTS TABLE ivy_control.aws_project_rules' | grep -q 1"]
       interval: 3s
       timeout: 5s
       retries: 40
@@ -73,6 +73,12 @@ services:
       IVY_INGEST_TRUST_PROXY: ${IVY_INGEST_TRUST_PROXY:-}
       IVY_INGEST_MAX_BODY_BYTES: ${IVY_INGEST_MAX_BODY_BYTES:-}
       IVY_SHARDS: ${IVY_SHARDS:-}
+      # Monthly trace quotas (docs/implementation/limits.md); the 429 message links to IVY_UPGRADE_URL,
+      # else to IVY_PUBLIC_URL/settings/usage
+      IVY_PUBLIC_URL: ${IVY_PUBLIC_URL:-}
+      IVY_UPGRADE_URL: ${IVY_UPGRADE_URL:-}
+      IVY_QUOTA_REFRESH_SECONDS: ${IVY_QUOTA_REFRESH_SECONDS:-}
+      IVY_QUOTA_RETRY_AFTER_SECONDS: ${IVY_QUOTA_RETRY_AFTER_SECONDS:-}
     ports:
       - "${IVY_OTLP_HTTP_PORT:-4318}:4318"
     healthcheck:
@@ -100,13 +106,17 @@ services:
       IVY_OIDC_SCOPES: ${IVY_OIDC_SCOPES:-}
       IVY_OIDC_ALLOW_AGENTS: ${IVY_OIDC_ALLOW_AGENTS:-}
       IVY_SINGLE_TENANT: ${IVY_SINGLE_TENANT:-}
+      # Invitation emails (docs/implementation/workspaces-projects.md); unset = links to copy only
+      IVY_SMTP_URL: ${IVY_SMTP_URL:-}
+      IVY_EMAIL_FROM: ${IVY_EMAIL_FROM:-}
+      # Executable hooks (docs/implementation/hooks.md); mount a directory there to use them
+      IVY_HOOKS_DIR: ${IVY_HOOKS_DIR:-}
       # Tenancy and auto-trace (docs/implementation/tenancy.md, auto-trace.md)
       IVY_INGEST_API_KEY: ${IVY_INGEST_API_KEY:-dev-ingest-key}
       IVY_SECRET_KEY: ${IVY_SECRET_KEY:-}
       IVY_INGEST_PUBLIC_URL: ${IVY_INGEST_PUBLIC_URL:-}
       IVY_PUBLIC_URL: ${IVY_PUBLIC_URL:-}
       IVY_MCP_RESOURCE: ${IVY_MCP_RESOURCE:-}
-      IVY_CFN_TEMPLATE_URL: ${IVY_CFN_TEMPLATE_URL:-}
       IVY_AWS_PRINCIPAL_ARN: ${IVY_AWS_PRINCIPAL_ARN:-}
       IVY_AWS_DEFAULT_REGION: ${IVY_AWS_DEFAULT_REGION:-}
       IVY_AWS_SYNC_INTERVAL_SECONDS: ${IVY_AWS_SYNC_INTERVAL_SECONDS:-}
@@ -114,6 +124,9 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
       AWS_REGION: ${AWS_REGION:-}
+      # Internal admin API at /internal/* (off when unset) and the UI's billing buttons (limits.md)
+      IVY_INTERNAL_API_TOKEN: ${IVY_INTERNAL_API_TOKEN:-}
+      IVY_BILLING_URL: ${IVY_BILLING_URL:-}
     ports:
       - "${IVY_API_PORT:-3000}:3000"
     depends_on:

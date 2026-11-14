@@ -39,11 +39,14 @@ describe('generated invocations', () => {
         expect(root.attributes['error.type']).toBeTruthy();
         expect(root.events.some((e) => e.name === 'exception')).toBe(true);
       }
+      const byId = new Map(inv.spans.map((s) => [s.spanId, s]));
       for (const child of children) {
-        expect(child.kind).toBe('CLIENT');
-        expect(child.parentSpanId).toBe(root.spanId);
-        expect(child.startMs).toBeGreaterThanOrEqual(root.startMs);
-        expect(child.endMs).toBeLessThanOrEqual(root.endMs);
+        // Outgoing calls are CLIENT spans; library spans (AI SDK) are INTERNAL and may nest.
+        expect(child.kind).toBe(child.attributes['otel.scope.name'] ? 'INTERNAL' : 'CLIENT');
+        const parent = byId.get(child.parentSpanId)!;
+        expect(parent).toBeDefined();
+        expect(child.startMs).toBeGreaterThanOrEqual(parent.startMs);
+        expect(child.endMs).toBeLessThanOrEqual(parent.endMs);
         if (child.attributes['rpc.system']) expect(child.name).toBe(`${child.attributes['rpc.service']}.${child.attributes['rpc.method']}`);
       }
     }

@@ -9,16 +9,21 @@ import { GetResourcesCommand, ResourceGroupsTaggingAPIClient } from '@aws-sdk/cl
 import { AssumeRoleCommand, GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import { mockClient } from 'aws-sdk-client-mock';
 import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch';
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
-import { createApp } from '../../app.js';
+import type { createApp } from '../../app.js';
 import { resetAwsClientsForTests } from '../../lib/aws/clients.js';
 import { resetLayerCacheForTests, setLayerZipForTests } from '../../lib/aws/lambda.js';
 import { memoryStore } from '../../lib/aws/memory-store.js';
+import { clearQuickCreateCacheForTests } from '../../lib/aws/publish.js';
 import { syncInProgress } from '../../lib/aws/scheduler.js';
 import { setAwsStore } from '../../lib/aws/store.js';
+import { appFor, DEFAULT_PROJECT, resetTenancyForTests } from '../../lib/tenancy/testing.js';
 
-const app = createApp({ uiDir: '/nonexistent', tenants: { resolve: async () => ({ id: 'default', shardId: 'shard-1' }) } });
+let app: ReturnType<typeof createApp>;
 const lambda = mockClient(LambdaClient);
 const tagging = mockClient(ResourceGroupsTaggingAPIClient);
 const sts = mockClient(STSClient);
@@ -28,17 +33,29 @@ const ACCOUNT_ID = '123456789012';
 const LAYER = `arn:aws:lambda:eu-west-1:${ACCOUNT_ID}:layer:ivy-trace-nodejs:1`;
 const IVY_ENV = { AWS_LAMBDA_EXEC_WRAPPER: '/opt/ivy-wrapper', IVY_ENDPOINT: 'https://ingest.example.com', IVY_API_KEY: 'ingest-key' };
 const fnArn = (name: string) => `arn:aws:lambda:eu-west-1:${ACCOUNT_ID}:function:${name}`;
+const W = '/api/w/default/aws';
 
 const CREDS = {
   Credentials: { AccessKeyId: 'AKIA', SecretAccessKey: 's', SessionToken: 't', Expiration: new Date(Date.now() + 3600_000) },
 };
 
 let mem: ReturnType<typeof memoryStore>;
+let hooks = '';
 
-const json = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+/** A publish-cfn-template hook in a fresh hooks directory. */
+function publishHook(body: string) {
+  hooks = mkdtempSync(path.join(tmpdir(), 'ivy-hooks-'));
+  const file = path.join(hooks, 'publish-cfn-template');
+  writeFileSync(file, `#!/bin/sh\n${body}\n`);
+  chmodSync(file, 0o755);
+  vi.stubEnv('IVY_HOOKS_DIR', hooks);
+}
+
+const json = (body: unknown, method = 'POST') => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const req = async (path: string, init?: RequestInit) => (await app.request(path, init)).json() as Promise<Record<string, any>>;
 
 async function connect() {
-  const res = await app.request('/api/aws/accounts', json({ account_id: ACCOUNT_ID, regions: ['eu-west-1'], name: 'Prod' }));
+  const res = await app.request(`${W}/accounts`, json({ account_id: ACCOUNT_ID, regions: ['eu-west-1'], name: 'Prod' }));
   return (await res.json()) as Record<string, any>;
 }
 
@@ -48,7 +65,19 @@ async function settle(id: string) {
   if (account) await syncInProgress(account);
 }
 
-beforeEach(() => {
+async function connected() {
+  const a = await connect();
+  await app.request(`${W}/accounts/${a.id}/verify`, { method: 'POST' });
+  await settle(a.id);
+  return a;
+}
+
+const stackTag = (name: string, stack: string) => ({ ResourceARN: fnArn(name), Tags: [{ Key: 'aws:cloudformation:stack-name', Value: stack }] });
+
+beforeEach(async () => {
+  await resetTenancyForTests();
+  app = await appFor();
+  hooks = path.join(tmpdir(), 'ivy-no-hooks');
   lambda.reset();
   tagging.reset();
   sts.reset();
@@ -60,16 +89,19 @@ beforeEach(() => {
   mem = memoryStore();
   setAwsStore(mem.store);
   vi.stubEnv('IVY_AWS_PRINCIPAL_ARN', 'arn:aws:iam::999999999999:role/ivy');
-  vi.stubEnv('IVY_CFN_TEMPLATE_URL', 'https://bucket.s3.amazonaws.com/ivy-trace.yaml');
+  vi.stubEnv('IVY_HOOKS_DIR', hooks);
+  clearQuickCreateCacheForTests();
   vi.stubEnv('IVY_INGEST_PUBLIC_URL', 'https://ingest.example.com');
   vi.stubEnv('IVY_INGEST_API_KEY', 'ingest-key');
   vi.stubEnv('IVY_PUBLIC_URL', 'https://ivy.example.com');
   sts.on(AssumeRoleCommand).resolves(CREDS);
-  tagging.on(GetResourcesCommand).resolves({ ResourceTagMappingList: [] });
+  tagging.on(GetResourcesCommand).resolves({ ResourceTagMappingList: [stackTag('orders', 'shop-prod'), stackTag('payments', 'shop-prod'), stackTag('stage-orders', 'shop-staging')] });
   lambda.on(ListLayerVersionsCommand).resolves({ LayerVersions: [{ LayerVersionArn: LAYER, Description: 'sha256:hash' }] });
   lambda.on(ListFunctionsCommand).resolves({
     Functions: [
       { FunctionName: 'orders', FunctionArn: fnArn('orders'), Runtime: 'nodejs22.x', RevisionId: 'r1' },
+      { FunctionName: 'payments', FunctionArn: fnArn('payments'), Runtime: 'nodejs22.x', RevisionId: 'r1' },
+      { FunctionName: 'stage-orders', FunctionArn: fnArn('stage-orders'), Runtime: 'nodejs22.x', RevisionId: 'r1' },
       { FunctionName: 'legacy', FunctionArn: fnArn('legacy'), Runtime: 'python3.12', RevisionId: 'r1' },
     ],
   });
@@ -86,37 +118,67 @@ describe('AWS account routes', () => {
     vi.stubEnv('IVY_INGEST_PUBLIC_URL', '');
     vi.stubEnv('IVY_AWS_PRINCIPAL_ARN', '');
     sts.on(GetCallerIdentityCommand).resolves({ Arn: 'arn:aws:sts::999999999999:assumed-role/ivy-api/i-123' });
-    const body = await (await app.request('/api/aws/setup')).json();
+    const body = await req(`${W}/setup`);
     expect(body.principal_arn).toBe('arn:aws:iam::999999999999:role/ivy-api');
     expect(body.events_url).toBe('https://ivy.example.com/api/aws/events');
     expect(body.issues).toHaveLength(1);
     expect(body.issues[0]).toContain('IVY_INGEST_PUBLIC_URL');
   });
 
-  it('creates a pending connection with a quick-create link and unique external ID', async () => {
+  it('creates a pending connection with a unique external ID, download-only without the publish hook', async () => {
     const a = await connect();
-    const b = await (await app.request('/api/aws/accounts', json({ account_id: '210987654321', all_regions: true, stack_region: 'us-east-1' }))).json();
-    expect(a).toMatchObject({ status: 'pending', account_id: ACCOUNT_ID, regions: ['eu-west-1'], stack_region: 'eu-west-1', name: 'Prod' });
+    expect(a).toMatchObject({ quick_create_url: null, quick_create_error: null });
+    expect((await req('/api/config')).aws).toEqual({ quick_create: false });
+    const b = await req(`${W}/accounts`, json({ account_id: '210987654321', all_regions: true, stack_region: 'us-east-1', default_project: 'default' }));
+    expect(a).toMatchObject({ status: 'pending', account_id: ACCOUNT_ID, regions: ['eu-west-1'], stack_region: 'eu-west-1', name: 'Prod', default_project: null });
     expect(a.external_id).toMatch(/^ivy-[0-9a-f]{32}$/);
     expect(a.external_id).not.toBe(b.external_id);
     expect(a.role_arn).toMatch(new RegExp(`^arn:aws:iam::${ACCOUNT_ID}:role/IvyTrace-[0-9a-f]{8}$`));
-    const params = new URLSearchParams(a.quick_create_url.split('?').pop());
-    expect(params.get('param_ExternalId')).toBe(a.external_id);
-    expect(params.get('param_EventsUrl')).toBe('https://ivy.example.com/api/aws/events');
-    expect(b).toMatchObject({ all_regions: true, regions: [], stack_region: 'us-east-1' });
+    expect(b).toMatchObject({ all_regions: true, regions: [], stack_region: 'us-east-1', default_project: 'default', default_project_id: DEFAULT_PROJECT });
   });
 
   it('validates input and rejects duplicate accounts', async () => {
-    expect((await app.request('/api/aws/accounts', json({ account_id: '123' }))).status).toBe(400);
-    expect((await app.request('/api/aws/accounts', json({ account_id: ACCOUNT_ID, regions: ['mars-1'] }))).status).toBe(400);
+    expect((await app.request(`${W}/accounts`, json({ account_id: '123' }))).status).toBe(400);
+    expect((await app.request(`${W}/accounts`, json({ account_id: ACCOUNT_ID, regions: ['mars-1'] }))).status).toBe(400);
+    expect((await app.request(`${W}/accounts`, json({ account_id: ACCOUNT_ID, default_project: 'nope' }))).status).toBe(400);
     await connect();
-    expect((await app.request('/api/aws/accounts', json({ account_id: ACCOUNT_ID }))).status).toBe(409);
+    expect((await app.request(`${W}/accounts`, json({ account_id: ACCOUNT_ID }))).status).toBe(409);
   });
 
-  it('has no quick-create link without a template URL, but a downloadable template', async () => {
-    vi.stubEnv('IVY_CFN_TEMPLATE_URL', '');
+  it('publishes the pre-filled template through the hook for a quick-create link without secrets', async () => {
+    publishHook(`cat > "${'$'}{0%/*}/event.json"; echo '{"version":1,"result":{"url":"https://ivy-cfn.s3.amazonaws.com/t.yaml?X-Amz-Signature=abc","expires_at":"2099-01-01T00:00:00Z"}}'`);
+    expect((await req('/api/config')).aws).toEqual({ quick_create: true });
+    const a = await connect();
+    const secret = (await mem.store.getAccount('default', a.id))!.event_secret;
+    expect(a.quick_create_error).toBeNull();
+    const url = new URL(a.quick_create_url);
+    const params = new URLSearchParams(url.hash.split('?')[1]);
+    expect(params.get('templateURL')).toBe('https://ivy-cfn.s3.amazonaws.com/t.yaml?X-Amz-Signature=abc');
+    expect([...params.keys()].sort()).toEqual(['stackName', 'templateURL']);
+    expect(a.quick_create_url).not.toContain(secret);
+    expect(a.quick_create_url).not.toContain(a.external_id);
+    // The hook got the connection's template with everything filled in.
+    const { readFileSync } = await import('node:fs');
+    const event = JSON.parse(readFileSync(path.join(hooks, 'event.json'), 'utf8'));
+    expect(event.data.connection).toMatchObject({ id: a.id, account_id: ACCOUNT_ID, stack_name: a.stack_name });
+    const tpl = parse(event.data.template);
+    expect(tpl.Parameters.ExternalId.Default).toBe(a.external_id);
+    expect(tpl.Parameters.EventSecret).toMatchObject({ Default: secret, NoEcho: true });
+  });
+
+  it('falls back to download-only with a message when the hook fails', async () => {
+    publishHook('echo boom >&2; exit 1');
     const a = await connect();
     expect(a.quick_create_url).toBeNull();
+    expect(a.quick_create_error).toContain('Publishing the template failed');
+    publishHook(`echo '{"version":1,"result":{"url":"http://not-https"}}'`);
+    clearQuickCreateCacheForTests();
+    expect((await req(`${W}/accounts/${a.id}`)).quick_create_error).toContain('no https URL');
+  });
+
+  it('serves the pre-filled template for download', async () => {
+    const a = await connect();
+    expect(a.template_download_url).toMatch(/^\/api\/w\/default\/aws\/template\.yaml\?account=/);
     const res = await app.request(a.template_download_url);
     expect(res.headers.get('content-disposition')).toContain('attachment');
     const doc = parse(await res.text());
@@ -124,92 +186,172 @@ describe('AWS account routes', () => {
     expect(doc.Parameters.RoleName.Default).toBe(a.role_arn.split('/').pop());
     expect(doc.Parameters.TrustedPrincipalArn.Default).toBe('arn:aws:iam::999999999999:role/ivy');
 
-    const generic = parse(await (await app.request('/api/aws/template.yaml')).text());
+    const generic = parse(await (await app.request(`${W}/template.yaml`)).text());
     expect(generic.Parameters.ExternalId.Default).toBeUndefined();
   });
 
-  it('verifies, syncs and lists functions with counts', async () => {
+  it('verifies and syncs, tracing nothing: functions are available, grouped by stack, and counted as new', async () => {
     const a = await connect();
     sts
       .on(AssumeRoleCommand)
       .rejectsOnce(Object.assign(new Error('not authorized to perform sts:AssumeRole'), { name: 'AccessDenied' }))
       .resolves(CREDS);
-    const failed = await (await app.request(`/api/aws/accounts/${a.id}/verify`, { method: 'POST' })).json();
+    const failed = await req(`${W}/accounts/${a.id}/verify`, { method: 'POST' });
     expect(failed).toMatchObject({ verified: false, account: { status: 'pending' } });
     expect(failed.account.error).toContain('not authorized');
 
-    const ok = await (await app.request(`/api/aws/accounts/${a.id}/verify`, { method: 'POST' })).json();
+    const ok = await req(`${W}/accounts/${a.id}/verify`, { method: 'POST' });
     expect(ok).toMatchObject({ verified: true, account: { status: 'connected', error: null } });
     await settle(a.id);
+    expect(lambda.commandCalls(UpdateFunctionConfigurationCommand)).toHaveLength(0);
 
-    const list = await (await app.request('/api/aws/accounts')).json();
-    expect(list.items[0].counts).toMatchObject({ traced: 1, unsupported: 1, total: 2 });
-    expect(list.items[0].last_sync_at).not.toBeNull();
+    const list = await req(`${W}/accounts`);
+    expect(list.items[0].counts).toMatchObject({ traced: 0, available: 3, unsupported: 1, total: 4, new: 3 });
 
-    const fns = await (await app.request(`/api/aws/functions?account=${ACCOUNT_ID}`)).json();
-    expect(fns.items.map((f: { name: string; state: string; tracing_enabled: boolean }) => [f.name, f.state, f.tracing_enabled])).toEqual([
-      ['orders', 'traced', true],
-      ['legacy', 'unsupported', true],
+    const grouped = await req(`${W}/accounts/${a.id}/functions`);
+    expect(grouped.groups.map((g: any) => [g.stack, g.region, g.counts.total, g.suggested_project])).toEqual([
+      ['shop-prod', 'eu-west-1', 2, 'shop-prod'],
+      ['shop-staging', 'eu-west-1', 1, 'shop-staging'],
+      [null, null, 1, null],
     ]);
+    expect(grouped.groups[0].functions[0]).toMatchObject({ name: 'orders', state: 'available', stack: 'shop-prod', new: true, project: null });
+
+    const reviewed = await req(`${W}/accounts/${a.id}`, json({ reviewed: true }, 'PATCH'));
+    expect(reviewed.counts.new).toBe(0);
   });
 
-  it('opts a function out and back in', async () => {
-    const a = await connect();
-    await app.request(`/api/aws/accounts/${a.id}/verify`, { method: 'POST' });
-    await settle(a.id);
+  it('traces a stack into a new project with a rule, after a dry run, and detaches when the rule goes', async () => {
+    vi.stubEnv('IVY_SECRET_KEY', 'server-secret');
+    const a = await connected();
+    const preview = await req(`${W}/rules/dry-run`, json({ matcher: { stack: 'shop-prod' }, project: 'shop-prod' }));
+    expect(preview).toMatchObject({ count: 2, summary: { trace: 2, unchanged: 0, excluded: 0, other: 0, unsupported: 0 } });
+    expect(preview.items.map((i: any) => [i.function.name, i.outcome, i.project])).toEqual([
+      ['orders', 'trace', 'shop-prod'],
+      ['payments', 'trace', 'shop-prod'],
+    ]);
+    expect(await mem.store.listRules('default')).toEqual([]);
 
-    lambda.on(GetFunctionConfigurationCommand).resolves({
-      FunctionName: 'orders', FunctionArn: fnArn('orders'), Runtime: 'nodejs22.x', RevisionId: 'r2', Layers: [{ Arn: LAYER }], Environment: { Variables: IVY_ENV },
+    const created = await app.request(`${W}/rules`, json({ matcher: { stack: 'shop-prod' }, new_project: { name: 'Shop (prod)', slug: 'shop-prod' } }));
+    expect(created.status).toBe(201);
+    const { rule, project } = (await created.json()) as Record<string, any>;
+    expect(project).toMatchObject({ slug: 'shop-prod', name: 'Shop (prod)' });
+    expect(rule).toMatchObject({ matcher: { stack: 'shop-prod', name: null }, project: 'shop-prod', enabled: true, position: 0 });
+    await settle(a.id);
+    const updated = lambda.commandCalls(UpdateFunctionConfigurationCommand).map((c) => c.args[0].input.FunctionName!.split(':').pop());
+    expect(updated.sort()).toEqual(['orders', 'payments']);
+
+    const grouped = await req(`${W}/accounts/${a.id}/functions`);
+    expect(grouped.groups[0]).toMatchObject({ stack: 'shop-prod', counts: { traced: 2 }, rule: { id: rule.id, project: 'shop-prod' } });
+    expect(grouped.groups[0].functions[0]).toMatchObject({ state: 'traced', project: 'shop-prod', source: 'rule', rule_id: rule.id });
+    expect((await req(`${W}/functions?project=shop-prod`)).items).toHaveLength(2);
+
+    // Once traced, the dry run reports them as unchanged.
+    expect((await req(`${W}/rules/dry-run`, json({ matcher: { stack: 'shop-prod' }, project: 'shop-prod' }))).summary.unchanged).toBe(2);
+    expect((await req(`${W}/rules`)).items).toHaveLength(1);
+
+    lambda.on(ListFunctionsCommand).resolves({
+      Functions: [
+        { FunctionName: 'orders', FunctionArn: fnArn('orders'), Runtime: 'nodejs22.x', RevisionId: 'r2', Layers: [{ Arn: LAYER }], Environment: { Variables: IVY_ENV } },
+      ],
     });
     lambda.resetHistory();
-    const off = await (await app.request(`/api/aws/functions/${ACCOUNT_ID}/eu-west-1/orders`, { ...json({ tracing_enabled: false }), method: 'PUT' })).json();
-    expect(off).toMatchObject({ applied: true, function: { state: 'opted_out', tracing_enabled: false } });
+    expect(await req(`${W}/rules/${rule.id}`, { method: 'DELETE' })).toEqual({ deleted: true });
+    await settle(a.id);
+    expect(lambda.commandCalls(UpdateFunctionConfigurationCommand)[0].args[0].input).toMatchObject({ Layers: [], Environment: { Variables: {} } });
+    expect((await req(`${W}/functions`)).items[0]).toMatchObject({ name: 'orders', state: 'available' });
+  });
+
+  it('validates rules', async () => {
+    expect((await app.request(`${W}/rules`, json({ matcher: {} }))).status).toBe(400);
+    expect((await app.request(`${W}/rules`, json({ matcher: { region: 'mars-1' } }))).status).toBe(400);
+    expect((await app.request(`${W}/rules`, json({ matcher: { name: '*' }, project: 'nope' }))).status).toBe(400);
+    expect((await app.request(`${W}/rules/dry-run`, json({ matcher: 'x' }))).status).toBe(400);
+    expect((await app.request(`${W}/rules/rul_nope`, { method: 'DELETE' })).status).toBe(404);
+    const a = (await req(`${W}/rules`, json({ matcher: { name: 'a-*' } }))).rule;
+    const b = (await req(`${W}/rules`, json({ matcher: { name: 'b-*' }, enabled: false }))).rule;
+    expect(a.project_id).toBe(DEFAULT_PROJECT);
+    expect((await req(`${W}/rules/order`, json({ order: [b.id, a.id] }, 'PUT'))).items.map((r: any) => r.id)).toEqual([b.id, a.id]);
+    expect(await req(`${W}/rules/${b.id}`, json({ enabled: true, matcher: { name: 'b-*', region: 'eu-west-1' } }, 'PATCH'))).toMatchObject({
+      enabled: true,
+      position: 0,
+      matcher: { name: 'b-*', region: 'eu-west-1' },
+    });
+  });
+
+  it('applies a manual choice per function: trace into a project, exclude, back to rules', async () => {
+    const a = await connected();
+    const put = (body: unknown) => req(`${W}/functions/${ACCOUNT_ID}/eu-west-1/orders`, json(body, 'PUT'));
+    lambda.on(GetFunctionConfigurationCommand).resolves({ FunctionName: 'orders', FunctionArn: fnArn('orders'), Runtime: 'nodejs22.x', RevisionId: 'r2' });
+
+    const on = await put({ mode: 'trace', project: 'default' });
+    expect(on).toMatchObject({ applied: true, function: { state: 'traced', project: 'default', source: 'manual', manual: { mode: 'trace', project: 'default' } } });
+    expect(lambda.commandCalls(UpdateFunctionConfigurationCommand)[0].args[0].input).toMatchObject({ Layers: [LAYER], Environment: { Variables: IVY_ENV } });
+
+    lambda.on(GetFunctionConfigurationCommand).resolves({
+      FunctionName: 'orders', FunctionArn: fnArn('orders'), Runtime: 'nodejs22.x', RevisionId: 'r3', Layers: [{ Arn: LAYER }], Environment: { Variables: IVY_ENV },
+    });
+    lambda.resetHistory();
+    expect(await put({ mode: 'exclude' })).toMatchObject({ applied: true, function: { state: 'opted_out', source: 'manual', manual: { mode: 'exclude' } } });
     expect(lambda.commandCalls(UpdateFunctionConfigurationCommand)[0].args[0].input).toMatchObject({ Layers: [], Environment: { Variables: {} } });
 
-    // The next full sync keeps it opted out.
+    // A full sync keeps it excluded, even with a catch-all rule.
+    await req(`${W}/rules`, json({ matcher: { name: '*' } }));
     await settle(a.id);
-    const fns = await (await app.request('/api/aws/functions')).json();
-    expect(fns.items.find((f: { name: string }) => f.name === 'orders')).toMatchObject({ state: 'opted_out', tracing_enabled: false });
+    const fns = (await req(`${W}/functions`)).items;
+    expect(fns.find((f: any) => f.name === 'orders')).toMatchObject({ state: 'opted_out' });
+    expect(fns.find((f: any) => f.name === 'payments')).toMatchObject({ state: 'traced', source: 'rule' });
 
-    const bad = await app.request(`/api/aws/functions/${ACCOUNT_ID}/eu-west-1/orders`, { ...json({ tracing_enabled: 'no' }), method: 'PUT' });
-    expect(bad.status).toBe(400);
+    lambda.on(GetFunctionConfigurationCommand).resolves({ FunctionName: 'orders', FunctionArn: fnArn('orders'), Runtime: 'nodejs22.x', RevisionId: 'r4' });
+    expect(await put({ mode: 'rules' })).toMatchObject({ function: { state: 'traced', source: 'rule', manual: null } });
+    expect((await app.request(`${W}/functions/${ACCOUNT_ID}/eu-west-1/orders`, json({ mode: 'off' }, 'PUT'))).status).toBe(400);
+    expect((await app.request(`${W}/functions/000000000000/eu-west-1/orders`, json({ mode: 'exclude' }, 'PUT'))).status).toBe(404);
+  });
+
+  it('traces selected functions in bulk', async () => {
+    const a = await connected();
+    const res = await app.request(
+      `${W}/functions/bulk`,
+      json({ mode: 'trace', functions: ['orders', 'stage-orders'].map((name) => ({ account_id: ACCOUNT_ID, region: 'eu-west-1', name })) }),
+    );
+    expect(res.status).toBe(202);
+    await settle(a.id);
+    const states = Object.fromEntries((await req(`${W}/functions`)).items.map((f: any) => [f.name, f.state]));
+    expect(states).toEqual({ orders: 'traced', payments: 'available', 'stage-orders': 'traced', legacy: 'unsupported' });
   });
 
   it('updates regions and deletes with detach', async () => {
-    const a = await connect();
-    await app.request(`/api/aws/accounts/${a.id}/verify`, { method: 'POST' });
-    await settle(a.id);
-    const patched = await (await app.request(`/api/aws/accounts/${a.id}`, { ...json({ regions: ['eu-west-1', 'us-east-1'] }), method: 'PATCH' })).json();
+    const a = await connected();
+    const patched = await req(`${W}/accounts/${a.id}`, json({ regions: ['eu-west-1', 'us-east-1'] }, 'PATCH'));
     expect(patched.regions).toEqual(['eu-west-1', 'us-east-1']);
     await settle(a.id);
 
-    const res = await (await app.request(`/api/aws/accounts/${a.id}`, { method: 'DELETE' })).json();
+    const res = await req(`${W}/accounts/${a.id}`, { method: 'DELETE' });
     expect(res).toMatchObject({ deleted: true, detached: true });
-    expect((await (await app.request('/api/aws/accounts')).json()).items).toEqual([]);
-    expect((await (await app.request('/api/aws/functions')).json()).items).toEqual([]);
-    expect((await app.request(`/api/aws/accounts/${a.id}`)).status).toBe(404);
+    expect((await req(`${W}/accounts`)).items).toEqual([]);
+    expect((await req(`${W}/functions`)).items).toEqual([]);
+    expect((await app.request(`${W}/accounts/${a.id}`)).status).toBe(404);
   });
 
   it('turns throttle polling off and on, and reports a missing permission', async () => {
     const a = await connect();
     expect(a).toMatchObject({ throttle_metrics: true, throttle_status: null });
+    // Only traced functions are polled: a rule traces everything into the default project.
+    await req(`${W}/rules`, json({ matcher: { name: '*' } }));
     cloudwatch.on(GetMetricDataCommand).rejects(Object.assign(new Error('not authorized to perform: cloudwatch:GetMetricData'), { name: 'AccessDenied' }));
-    await app.request(`/api/aws/accounts/${a.id}/verify`, { method: 'POST' });
+    await app.request(`${W}/accounts/${a.id}/verify`, { method: 'POST' });
     await settle(a.id);
-    const after = await (await app.request(`/api/aws/accounts/${a.id}`)).json();
+    const after = await (await app.request(`${W}/accounts/${a.id}`)).json();
     expect(after).toMatchObject({ status: 'connected', throttle_status: 'missing_permission' });
 
-    const off = await (await app.request(`/api/aws/accounts/${a.id}`, { ...json({ throttle_metrics: false }), method: 'PATCH' })).json();
+    const off = await (await app.request(`${W}/accounts/${a.id}`, { ...json({ throttle_metrics: false }), method: 'PATCH' })).json();
     expect(off.throttle_metrics).toBe(false);
     await settle(a.id);
-    const bad = await app.request(`/api/aws/accounts/${a.id}`, { ...json({ throttle_metrics: 'no' }), method: 'PATCH' });
+    const bad = await app.request(`${W}/accounts/${a.id}`, { ...json({ throttle_metrics: 'no' }), method: 'PATCH' });
     expect(bad.status).toBe(400);
   });
 
   it('accepts EventBridge events only with the connection secret', async () => {
-    const a = await connect();
-    await app.request(`/api/aws/accounts/${a.id}/verify`, { method: 'POST' });
-    await settle(a.id);
+    const a = await connected();
     const secret = (await mem.store.getAccount('default', a.id))!.event_secret;
     const event = { account: ACCOUNT_ID, region: 'eu-west-1', 'detail-type': 'AWS API Call via CloudTrail' };
 

@@ -1,30 +1,26 @@
 import type { Context } from 'hono';
 import { principalArn } from '../../lib/aws/clients.js';
-import { eventsUrl } from '../../lib/aws/config.js';
-import { roleNameOf } from '../../lib/aws/present.js';
+import { connectionTemplate } from '../../lib/aws/publish.js';
 import { awsStore } from '../../lib/aws/store.js';
-import { templateYaml, type TemplateParams } from '../../lib/aws/template.js';
+import { templateYaml } from '../../lib/aws/template.js';
 import { tenantOf } from '../../lib/tenancy/context.js';
 
 /**
- * Without `account`: the generic template (only the trusted principal has a default), suitable for
- * publishing to S3 as IVY_CFN_TEMPLATE_URL. With `account`: defaults for that connection filled in,
- * for the "download and upload in the console" path.
+ * With `account`: that connection's template with all its values (including the event secret) as
+ * defaults, for the "download and upload in the CloudFormation console" path. Without: the template
+ * with only the trusted principal filled in.
  */
 export async function getAwsTemplate(c: Context) {
-  const params: TemplateParams = { principalArn: await principalArn() };
   const id = c.req.query('account');
+  let body: string;
   if (id) {
     const account = await awsStore().getAccount(tenantOf(c).id, id);
     if (!account) return c.json({ error: 'Account not found' }, 404);
-    Object.assign(params, {
-      externalId: account.external_id,
-      roleName: roleNameOf(account),
-      eventsUrl: eventsUrl() ?? '',
-      eventSecret: eventsUrl() ? account.event_secret : '',
-    });
+    body = await connectionTemplate(account);
+  } else {
+    body = templateYaml({ principalArn: await principalArn() });
   }
   c.header('content-type', 'text/yaml; charset=utf-8');
   if (c.req.query('download')) c.header('content-disposition', `attachment; filename="ivy-trace${id ? `-${id.slice(0, 8)}` : ''}.yaml"`);
-  return c.body(templateYaml(params));
+  return c.body(body);
 }

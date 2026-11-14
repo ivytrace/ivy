@@ -18,9 +18,22 @@ import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from "@/component
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { ApiError } from "@/lib/api/client";
 import { useTrace } from "@/lib/api/hooks";
-import { invocationsLink } from "@/lib/links/links";
+import { PickProject } from "@/components/common/pick-project";
+import { ALL_PROJECTS, invocationsLink } from "@/lib/links/links";
+import { useScope } from "@/lib/links/use-scope";
 import type { GraphNode } from "@/lib/spans/graph";
-import { describeSpan, getException, getLogs, invocationResources, isInvocationSpan, spanFailureKind } from "@/lib/spans/services";
+import { LlmUsageTable } from "@/components/trace/llm-details";
+import {
+  describeSpan,
+  formatTokens,
+  getException,
+  getLogs,
+  invocationResources,
+  isInvocationSpan,
+  llmUsage,
+  spanFailureKind,
+  type LlmUsage,
+} from "@/lib/spans/services";
 import { buildWaterfall, filterInvocation, findRootInvocation } from "@/lib/spans/tree";
 import type { Span } from "@/lib/spans/types";
 import { formatDuration, formatTimestamp } from "@/lib/utils/format";
@@ -55,10 +68,11 @@ function ConsoleLinks({ invocation }: { invocation: Span }) {
   );
 }
 
-function Summary({ invocation, traceId }: { invocation: Span; traceId: string }) {
+function Summary({ invocation, traceId, usage }: { invocation: Span; traceId: string; usage?: LlmUsage }) {
   const a = invocation.attributes;
   const exception = getException(invocation);
   const res = invocationResources(invocation);
+  const tokens = usage && usage.calls > 0;
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <dl className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
@@ -98,6 +112,18 @@ function Summary({ invocation, traceId }: { invocation: Span; traceId: string })
             </dd>
           </>
         )}
+        {tokens && (
+          <>
+            <dt>Tokens</dt>
+            <dd className="mr-4 font-semibold text-foreground">
+              <Tooltipped title={`${usage.calls} LLM ${usage.calls === 1 ? "call" : "calls"}: input → output tokens`}>
+                <span className="tabular-nums">
+                  {formatTokens(usage.inputTokens)} → {formatTokens(usage.outputTokens)}
+                </span>
+              </Tooltipped>
+            </dd>
+          </>
+        )}
         <dt className="hidden lg:block">Trace</dt>
         <dd className="mr-4 hidden font-mono text-xs font-semibold text-foreground lg:block">{traceId}</dd>
       </dl>
@@ -106,7 +132,7 @@ function Summary({ invocation, traceId }: { invocation: Span; traceId: string })
   );
 }
 
-function Overview({ invocation }: { invocation: Span }) {
+function Overview({ invocation, usage }: { invocation: Span; usage?: LlmUsage }) {
   const d = describeSpan(invocation);
   const exception = getException(invocation);
   return (
@@ -121,6 +147,12 @@ function Overview({ invocation }: { invocation: Span }) {
         <h4 className="mb-3 text-sm font-medium">Invocation</h4>
         <SpanFields span={invocation} />
       </section>
+      {usage && usage.calls > 0 && (
+        <section>
+          <h4 className="mb-3 text-sm font-medium">LLM usage</h4>
+          <LlmUsageTable usage={usage} />
+        </section>
+      )}
       <PayloadPreview title="Event payload" value={d.request} truncated={d.truncated} />
       <PayloadPreview title="Return value" value={d.response} truncated={d.truncated} />
       <PayloadPreview title="Resource" value={invocation.resource} defaultOpen={false} />
@@ -129,6 +161,7 @@ function Overview({ invocation }: { invocation: Span }) {
 }
 
 function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
+  const scope = useScope();
   const [params, setParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>("overview");
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
@@ -145,6 +178,7 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
     return buildWaterfall(filterInvocation(all.rows, invocation.span_id).map((r) => r.span));
   }, [spans, filtering, invocation.span_id]);
   const visibleSpans = useMemo(() => rows.map((r) => r.span), [rows]);
+  const usage = useMemo(() => llmUsage(visibleSpans), [visibleSpans]);
   const visibleIds = new Set(visibleSpans.map((s) => s.span_id));
   const logs = getLogs(spans).filter((l) => visibleIds.has(l.spanId));
 
@@ -179,12 +213,12 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
     <>
       <div className="border-b px-6 py-5 md:px-8">
         <Button variant="link" className="h-auto px-0" asChild>
-          <Link to={invocationsLink({ function: invocation.name })}>← {invocation.name}</Link>
+          <Link to={invocationsLink(scope, { function: invocation.name })}>← {invocation.name}</Link>
         </Button>
         <h1 className="truncate text-2xl font-bold">
           {invocation.attributes["faas.invocation_id"] || invocation.name}
         </h1>
-        <Summary invocation={invocation} traceId={traceId} />
+        <Summary invocation={invocation} traceId={traceId} usage={usage} />
         <FailureNote invocation={invocation} className="mt-3 max-w-3xl" />
       </div>
 
@@ -211,7 +245,7 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
               )}
             </div>
             <TabsContent value="overview">
-              <Overview invocation={invocation} />
+              <Overview invocation={invocation} usage={usage} />
             </TabsContent>
             <TabsContent value="timeline">
               <Waterfall rows={rows} totalMs={totalMs} openIds={openIds} onToggle={toggle} />
@@ -228,8 +262,16 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
 
 export default function TraceDetails() {
   const { traceId = "" } = useParams();
+  const scope = useScope();
   const { data, error, mutate } = useTrace(traceId);
 
+  if (scope.project === ALL_PROJECTS) {
+    return (
+      <div className="p-6 md:p-8">
+        <PickProject workspace={scope.workspace} page="invocations" />
+      </div>
+    );
+  }
   if (error) {
     return error instanceof ApiError && error.status === 404 ? (
       <EmptyState

@@ -82,20 +82,23 @@ line starts with its workspace slug in brackets (`[shop-production] …`). Time 
 | tool | input | output |
 |---|---|---|
 | `list_workspaces` | – | `slug · name · ID` per workspace. |
-| `find_failing_invocations` | `workspace?`, `function?`, `since` (1h), `limit` (20, max 100) | Count line, then one line per failed invocation (`formatInvocationLine`), newest first across workspaces. Failures outside the handler carry their label (`Init failed`, `Out of memory`, `Timed out`, `Crashed`), `no request` for init failures without one, and a `no trace: …` note when the runtime never started or the process died before the tracer could report. |
-| `search_invocations` | `workspace?`, `q?`, `function?`, `status?`, `since` (24h), `limit` (20) | Same lines. `q` is the API's free text (request/trace ID exact, error message or path substring). |
-| `list_error_groups` | `workspace?`, `function?`, `since` (24h), `limit` (20) | Totals line, then `count× function · [label ·] type: message · first … · last … · sample trace …`, most frequent first; init failure groups say they have no trace spans. |
-| `get_trace_summary` | `workspace?`, `trace_id` or `request_id`, `detail` (normal), `max_tokens` (2000) | `[workspace]` line, then `formatTrace`. A request ID is looked up over the last 7 days. |
-| `compare_invocations` | `workspace?`, `trace_id`, `baseline_trace_id?`, `max_tokens` | `compareTraces`. Without a baseline: the latest successful invocation of the same function in the same workspace (last 7 days). |
-| `render_waterfall` | `workspace?`, `trace_id` | MCP Apps view of the span waterfall; text: the `formatTrace` tree. |
-| `render_graph` | `workspace?`, `trace_id` | MCP Apps view of the service graph; text: the `formatServiceGraph` edge list. |
+| `find_failing_invocations` | `workspace?`, `project?`, `function?`, `since` (1h), `limit` (20, max 100) | Count line, then one line per failed invocation (`formatInvocationLine`), newest first across workspaces. Failures outside the handler carry their label (`Init failed`, `Out of memory`, `Timed out`, `Crashed`), `no request` for init failures without one, and a `no trace: …` note when the runtime never started or the process died before the tracer could report. |
+| `search_invocations` | `workspace?`, `project?`, `q?`, `function?`, `status?`, `since` (24h), `limit` (20) | Same lines. `q` is the API's free text (request/trace ID exact, error message or path substring). |
+| `list_error_groups` | `workspace?`, `project?`, `function?`, `since` (24h), `limit` (20) | Totals line, then `count× function · [label ·] type: message · first … · last … · sample trace …`, most frequent first; init failure groups say they have no trace spans, and Lambda throttles appear as one `Throttled` line per function (no trace). |
+| `get_trace_summary` | `workspace?`, `project?`, `trace_id` or `request_id`, `detail` (normal), `max_tokens` (2000) | `[workspace]` line, then `formatTrace`. A request ID is looked up over the last 7 days. |
+| `compare_invocations` | `workspace?`, `project?`, `trace_id`, `baseline_trace_id?`, `max_tokens` | `compareTraces`. Without a baseline: the latest successful invocation of the same function in the same workspace (last 7 days). |
+| `render_waterfall` | `workspace?`, `project?`, `trace_id` | MCP Apps view of the span waterfall; text: the `formatTrace` tree. |
+| `render_graph` | `workspace?`, `project?`, `trace_id` | MCP Apps view of the service graph; text: the `formatServiceGraph` edge list. |
 
 Errors (unknown trace or workspace, invalid range) come back as tool results with `isError: true` and a sentence
 saying what to do next, not as protocol errors, so the model can recover.
 
-**Projects** (coming: a `project_id` on all trace data) slot in as an optional `project` input next to `workspace`,
-narrowing within the selected workspaces, and the line label becomes `[workspace/project]` (`label()` in
-`tools/common.ts`).
+**Projects** (`workspaces-projects.md`): every tool that reads data also takes an optional `project` (slug or ID),
+next to `workspace`. It narrows each read to that project of the selected workspaces (`scoped()` in
+`workspaces/scope.ts` passes it to `IvyData`); workspaces without such a project contribute nothing. Without it,
+reads cover every project of each workspace. In the API, `lib/mcp/data.ts` runs the reads through the same query
+functions as the HTTP routes (`lib/data/*`, with a `DataScope` per workspace and project), so the project guard
+applies too. Result lines are still labelled `[workspace]`.
 
 ### Workspaces and the fan-out
 

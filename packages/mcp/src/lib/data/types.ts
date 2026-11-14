@@ -9,6 +9,8 @@ export interface Workspace {
 }
 
 export interface InvocationQuery {
+  /** Project slug or ID within the workspace; omit for all of its projects. */
+  project?: string;
   function?: string;
   status?: "ok" | "error";
   /** Free text: request ID, trace ID, error message or HTTP path (as `GET /api/invocations?q=`). */
@@ -22,6 +24,8 @@ export interface InvocationQuery {
 }
 
 export interface ErrorQuery {
+  /** Project slug or ID within the workspace; omit for all of its projects. */
+  project?: string;
   function?: string;
   since?: string;
 }
@@ -36,6 +40,6 @@ export interface IvyData<W extends Workspace = Workspace> {
   workspaces(): Promise<W[]>;
   invocations(workspace: W, query: InvocationQuery): Promise<Invocation[]>;
   /** null when the trace is not in this workspace. */
-  trace(workspace: W, traceId: string): Promise<Trace | null>;
+  trace(workspace: W, traceId: string, project?: string): Promise<Trace | null>;
   errors(workspace: W, query: ErrorQuery): Promise<ErrorGroup[]>;
 }

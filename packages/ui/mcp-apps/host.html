@@ -25,6 +25,11 @@
         <option value="render_graph">render_graph</option>
       </select>
       <input name="trace" placeholder="trace ID (empty: fixture)" />
+      <select name="fixture">
+        <option value="">default fixture</option>
+        <option value="support">AI SDK trace (ai.*)</option>
+        <option value="support-genai">AI SDK 7 trace (gen_ai.*)</option>
+      </select>
       <input name="workspace" placeholder="workspace" size="10" />
       <label><input type="checkbox" name="dark" /> dark host</label>
       <button id="run">Call tool</button>

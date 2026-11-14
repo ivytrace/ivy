@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils/cn";
 import { formatDuration } from "@/lib/utils/format";
 
 const BAR_COLORS: Partial<Record<Icon, string>> = {
+  ai: "bg-violet-400",
   function: "bg-orange-400",
   lambda: "bg-orange-400",
   dynamodb: "bg-fuchsia-400",
@@ -77,7 +78,7 @@ export function Waterfall({
                   />
                   <ServiceIcon icon={d.icon} label={d.serviceLabel} />
                   <span className={cn("min-w-0 flex-1 truncate", d.isError && "text-red-400")}>
-                    <SpanTitle description={d} />
+                    <SpanTitle description={d} stackNote />
                   </span>
                 </div>
                 <div className="relative flex h-9 flex-1 items-center pr-20">

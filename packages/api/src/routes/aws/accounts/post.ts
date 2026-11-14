@@ -1,11 +1,11 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { principalArn, roleArnFor } from '../../../lib/aws/clients.js';
+import { roleArnFor } from '../../../lib/aws/clients.js';
 import { defaultRegion } from '../../../lib/aws/config.js';
-import { presentAccount } from '../../../lib/aws/present.js';
 import { isRegion } from '../../../lib/aws/regions.js';
-import { jsonBody, parseRegions } from '../../../lib/aws/requests.js';
+import { jsonBody, parseRegions, presentAccounts } from '../../../lib/aws/requests.js';
+import { targetProject } from '../../../lib/aws/rules.js';
 import { awsStore } from '../../../lib/aws/store.js';
 import type { AwsAccount } from '../../../lib/aws/types.js';
 import { tenantOf } from '../../../lib/tenancy/context.js';
@@ -40,6 +40,8 @@ export async function postAwsAccount(c: Context) {
     event_secret: randomBytes(24).toString('base64url'),
     stack_name: `ivy-trace-${short}`,
     stack_region: stackRegion,
+    default_project_id: body.default_project ? await targetProject(tenant, body.default_project) : '',
+    reviewed_at: 0,
     regions,
     all_regions: allRegions,
     status: 'pending',
@@ -52,5 +54,6 @@ export async function postAwsAccount(c: Context) {
     throttles_polled_to: 0,
   };
   await awsStore().saveAccount(account);
-  return c.json(presentAccount(account, await principalArn()), 201);
+  const [presented] = await presentAccounts(c, [account]);
+  return c.json(presented, 201);
 }

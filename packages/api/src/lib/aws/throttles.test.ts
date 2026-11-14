@@ -1,3 +1,4 @@
+import { defaultProjectId } from '../tenancy/ids.js';
 import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import { mockClient } from 'aws-sdk-client-mock';
@@ -30,6 +31,8 @@ const account: AwsAccount = {
   created_at: 1,
   verified_at: 1,
   last_sync_at: 0,
+  default_project_id: '',
+  reviewed_at: 0,
   throttle_metrics: true,
   throttle_status: '',
   throttles_polled_to: 0,
@@ -44,6 +47,13 @@ const fn = (function_name: string, state: FunctionStatus['state'] = 'traced', re
   runtime: 'nodejs22.x',
   state,
   reason: '',
+  project_id: function_name === 'worker' ? 'prj_ops' : '',
+  project_source: state === 'traced' ? 'rule' : '',
+  rule_id: '',
+  stack: '',
+  tags: {},
+  last_modified: '',
+  first_seen_at: 1,
   updated_at: 1,
 });
 
@@ -98,7 +108,7 @@ describe('throttle polling', () => {
     expect(cw.commandCalls(GetMetricDataCommand)).toHaveLength(1);
   });
 
-  it('fetches per-function throttles for traced functions only, for the throttled minutes', async () => {
+  it('fetches per-function throttles for traced functions only, for the throttled minutes, under their projects', async () => {
     const t1 = new Date(NOW_MINUTE - 7 * MIN);
     const t2 = new Date(NOW_MINUTE - 4 * MIN);
     cw.on(GetMetricDataCommand)
@@ -119,9 +129,9 @@ describe('throttle polling', () => {
       [{ Name: 'FunctionName', Value: 'worker' }],
     ]);
     expect(saved).toEqual([
-      { tenant_id: 'ten_a', function: 'checkout', region: 'eu-west-1', minute: t1.getTime(), account_id: account.account_id, throttles: 3 },
-      { tenant_id: 'ten_a', function: 'checkout', region: 'eu-west-1', minute: t2.getTime(), account_id: account.account_id, throttles: 4 },
-      { tenant_id: 'ten_a', function: 'worker', region: 'eu-west-1', minute: t2.getTime(), account_id: account.account_id, throttles: 1 },
+      { tenant_id: 'ten_a', project_id: defaultProjectId('ten_a'), function: 'checkout', region: 'eu-west-1', minute: t1.getTime(), account_id: account.account_id, throttles: 3 },
+      { tenant_id: 'ten_a', project_id: defaultProjectId('ten_a'), function: 'checkout', region: 'eu-west-1', minute: t2.getTime(), account_id: account.account_id, throttles: 4 },
+      { tenant_id: 'ten_a', project_id: 'prj_ops', function: 'worker', region: 'eu-west-1', minute: t2.getTime(), account_id: account.account_id, throttles: 1 },
     ]);
   });
 

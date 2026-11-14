@@ -1,4 +1,15 @@
-import { describeSpan, isAwsSpan, isHttpSpan, isInvocationSpan, triggerLabel, type Span } from "@ivy/spans";
+import {
+  describeLlm,
+  describeSpan,
+  isAwsSpan,
+  isHttpSpan,
+  isInvocationSpan,
+  requestedTools,
+  triggerLabel,
+  type LlmSpan,
+  type Span,
+} from "@ivy/spans";
+import { ms } from "../text/text.js";
 
 function httpTarget(span: Span): string {
   const a = span.attributes;
@@ -25,11 +36,36 @@ export function triggerText(span: Span): string {
 }
 
 /**
+ * LLM spans, e.g. `ai.generateText.doGenerate gpt-4o-mini 812→24 tok tool:getOrder` or
+ * `ai.streamText.doStream claude-haiku-4-5 164→38 tok (ttft 318ms)`.
+ */
+function llmLabel(span: Span, l: LlmSpan): string {
+  if (l.kind === "tool") return l.tool && !span.name.includes(l.tool.name) ? `${span.name} ${l.tool.name}` : span.name;
+  const parts = [span.name];
+  if (l.model && !span.name.includes(l.model)) parts.push(l.model);
+  if (l.inputTokens !== undefined || l.outputTokens !== undefined) parts.push(`${l.inputTokens ?? 0}→${l.outputTokens ?? 0} tok`);
+  if (l.ttftMs !== undefined) parts.push(`(ttft ${ms(l.ttftMs)})`);
+  const tools = requestedTools(l);
+  if (tools.length) parts.push(tools.map((t) => `tool:${t}`).join(" "));
+  if (l.finishReason && /length|filter|error/.test(l.finishReason)) parts.push(`finish:${l.finishReason}`);
+  return parts.join(" ");
+}
+
+/** Short operation name of an LLM span for matching across traces, e.g. `ai.generateText gpt-4o-mini`. */
+function llmKey(span: Span, l: LlmSpan): string {
+  if (l.kind === "tool") return l.tool && !span.name.includes(l.tool.name) ? `${span.name} ${l.tool.name}` : span.name;
+  return l.model && !span.name.includes(l.model) ? `${span.name} ${l.model}` : span.name;
+}
+
+/**
  * One-line, service-aware description of a span, e.g. `DynamoDB.GetItem checkout-users (1 item returned)`
  * or `POST api.stripe.com/v1/payment_intents → 402`. Built on the UI's describers (@ivy/spans).
  */
 export function spanLabel(span: Span): string {
   if (isInvocationSpan(span)) return `${span.name} [invocation] ${triggerText(span)}`;
+
+  const llm = describeLlm(span);
+  if (llm) return llmLabel(span, llm);
 
   if (isAwsSpan(span)) {
     const d = describeSpan(span);
@@ -63,6 +99,8 @@ const withoutIds = (path: string) =>
 /** Stable identity of a call for matching across traces (no counts, IDs or status codes). */
 export function callKey(span: Span): string {
   if (isInvocationSpan(span)) return `invocation ${span.name}`;
+  const llm = describeLlm(span);
+  if (llm) return llmKey(span, llm);
   if (isAwsSpan(span)) {
     const d = describeSpan(span);
     return `${d.serviceLabel}.${d.operation}${d.target ? ` ${withoutIds(d.target)}` : ""}`;

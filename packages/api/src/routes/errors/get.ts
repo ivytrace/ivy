@@ -1,78 +1,13 @@
-import { failureKind } from '@ivy/spans';
 import type { Context } from 'hono';
-import { THROTTLED_ERROR_TYPE, THROTTLED_MESSAGE, throttleSource } from '../../lib/stats/throttles.js';
-import { dataQuery } from '../../lib/tenancy/context.js';
-import { isoFromMs } from '../../lib/utils/format.js';
+import { errorGroups } from '../../lib/data/errors.js';
+import { projectNames } from '../../lib/data/projects.js';
+import { dataScopeOf } from '../../lib/tenancy/context.js';
 import { parseTimeRange } from '../../lib/utils/time-range.js';
 
-interface ErrorGroupRow {
-  fingerprint: string;
-  function: string;
-  error_type: string;
-  error_message: string;
-  count: number;
-  first_seen_ms: number;
-  last_seen_ms: number;
-  sample_trace_id: string;
-  failure_phase: string;
-}
-
+/** Project-scoped, or workspace-wide (all projects; items then carry `project_id` and `project`). */
 export async function getErrors(c: Context) {
   const params = c.req.query();
-  const range = parseTimeRange(params);
-  const rows = await dataQuery<ErrorGroupRow>(
-    c,
-    `SELECT error_fingerprint AS fingerprint, function,
-       argMax(error_type, ts) AS error_type,
-       argMax(error_message, ts) AS error_message,
-       count() AS count,
-       toUnixTimestamp64Milli(min(ts)) AS first_seen_ms,
-       toUnixTimestamp64Milli(max(ts)) AS last_seen_ms,
-       argMax(trace_id, ts) AS sample_trace_id,
-       argMax(failure_phase, ts) AS failure_phase
-     FROM invocations
-     WHERE tenant_id = {tenant:String}
-       AND ts >= fromUnixTimestamp64Milli({from:Int64}) AND ts < fromUnixTimestamp64Milli({to:Int64})
-       AND status = 'error'
-       ${params.function ? 'AND function = {function:String}' : ''}
-     GROUP BY fingerprint, function
-     ORDER BY count DESC, last_seen_ms DESC
-     LIMIT 500`,
-    { from: range.from, to: range.to, function: params.function ?? '' },
-  );
-
-  const throttleQuery = throttleSource({ range, functionName: params.function || undefined });
-  const throttled = await dataQuery<{ function: string; region: string; throttles: number; first_ms: number; last_ms: number }>(
-    c,
-    throttleQuery.sql,
-    throttleQuery.params,
-  );
-  // One synthetic group per function: throttled requests never reach the function, so there is no trace.
-  const throttleGroups = throttled.map((row) => ({
-    fingerprint: `throttled:${row.region}:${row.function}`,
-    function: row.function,
-    error_type: THROTTLED_ERROR_TYPE,
-    error_message: THROTTLED_MESSAGE,
-    count: row.throttles,
-    first_seen: isoFromMs(row.first_ms),
-    last_seen: isoFromMs(row.last_ms),
-    sample_trace_id: null,
-    kind: 'throttle' as const,
-    failure_kind: null,
-  }));
-
-  const errorGroups = rows.map((row) => ({
-    fingerprint: row.fingerprint,
-    function: row.function,
-    error_type: row.error_type || 'Error',
-    error_message: row.error_message,
-    count: row.count,
-    first_seen: isoFromMs(row.first_seen_ms),
-    last_seen: isoFromMs(row.last_seen_ms),
-    sample_trace_id: row.sample_trace_id,
-    kind: 'error' as const,
-    failure_kind: failureKind(row.error_type, row.failure_phase),
-  }));
-
-  return c.json({ items: [...errorGroups, ...throttleGroups].sort((a, b) => b.count - a.count || b.last_seen.localeCompare(a.last_seen)) });
+  const scope = dataScopeOf(c);
+  const names = scope.projectId === null ? await projectNames(scope.tenant.id) : undefined;
+  return c.json({ items: await errorGroups(scope, parseTimeRange(params), params.function || undefined, names) });
 }

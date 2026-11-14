@@ -28,6 +28,15 @@ live in `docs/implementation/`.
   belong to a project.
 - **Environments are separate projects** (`checkout-prod`, `checkout-staging`).
 - An AWS account connects to a workspace and can feed several projects.
+- **Slugs are generated from names and hidden; URLs stay stable when renaming.** Creating a workspace or project
+  asks for a name only; collisions get `-2`, `-3`. Changing a URL is a separate "Change URL" action under Advanced.
+- URLs carry workspace and project (`/w/<workspace>/<project>/…`); old links redirect to the last-used project.
+- A workspace you're not a member of looks exactly like one that doesn't exist.
+- Owners manage the workspace, members and invitations; members can do everything else.
+- Invitations are links (also emailed when SMTP is configured), single use, valid 7 days, and only accepted by a
+  signed-in user whose email matches and is verified by the identity provider.
+- Self-hosted without sign-in, or with `IVY_SINGLE_TENANT` on, has one workspace and no member management.
+- Moving a function to another project affects only new data; data already ingested stays where it is.
 
 ## Authentication
 - Dashboard, API and MCP: **either no auth or OIDC**, never passwords or basic auth, not even temporarily.
@@ -71,6 +80,11 @@ live in `docs/implementation/`.
 - Billing and Stripe code live in `ivy-hosted`. The open-source product only knows generic per-workspace limits:
   no limits set means unlimited, so self-hosted is unlimited. Hosted sets the free tier through the
   `on-workspace-created` hook, with a scheduled reconcile as a safety net.
+- Usage is counted per calendar month in UTC. A free workspace at its quota is **rejected at ingest** (HTTP 429 with
+  `Retry-After` and an upgrade link), not silently dropped; a paid workspace is never blocked and pays for traces
+  beyond the free tier. Enforcement may overshoot by a little (seconds of traffic); invoices use the stored count.
+- The dashboard shows usage per workspace with a warning at 80% and at 100% of the quota, and Upgrade / Manage
+  billing buttons only where a billing service is configured.
 
 ## Dashboard
 - First visit: a quick-start wizard (workspace, project, connect AWS and pick functions, wait for the first trace).
@@ -79,3 +93,10 @@ live in `docs/implementation/`.
 ## Performance
 - Cold-start overhead of the layer must be minimal: the Lambda extension is a small Rust binary (the one exception
   to TypeScript everywhere).
+
+## LLM spans
+- Ivy captures OpenTelemetry spans from libraries such as the Vercel AI SDK and renders LLM calls (messages,
+  tool calls, tokens, time to first token). This replaces 001's "LLM-call instrumentation: not in v1".
+- The layer captures them without an OpenTelemetry SDK and steps aside when the app registers its own tracer
+  provider. LLM attributes are normalized when read (`@ivy/spans`), not at ingest, so stored spans stay as the
+  producer sent them. Implementation: `docs/implementation/llm-spans.md`.

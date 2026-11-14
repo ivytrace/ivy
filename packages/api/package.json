@@ -6,13 +6,15 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:ingest": "tsx watch src/ingest.ts",
-    "build": "esbuild src/index.ts src/ingest.ts scripts/tenants.ts --bundle --platform=node --target=node22 --format=esm --outdir=dist --entry-names=[name] --out-extension:.js=.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "build": "esbuild src/index.ts src/ingest.ts scripts/tenants.ts scripts/hooks-test.ts --bundle --platform=node --target=node22 --format=esm --outdir=dist --entry-names=[name] --out-extension:.js=.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "start": "node dist/index.mjs",
     "start:ingest": "node dist/ingest.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "smoke": "tsx scripts/smoke.ts",
-    "tenants": "tsx scripts/tenants.ts"
+    "tenants": "tsx scripts/tenants.ts",
+    "hooks:test": "tsx scripts/hooks-test.ts",
+    "e2e:workspaces": "tsx scripts/e2e-workspaces.ts"
   },
   "dependencies": {
     "@aws-sdk/client-cloudwatch": "^3.1169.0",
@@ -27,11 +29,13 @@
     "@scalar/hono-api-reference": "^0.12.20",
     "hono": "^4.13.18",
     "jose": "^6.2.17",
+    "nodemailer": "^7.0.13",
     "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@types/node": "^22.20.5",
+    "@types/nodemailer": "^8.0.2",
     "aws-sdk-client-mock": "^4.1.0",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15",

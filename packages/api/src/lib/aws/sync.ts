@@ -1,29 +1,60 @@
 import type { LambdaClient } from '@aws-sdk/client-lambda';
 import type { ResourceGroupsTaggingAPIClient } from '@aws-sdk/client-resource-groups-tagging-api';
+import { defaultProjectId } from '../tenancy/ids.js';
+import { listProjects } from '../tenancy/projects.js';
 import { mapLimit } from '../utils/concurrency.js';
+import { assignmentContext, assignProject, stackOf, type Assignment, type AssignmentContext } from './assign.js';
 import { fromConfiguration, needsLayer, planFunction, type Desired, type LambdaFunction, type Plan } from './attach.js';
 import { assumeRole, forgetCredentials, regionClients } from './clients.js';
-import { ingestConfig } from './config.js';
+import { ingestConfig, type IngestConfig } from './config.js';
 import { applyUpdate, ensureLayer, getFunction, layerZip, listFunctionTags, listFunctions } from './lambda.js';
 import { AWS_REGIONS, isRegionDisabledError } from './regions.js';
 import { awsStore } from './store.js';
 import { pollAccountThrottles, throttlePollDue, type ThrottlePollResult } from './throttles.js';
-import type { AwsAccount, FunctionStatus } from './types.js';
+import type { AwsAccount, FunctionSetting, FunctionStatus } from './types.js';
 
 const FUNCTION_CONCURRENCY = 4;
 const REGION_CONCURRENCY = 4;
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-export const settingKey = (region: string, name: string) => `${region}/${name}`;
+export const settingKey = (accountId: string, region: string, name: string) => `${accountId}/${region}/${name}`;
 
 export function accountRegions(account: AwsAccount): string[] {
   return account.all_regions ? AWS_REGIONS : account.regions;
 }
 
+/** Everything a sync needs to decide where each function of a workspace goes. */
+export interface Assigner {
+  assign(account: AwsAccount, region: string, fn: LambdaFunction): Assignment;
+  ingest(projectId: string): Promise<IngestConfig | null>;
+}
+
+/** Loads the workspace's projects, rules and manual choices once per sync. */
+export async function loadAssigner(tenantId: string, accountId?: string): Promise<Assigner> {
+  const store = awsStore();
+  const [projects, rules, settings] = await Promise.all([listProjects(tenantId), store.listRules(tenantId), store.listSettings(tenantId, accountId)]);
+  const base = assignmentContext(projects, rules, defaultProjectId(tenantId));
+  const manual = new Map<string, FunctionSetting>(settings.map((s) => [settingKey(s.account_id, s.region, s.function_name), s]));
+  const ingest = new Map<string, Promise<IngestConfig | null>>();
+  return {
+    assign: (account, region, fn) =>
+      assignProject(
+        { account_id: account.account_id, region, name: fn.name, tags: fn.tags },
+        { ...base, manual: manual.get(settingKey(account.account_id, region, fn.name)) ?? null } satisfies AssignmentContext,
+      ),
+    ingest(projectId) {
+      let pending = ingest.get(projectId);
+      if (!pending) ingest.set(projectId, (pending = ingestConfig(tenantId, projectId)));
+      return pending;
+    },
+  };
+}
+
 interface FunctionContext {
   lambda: LambdaClient;
   tagging: ResourceGroupsTaggingAPIClient;
+  assignment: Assignment;
   desired: Desired;
   /** Set when the layer could not be made available in this region. */
   layerError?: string;
@@ -31,13 +62,13 @@ interface FunctionContext {
   tagsKnown: boolean;
 }
 
+async function desiredFor(assigner: Assigner, assignment: Assignment): Promise<Desired> {
+  if (!assignment.traced) return { enabled: false, offState: assignment.state, offReason: assignment.reason, layerArn: null, ingest: null };
+  return { enabled: true, layerArn: null, ingest: await assigner.ingest(assignment.projectId) };
+}
+
 /** Plans and applies one function, returning the status row to store. */
-export async function processFunction(
-  account: AwsAccount,
-  region: string,
-  fn: LambdaFunction,
-  ctx: FunctionContext,
-): Promise<FunctionStatus> {
+export async function processFunction(account: AwsAccount, region: string, fn: LambdaFunction, ctx: FunctionContext): Promise<FunctionStatus> {
   let plan = decide(fn, ctx);
   if (plan.update) {
     try {
@@ -65,7 +96,14 @@ export async function processFunction(
     function_arn: fn.arn,
     runtime: fn.runtime || fn.packageType,
     state: plan.state,
-    reason: plan.reason,
+    reason: plan.reason || (plan.state === 'traced' ? '' : ctx.assignment.reason),
+    project_id: ctx.assignment.traced ? ctx.assignment.projectId : '',
+    project_source: ctx.assignment.source,
+    rule_id: ctx.assignment.ruleId,
+    stack: stackOf(fn.tags),
+    tags: fn.tags,
+    last_modified: fn.lastModified,
+    first_seen_at: Date.now(),
     updated_at: Date.now(),
   };
 }
@@ -87,7 +125,7 @@ async function layerFor(lambda: LambdaClient, account: AwsAccount, region: strin
   }
 }
 
-async function syncRegion(account: AwsAccount, region: string, disabled: Set<string>): Promise<void> {
+async function syncRegion(account: AwsAccount, region: string, assigner: Assigner): Promise<void> {
   const { lambda, tagging } = await regionClients(account, region);
   const configs = await listFunctions(lambda);
   let tagsKnown = true;
@@ -96,16 +134,20 @@ async function syncRegion(account: AwsAccount, region: string, disabled: Set<str
     return new Map<string, Record<string, string>>();
   });
   const fns = configs.map((c) => fromConfiguration(c, tags.get(c.FunctionArn ?? '') ?? {}));
-  const enabled = (fn: LambdaFunction) => !disabled.has(settingKey(region, fn.name));
+  const planned = await Promise.all(
+    fns.map(async (fn) => {
+      const assignment = assigner.assign(account, region, fn);
+      return { fn, assignment, desired: await desiredFor(assigner, assignment) };
+    }),
+  );
+  const layer = planned.some((p) => p.desired.ingest && needsLayer(p.fn, true)) ? await layerFor(lambda, account, region) : { arn: null };
 
-  const ingest = await ingestConfig(account.tenant_id);
-  const layer = ingest && fns.some((fn) => needsLayer(fn, enabled(fn))) ? await layerFor(lambda, account, region) : { arn: null };
-
-  const rows = await mapLimit(fns, FUNCTION_CONCURRENCY, (fn) =>
+  const rows = await mapLimit(planned, FUNCTION_CONCURRENCY, ({ fn, assignment, desired }) =>
     processFunction(account, region, fn, {
       lambda,
       tagging,
-      desired: { enabled: enabled(fn), layerArn: layer.arn, ingest },
+      assignment,
+      desired: { ...desired, layerArn: layer.arn },
       layerError: layer.error,
       tagsKnown,
     }),
@@ -119,7 +161,8 @@ export interface SyncOptions {
 }
 
 /**
- * Lists the functions in each region, attaches or detaches the layer where needed and stores the
+ * Lists the functions in each region, decides per function whether it is traced and into which
+ * project (assign.ts), attaches, updates or detaches the layer where needed, and stores the
  * per-function state. Idempotent, and safe to run concurrently with itself (updates carry the
  * RevisionId they were planned against).
  */
@@ -136,13 +179,11 @@ export async function syncAccount(account: AwsAccount, options: SyncOptions = {}
     return;
   }
 
-  const settings = await store.listSettings(account.tenant_id, account.account_id);
-  const disabled = new Set(settings.filter((s) => !s.tracing_enabled).map((s) => settingKey(s.region, s.function_name)));
-
+  const assigner = await loadAssigner(account.tenant_id, account.account_id);
   const errors: string[] = [];
   await mapLimit(regions, REGION_CONCURRENCY, async (region) => {
     try {
-      await syncRegion(account, region, disabled);
+      await syncRegion(account, region, assigner);
     } catch (err) {
       if (account.all_regions && isRegionDisabledError(err)) return;
       errors.push(`${region}: ${message(err)}`);
@@ -170,16 +211,19 @@ export async function syncAccount(account: AwsAccount, options: SyncOptions = {}
   });
 }
 
-/** Applies the current tracing setting to a single function right away (after a dashboard toggle). */
-export async function syncFunction(account: AwsAccount, region: string, name: string, enabled: boolean): Promise<FunctionStatus> {
+/** Applies the current assignment to a single function right away (after a manual choice in the dashboard). */
+export async function syncFunction(account: AwsAccount, region: string, name: string): Promise<FunctionStatus> {
   const { lambda, tagging } = await regionClients(account, region);
   const fn = await getFunction(lambda, tagging, name);
-  const ingest = await ingestConfig(account.tenant_id);
-  const layer = ingest && needsLayer(fn, enabled) ? await layerFor(lambda, account, region) : { arn: null };
+  const assigner = await loadAssigner(account.tenant_id, account.account_id);
+  const assignment = assigner.assign(account, region, fn);
+  const desired = await desiredFor(assigner, assignment);
+  const layer = desired.ingest && needsLayer(fn, true) ? await layerFor(lambda, account, region) : { arn: null };
   const row = await processFunction(account, region, fn, {
     lambda,
     tagging,
-    desired: { enabled, layerArn: layer.arn, ingest },
+    assignment,
+    desired: { ...desired, layerArn: layer.arn },
     layerError: layer.error,
     tagsKnown: true,
   });
@@ -190,6 +234,7 @@ export async function syncFunction(account: AwsAccount, region: string, name: st
 /** Removes the layer from every function Ivy traces in the account (used when disconnecting). */
 export async function detachAccount(account: AwsAccount): Promise<string[]> {
   const errors: string[] = [];
+  const off: Assignment = { traced: false, state: 'available', source: '', ruleId: '', reason: 'Account disconnected' };
   await mapLimit(accountRegions(account), REGION_CONCURRENCY, async (region) => {
     try {
       const { lambda, tagging } = await regionClients(account, region);
@@ -198,6 +243,7 @@ export async function detachAccount(account: AwsAccount): Promise<string[]> {
         const row = await processFunction(account, region, fn, {
           lambda,
           tagging,
+          assignment: off,
           desired: { enabled: false, layerArn: null, ingest: null },
           tagsKnown: true,
         });

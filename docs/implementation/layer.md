@@ -107,7 +107,10 @@ protocol and behaviour as before, so the tracer did not change beyond the non-bl
   bodies over 1 KB, keep-alive connections. The extension does this in Rust; the tracer's direct
   fallback (`src/lib/export/*`) implements the same rules in TypeScript.
 - Per flush: up to 3 attempts (timeout `IVY_EXPORT_TIMEOUT_MS`, backoff 100/300 ms) within
-  `IVY_FLUSH_BUDGET_MS` (2 s). Retries on network errors, 408, 429, 5xx.
+  `IVY_FLUSH_BUDGET_MS` (2 s). Retries on network errors, 408, 429, 5xx, except that a 429 or 503 with
+  `Retry-After` (e.g. a workspace over its monthly trace quota, `limits.md`) ends the flush at once: the batch is
+  dropped and counted, and nothing is sent until the delay has passed (capped at 1 hour), not even the forced flush
+  on `SHUTDOWN`.
 - When a flush fails the batch is dropped and counted, and the queue backs off (5 s doubling to
   5 min) so a dead endpoint costs one bounded attempt instead of one per invocation. Spans that
   arrive during backoff are buffered up to `IVY_MAX_QUEUE_SPANS` (oldest dropped first).
@@ -161,6 +164,8 @@ response clones; overflow is counted in `ivy.dropped_child_spans` / `ivy.dropped
 - **fetch**: `globalThis.fetch` is wrapped; response bodies are read from `res.clone()` when the
   content type is text-like and the length is ≤ 1 MB.
 - **console**: `log/info/warn/error/debug/trace` become `log` events on the root span.
+- **OpenTelemetry API** (Vercel AI SDK and other libraries): a minimal global tracer provider and
+  `AsyncLocalStorage` context manager turn library spans into children of the invocation. See `llm-spans.md`.
 - Calls to the runtime API, the extension port and the Ivy endpoint (host + port) are skipped.
 
 ## Tracer init
