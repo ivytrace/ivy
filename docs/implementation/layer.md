@@ -208,14 +208,20 @@ cold start, `error_type = Timeout`).
 
 ## Size and overhead
 
-Measured with `pnpm --filter @ivy/layer e2e` (RIE in Docker on an M-series Mac, so absolute
-numbers are indicative only):
+`handler.mjs` 32 KB, extension binaries 1.8 MB (x86_64) / 1.5 MB (arm64), `layer.zip` 1.9 MB.
 
-- `handler.mjs` 31 KB, `ivy-extension` 9 KB, `layer.zip` 17 KB.
-- Warm invocation with three outgoing calls: runtime duration (response posted) ~3.0 ms traced
-  vs ~2.8 ms without the layer, i.e. well under 1 ms.
-- Init: +40–50 ms, of which ~30 ms is starting the extension's Node process (Lambda waits for
-  extensions to register before it starts the runtime) and ~10 ms loading the tracer.
+Measured on Lambda (eu-west-1, Node.js 22, method and full tables in
+[`layer-performance.md`](layer-performance.md)):
+
+- Cold start: **+20–45 ms** init duration (p50, all of arm64/x86_64 × 128/1024 MB), down from
+  +160–215 ms with the Node extension and untrimmed tracer.
+- Warm response latency: no measurable difference at 1024 MB, ~1 ms at the median at 128 MB.
+- Billed duration: +15–20 ms per warm invocation at 1024 MB for the export after the response
+  (mostly the collector round trip), 40–50 ms at 128 MB.
+
+Website-facing numbers: the old claim "under 1 ms added to a warm invocation" is only true for
+response latency. Use "no measurable delay to warm responses; about 20–45 ms added to cold
+starts", and do not imply billed duration is unchanged.
 
 ## Known gaps
 
@@ -225,3 +231,6 @@ numbers are indicative only):
   not traced (the tracer assumes one invocation at a time).
 - In the RIE the client response waits for extensions, so e2e round-trip latency includes the
   export; on Lambda it does not.
+- At 128 MB the post-response export takes 40–60 ms of a small CPU share; back-to-back
+  invocations can queue behind it (see the p90 numbers in `layer-performance.md`).
+- The exec wrapper is a bash script (~1 ms per cold start); a compiled wrapper would save most of it.
