@@ -43,7 +43,7 @@ export function Waterfall({
             {TICKS.map((t) => (
               <span
                 key={t}
-                className={cn("absolute", t === 1 ? "-translate-x-full" : t > 0 && "-translate-x-1/2")}
+                className={cn("absolute whitespace-nowrap", t === 1 ? "-translate-x-full" : t > 0 && "-translate-x-1/2")}
                 style={{ left: `${t * 100}%` }}
               >
                 {formatDuration(totalMs * t)}
