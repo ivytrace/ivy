@@ -1,4 +1,5 @@
-import { clickhouse, query } from '../clickhouse/client.js';
+import { controlClient } from '../clickhouse/client.js';
+import { crossTenantQuery, insertRows, tenantQuery } from '../clickhouse/scoped.js';
 import type { AwsAccount, FunctionSetting, FunctionStatus, TraceState } from './types.js';
 
 export interface AwsStore {
@@ -41,15 +42,10 @@ function version(): string {
   return iso(lastVersion);
 }
 
-async function insert(table: string, values: Record<string, unknown>[]) {
-  if (!values.length) return;
-  await clickhouse.insert({
-    table,
-    values,
-    format: 'JSONEachRow',
-    clickhouse_settings: { date_time_input_format: 'best_effort', async_insert: 0 },
-  });
-}
+const insert = (table: string, values: Record<string, unknown>[]) => insertRows(controlClient(), table, values);
+const scoped = <T>(tenant: string, sql: string, params: Record<string, unknown> = {}) =>
+  tenantQuery<T>(controlClient(), tenant, sql, params);
+const crossTenant = <T>(sql: string, params: Record<string, unknown> = {}) => crossTenantQuery<T>(controlClient(), sql, params);
 
 const accountRow = (a: AwsAccount, deleted = 0) => ({
   ...a,
@@ -68,27 +64,28 @@ export const clickhouseStore: AwsStore = {
   deleteAccount: (account) => insert('aws_accounts', [accountRow(account, 1)]),
 
   async getAccount(tenant, id) {
-    const rows = await query<AwsAccount>(
+    const rows = await scoped<AwsAccount>(
+      tenant,
       `SELECT ${ACCOUNT_COLUMNS} FROM aws_accounts FINAL
        WHERE tenant_id = {tenant:String} AND id = {id:String} AND NOT deleted`,
-      { tenant, id },
+      { id },
     );
     return rows[0] ?? null;
   },
 
   listAccounts: (tenant) =>
-    query<AwsAccount>(
+    scoped<AwsAccount>(
+      tenant,
       `SELECT ${ACCOUNT_COLUMNS} FROM aws_accounts FINAL
        WHERE tenant_id = {tenant:String} AND NOT deleted ORDER BY created_at`,
-      { tenant },
     ),
 
   listActiveAccounts: () =>
-    query<AwsAccount>(`SELECT ${ACCOUNT_COLUMNS} FROM aws_accounts FINAL WHERE NOT deleted AND status != 'pending'`),
+    crossTenant<AwsAccount>(`SELECT ${ACCOUNT_COLUMNS} FROM aws_accounts FINAL WHERE NOT deleted AND status != 'pending'`),
 
   async findAccountByEventSecret(secret) {
     if (!secret) return null;
-    const rows = await query<AwsAccount>(
+    const rows = await crossTenant<AwsAccount>(
       `SELECT ${ACCOUNT_COLUMNS} FROM aws_accounts FINAL
        WHERE event_secret = {secret:String} AND NOT deleted LIMIT 1`,
       { secret },
@@ -97,19 +94,20 @@ export const clickhouseStore: AwsStore = {
   },
 
   listFunctions: (tenant, accountId) =>
-    query<FunctionStatus>(
+    scoped<FunctionStatus>(
+      tenant,
       `SELECT ${FUNCTION_COLUMNS} FROM aws_functions FINAL
        WHERE tenant_id = {tenant:String} AND NOT deleted
          ${accountId ? 'AND account_id = {accountId:String}' : ''}
        ORDER BY account_id, region, function_name`,
-      { tenant, accountId: accountId ?? '' },
+      { accountId: accountId ?? '' },
     ),
 
   async functionCounts(tenant) {
-    const rows = await query<{ account_id: string; state: TraceState; n: number }>(
+    const rows = await scoped<{ account_id: string; state: TraceState; n: number }>(
+      tenant,
       `SELECT account_id, state, count() AS n FROM aws_functions FINAL
        WHERE tenant_id = {tenant:String} AND NOT deleted GROUP BY account_id, state`,
-      { tenant },
     );
     const out = new Map<string, Partial<Record<TraceState, number>>>();
     for (const r of rows) out.set(r.account_id, { ...out.get(r.account_id), [r.state]: r.n });
@@ -117,10 +115,11 @@ export const clickhouseStore: AwsStore = {
   },
 
   async replaceRegionFunctions(tenant, accountId, region, rows) {
-    const existing = await query<FunctionStatus>(
+    const existing = await scoped<FunctionStatus>(
+      tenant,
       `SELECT ${FUNCTION_COLUMNS} FROM aws_functions FINAL
        WHERE tenant_id = {tenant:String} AND account_id = {accountId:String} AND region = {region:String} AND NOT deleted`,
-      { tenant, accountId, region },
+      { accountId, region },
     );
     const keep = new Set(rows.map((r) => r.function_name));
     const gone = existing.filter((r) => !keep.has(r.function_name));
@@ -135,10 +134,11 @@ export const clickhouseStore: AwsStore = {
   },
 
   listSettings: (tenant, accountId) =>
-    query<FunctionSetting>(
+    scoped<FunctionSetting>(
+      tenant,
       `SELECT account_id, region, function_name, tracing_enabled FROM aws_function_settings FINAL
        WHERE tenant_id = {tenant:String} AND account_id = {accountId:String}`,
-      { tenant, accountId },
+      { accountId },
     ),
 
   saveSetting: (tenant, setting) =>

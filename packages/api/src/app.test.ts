@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 
-const app = createApp({ uiDir: '/nonexistent' });
+const app = createApp({ uiDir: '/nonexistent', tenants: { resolve: async () => ({ id: 'default', shardId: 'shard-1' }) } });
 
 describe('app', () => {
   it('returns config', async () => {

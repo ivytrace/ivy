@@ -8,12 +8,12 @@ import { isRegion } from '../../../lib/aws/regions.js';
 import { jsonBody, parseRegions } from '../../../lib/aws/requests.js';
 import { awsStore } from '../../../lib/aws/store.js';
 import type { AwsAccount } from '../../../lib/aws/types.js';
-import { tenantOf } from '../../../lib/clickhouse/tenant.js';
+import { tenantOf } from '../../../lib/tenancy/context.js';
 import { badRequest } from '../../../lib/utils/http-error.js';
 
 /** Creates a pending connection. The user then deploys the stack and calls verify. */
 export async function postAwsAccount(c: Context) {
-  const tenant = tenantOf(c);
+  const tenant = tenantOf(c).id;
   const body = await jsonBody(c);
   const accountId = String(body.account_id ?? '').replace(/[\s-]/g, '');
   if (!/^\d{12}$/.test(accountId)) throw badRequest('account_id must be a 12-digit AWS account ID');

@@ -1,7 +1,10 @@
+# Internal-only collector for one cell. Clients never talk to it directly: the ingest router
+# (packages/api/src/ingest.ts) authenticates their API key, then forwards the request here with
+# the internal token and the resolved tenant in `x-ivy-tenant` (docs/implementation/tenancy.md).
 extensions:
   bearertokenauth:
     scheme: Bearer
-    token: ${env:IVY_INGEST_API_KEY}
+    token: ${env:IVY_COLLECTOR_TOKEN}
   file_storage:
     directory: /var/lib/otelcol/file_storage
     create_directory: true
@@ -11,23 +14,32 @@ extensions:
 receivers:
   otlp:
     protocols:
-      grpc:
-        endpoint: 0.0.0.0:4317
-        auth:
-          authenticator: bearertokenauth
       http:
         endpoint: 0.0.0.0:4318
+        include_metadata: true
         auth:
           authenticator: bearertokenauth
-        cors:
-          allowed_origins: ["*"]
-          allowed_headers: ["Authorization"]
 
 processors:
   memory_limiter:
     check_interval: 1s
     limit_percentage: 80
     spike_limit_percentage: 20
+  # The tenant comes only from the router's header: drop whatever the client put in
+  # `ivy.tenant_id`, then set it from the request metadata.
+  resource/tenant:
+    attributes:
+      - key: ivy.tenant_id
+        action: delete
+      - key: ivy.tenant_id
+        from_context: metadata.x-ivy-tenant
+        action: insert
+  # Spans without a tenant (no header) are dropped rather than stored under an empty tenant.
+  filter/tenant:
+    error_mode: propagate
+    traces:
+      span:
+        - resource.attributes["ivy.tenant_id"] == nil or resource.attributes["ivy.tenant_id"] == ""
   batch:
     send_batch_size: 10000
     send_batch_max_size: 20000
@@ -57,5 +69,5 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
+      processors: [memory_limiter, resource/tenant, filter/tenant, batch]
       exporters: [clickhouse]

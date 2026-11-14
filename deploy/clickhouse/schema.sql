@@ -1,8 +1,12 @@
+-- Applied by init.sh on first start, and safe to re-run (every statement is idempotent).
+-- Two databases: `ivy` holds span data (one per cell/shard), `ivy_control` the control plane
+-- (tenants, API keys, auto-trace config). See docs/implementation/tenancy.md.
 CREATE DATABASE IF NOT EXISTS ivy;
+CREATE DATABASE IF NOT EXISTS ivy_control;
 
 CREATE TABLE IF NOT EXISTS ivy.otel_traces
 (
-    `TenantId` LowCardinality(String) DEFAULT if(ResourceAttributes['ivy.tenant_id'] = '', 'default', ResourceAttributes['ivy.tenant_id']) CODEC(ZSTD(1)),
+    `TenantId` LowCardinality(String) DEFAULT ResourceAttributes['ivy.tenant_id'] CODEC(ZSTD(1)),
     `Timestamp` DateTime64(9) CODEC(Delta(8), ZSTD(1)),
     `TraceId` String CODEC(ZSTD(1)),
     `SpanId` String CODEC(ZSTD(1)),
@@ -36,9 +40,13 @@ ORDER BY (TenantId, toStartOfHour(Timestamp), TraceId)
 TTL toDateTime(Timestamp) + toIntervalDay({{RETENTION_DAYS}})
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 
+-- The tenant is set by the collector from the ingest router's header, which replaces any
+-- client-supplied `ivy.tenant_id`. Older schemas fell back to the client's attribute or 'default'.
+ALTER TABLE ivy.otel_traces MODIFY COLUMN `TenantId` LowCardinality(String) DEFAULT ResourceAttributes['ivy.tenant_id'] CODEC(ZSTD(1));
+
 CREATE TABLE IF NOT EXISTS ivy.invocations
 (
-    `tenant_id` LowCardinality(String) DEFAULT 'default',
+    `tenant_id` LowCardinality(String),
     `ts` DateTime64(3) CODEC(Delta(8), ZSTD(1)),
     `trace_id` String CODEC(ZSTD(1)),
     `span_id` String CODEC(ZSTD(1)),
@@ -136,10 +144,55 @@ SELECT
 FROM ivy.invocations
 GROUP BY tenant_id, hour, function, region;
 
--- Auto-trace configuration (docs/implementation/auto-trace.md). Small, mutable tables: every
--- update inserts a full row, ReplacingMergeTree keeps the newest version, reads use FINAL.
+-- Defence in depth: when a query sets SQL_ivy_tenant (the API does for every query, see
+-- packages/api/src/lib/clickhouse/scoped.ts), only that tenant's rows are visible, even if the
+-- SQL forgot its tenant filter. Without the setting (collector inserts, materialized views,
+-- admin sessions) the policy lets everything through: a fail-closed policy would also filter
+-- the rows materialized views read on insert.
+CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.otel_traces AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR TenantId = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
+CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
+CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations_hourly AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
 
-CREATE TABLE IF NOT EXISTS ivy.aws_accounts
+-- Control plane. Small, mutable tables: every update inserts a full row, ReplacingMergeTree
+-- keeps the newest version, reads use FINAL.
+
+CREATE TABLE IF NOT EXISTS ivy_control.tenants
+(
+    `id` String,
+    `name` String,
+    `shard_id` LowCardinality(String) DEFAULT 'shard-1',
+    `created_at` DateTime64(3, 'UTC'),
+    `updated_at` DateTime64(3, 'UTC'),
+    `deleted` UInt8 DEFAULT 0
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY id;
+
+-- Keys are stored as sha256(key) plus a display prefix. `encrypted_key` is only set for keys Ivy
+-- hands out itself (the per-tenant auto-trace key), encrypted with IVY_SECRET_KEY.
+CREATE TABLE IF NOT EXISTS ivy_control.api_keys
+(
+    `tenant_id` String,
+    `id` String,
+    `name` String,
+    `kind` LowCardinality(String),
+    `key_hash` String,
+    `prefix` String,
+    `encrypted_key` String DEFAULT '',
+    `created_at` DateTime64(3, 'UTC'),
+    `revoked_at` Nullable(DateTime64(3, 'UTC')),
+    `updated_at` DateTime64(3, 'UTC'),
+    INDEX idx_key_hash key_hash TYPE bloom_filter(0.001) GRANULARITY 1
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, id);
+
+-- Auto-trace configuration (docs/implementation/auto-trace.md).
+
+CREATE TABLE IF NOT EXISTS ivy_control.aws_accounts
 (
     `tenant_id` LowCardinality(String),
     `id` String,
@@ -163,7 +216,7 @@ CREATE TABLE IF NOT EXISTS ivy.aws_accounts
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, id);
 
-CREATE TABLE IF NOT EXISTS ivy.aws_functions
+CREATE TABLE IF NOT EXISTS ivy_control.aws_functions
 (
     `tenant_id` LowCardinality(String),
     `account_id` String,
@@ -179,7 +232,7 @@ CREATE TABLE IF NOT EXISTS ivy.aws_functions
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, account_id, region, function_name);
 
-CREATE TABLE IF NOT EXISTS ivy.aws_function_settings
+CREATE TABLE IF NOT EXISTS ivy_control.aws_function_settings
 (
     `tenant_id` LowCardinality(String),
     `account_id` String,

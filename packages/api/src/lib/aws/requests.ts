@@ -1,13 +1,13 @@
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { badRequest } from '../utils/http-error.js';
-import { tenantOf } from '../clickhouse/tenant.js';
+import { tenantOf } from '../tenancy/context.js';
 import { isRegion } from './regions.js';
 import { awsStore } from './store.js';
 import type { AwsAccount } from './types.js';
 
 export async function loadAccount(c: Context): Promise<AwsAccount> {
-  const account = await awsStore().getAccount(tenantOf(c), c.req.param('id') ?? '');
+  const account = await awsStore().getAccount(tenantOf(c).id, c.req.param('id') ?? '');
   if (!account) throw new HTTPException(404, { message: 'Account not found' });
   return account;
 }
