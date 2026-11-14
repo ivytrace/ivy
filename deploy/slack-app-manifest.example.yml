@@ -15,6 +15,10 @@ display_information:
     counts and a link to the trace in Ivy; they never contain request or response payloads. The app only
     uses an incoming webhook: it cannot read messages or channels.
   background_color: "#09090b"
+features:
+  bot_user:
+    display_name: Ivy
+    always_online: false
 oauth_config:
   redirect_urls:
     - https://ivy.example.com/api/slack/oauth/callback
