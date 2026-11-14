@@ -1,7 +1,6 @@
 import type { Context } from 'hono';
-import { assumeRole, principalArn } from '../../../lib/aws/clients.js';
-import { presentAccount } from '../../../lib/aws/present.js';
-import { loadAccount } from '../../../lib/aws/requests.js';
+import { assumeRole } from '../../../lib/aws/clients.js';
+import { loadAccount, presentAccounts } from '../../../lib/aws/requests.js';
 import { triggerSync } from '../../../lib/aws/scheduler.js';
 import { awsStore } from '../../../lib/aws/store.js';
 
@@ -11,7 +10,6 @@ import { awsStore } from '../../../lib/aws/store.js';
  */
 export async function verifyAwsAccount(c: Context) {
   const account = await loadAccount(c);
-  const principal = await principalArn();
   try {
     await assumeRole(account, true);
   } catch (err) {
@@ -22,11 +20,11 @@ export async function verifyAwsAccount(c: Context) {
       error: `Can't assume ${account.role_arn} yet: ${reason}`,
     };
     await awsStore().saveAccount(failed);
-    return c.json({ verified: false, account: presentAccount(failed, principal) });
+    return c.json({ verified: false, account: (await presentAccounts(c, [failed]))[0] });
   }
 
   const connected = { ...account, status: 'connected' as const, error: '', verified_at: account.verified_at || Date.now() };
   await awsStore().saveAccount(connected);
   void triggerSync(connected);
-  return c.json({ verified: true, account: presentAccount(connected, principal) });
+  return c.json({ verified: true, account: (await presentAccounts(c, [connected]))[0] });
 }

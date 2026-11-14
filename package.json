@@ -10,7 +10,8 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "up": "docker compose -f deploy/docker-compose.yml up --build",
-    "down": "docker compose -f deploy/docker-compose.yml down"
+    "down": "docker compose -f deploy/docker-compose.yml down",
+    "db:migrate": "docker compose -f deploy/docker-compose.yml exec -T clickhouse /docker-entrypoint-initdb.d/init.sh"
   },
   "devDependencies": {
     "concurrently": "^9.2.5",

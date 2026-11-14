@@ -14,11 +14,11 @@ export interface IngestConfig {
 
 const env = (name: string) => process.env[name]?.trim() || undefined;
 
-/** Ingest settings written into each traced function of a tenant (see autoTraceKey). */
-export async function ingestConfig(tenant: string): Promise<IngestConfig | null> {
+/** Ingest settings written into each traced function of a project (see autoTraceKey). */
+export async function ingestConfig(tenant: string, project?: string): Promise<IngestConfig | null> {
   const endpoint = env('IVY_INGEST_PUBLIC_URL');
   if (!endpoint) return null;
-  const apiKey = await autoTraceKey(tenant);
+  const apiKey = await autoTraceKey(tenant, project);
   if (!apiKey) return null;
   return { endpoint: endpoint.replace(/\/$/, ''), apiKey };
 }

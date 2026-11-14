@@ -54,6 +54,7 @@ export function identify(claims: JWTPayload, config: AuthConfig, issuer: string)
     sub,
     issuer,
     ...(str(claims.email) && { email: str(claims.email) }),
+    ...(claims.email_verified !== undefined && { emailVerified: claims.email_verified === true || claims.email_verified === 'true' }),
     ...(str(claims.name) && { name: str(claims.name) }),
     clientId: client!,
     agent: isAgent ? { clientId: client!, name: str(claims.client_name) ?? '' } : null,

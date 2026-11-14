@@ -1,22 +1,13 @@
 import type { Context } from 'hono';
-import { principalArn } from '../../../lib/aws/clients.js';
-import { presentAccount } from '../../../lib/aws/present.js';
-import { loadAccount } from '../../../lib/aws/requests.js';
+import { loadAccount, presentAccounts } from '../../../lib/aws/requests.js';
 import { awsStore } from '../../../lib/aws/store.js';
 import { tenantOf } from '../../../lib/tenancy/context.js';
 
 export async function getAwsAccounts(c: Context) {
-  const tenant = tenantOf(c).id;
-  const [accounts, counts, principal] = await Promise.all([
-    awsStore().listAccounts(tenant),
-    awsStore().functionCounts(tenant),
-    principalArn(),
-  ]);
-  return c.json({ items: accounts.map((a) => presentAccount(a, principal, counts.get(a.account_id))) });
+  return c.json({ items: await presentAccounts(c, await awsStore().listAccounts(tenantOf(c).id)) });
 }
 
 export async function getAwsAccount(c: Context) {
-  const account = await loadAccount(c);
-  const counts = await awsStore().functionCounts(account.tenant_id);
-  return c.json(presentAccount(account, await principalArn(), counts.get(account.account_id)));
+  const [account] = await presentAccounts(c, [await loadAccount(c)]);
+  return c.json(account);
 }
