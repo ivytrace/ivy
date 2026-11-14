@@ -28,13 +28,15 @@ export type Decision = { send: true; first: boolean } | { send: false; baseline:
 /**
  * Whether a group gets a message now:
  * - no state: a group that appeared since alerts were set up is new (message "first seen"); an older
- *   one only gets a baseline state, so connecting Slack doesn't post every existing error;
+ *   one only gets a baseline state, so connecting Slack doesn't post every existing error. So does a group whose
+ *   template was seen in the week before (`seen_before`): its fingerprint changed (grouping rules), it isn't new;
  * - otherwise: new occurrences, and either `every_occurrences` of them or `interval_minutes` since the
  *   last message.
  */
 export function decide(group: AlertGroup, state: AlertState | undefined, settings: AlertSettings, now: number, newSince: number): Decision {
   if (!state) {
-    return group.first_seen >= Math.max(newSince, now - NEW_WITHIN_MS) ? { send: true, first: true } : { send: false, baseline: true };
+    const isNew = !group.seen_before && group.first_seen >= Math.max(newSince, now - NEW_WITHIN_MS);
+    return isNew ? { send: true, first: true } : { send: false, baseline: true };
   }
   if (group.since_notify <= 0) return { send: false, baseline: false };
   if (group.since_notify >= settings.every_occurrences) return { send: true, first: false };
@@ -158,6 +160,8 @@ export async function evaluateAlerts(options: EvaluateOptions = {}): Promise<Eva
             function: group.function,
             error_type: group.error_type,
             error_message: group.error_message.slice(0, 500),
+            error_template: group.error_template.slice(0, 500),
+            variants: group.variants,
             failure_kind: group.failure_kind,
             first_seen: new Date(group.first_seen).toISOString(),
             occurrences: group.total,

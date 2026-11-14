@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./error-template": "./src/error-template.ts",
+    "./error-template-vectors": "./src/error-template.vectors.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

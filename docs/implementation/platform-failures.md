@@ -95,9 +95,9 @@ The span keeps one span ID per invocation in every case, so there is never a dup
 already reported as in progress (`layer.md`, "Long-running invocations"), a synthetic root takes the in-progress
 record's IDs, so it replaces that record.
 
-**Status message.** The error group fingerprint is `function + error.type + normalized message`
-(`storage.md`), so the message is chosen to be the most telling single line: the `errorMessage` of a JSON error the
-runtime logged (`Error: Cannot find module 'left-pad'` for an ImportModuleError), else a `FATAL ERROR` line (V8's
+**Status message.** The error group fingerprint is `function + error.type + code location + message template`
+(`error-grouping.md`; these spans have no stack, so no code location), so the message is chosen to be the most
+telling single line: the `errorMessage` of a JSON error the runtime logged (`Error: Cannot find module 'left-pad'` for an ImportModuleError), else a `FATAL ERROR` line (V8's
 heap limit message), else the last error-level line, else a fixed text per type (`Task timed out`, `Runtime exited:
 out of memory`, …). Capped at 300 bytes and redacted.
 

@@ -28,6 +28,7 @@ const invocationFilters = [
   query('limit', 'Page size.', { type: 'integer', minimum: 1, maximum: 500, default: 50 }),
   query('cursor', 'Opaque cursor from next_cursor.'),
   query('ids', 'Comma-separated span IDs (up to 100): only these invocations, in their current state (the final row once it arrived). Used by Live to refresh in-progress rows.'),
+  query('group', 'An error group fingerprint (from the errors list): only the failed invocations in that group.'),
 ];
 const accountId = path('id', 'Connection ID (not the AWS account ID).');
 const ws = path('workspace', 'Workspace slug or ID.');
@@ -247,7 +248,7 @@ export const openApiDocument = {
     },
     '/api/w/{workspace}/p/{project}/errors': {
       get: {
-        tags: ['Traces'], summary: 'Error groups (function + error type + normalized message), plus one `Throttled` group per throttled function', operationId: 'listErrorGroups',
+        tags: ['Traces'], summary: 'Error groups (function + error type + code location + message template), plus one `Throttled` group per throttled function', operationId: 'listErrorGroups',
         parameters: [ws, prj, ...range, fn], responses: { 200: json(ref('ErrorGroupList')), ...bad, ...notFound },
       },
     },

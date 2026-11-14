@@ -5,6 +5,7 @@ import { decodeCursor, encodeCursor } from '../utils/cursor.js';
 import { emptyToNull, isoFromMs, round, zeroToNull } from '../utils/format.js';
 import { badRequest } from '../utils/http-error.js';
 import type { TimeRange } from '../utils/time-range.js';
+import { ERROR_FINGERPRINT_EXPR } from './error-grouping.js';
 import { projectFields, type ProjectNames } from './projects.js';
 
 interface InvocationRow {
@@ -41,6 +42,8 @@ export interface InvocationFilters {
   limit?: string | number;
   /** Comma-separated span IDs: only these invocations, in their current state (Live refreshes in-progress rows). */
   ids?: string;
+  /** An error group's fingerprint (`GET /errors`): only the failed invocations in that group. */
+  group?: string;
 }
 
 const STATUSES = ['ok', 'error', 'in_progress'];
@@ -83,7 +86,10 @@ export async function listInvocations(scope: DataScope, range: TimeRange, filter
   const byProject = scope.projectId === null;
   const limit = parseLimit(filters.limit);
   const ids = parseIds(filters.ids);
-  const status = filters.status || undefined;
+  const group = filters.group || undefined;
+  if (group && !/^[0-9a-f]{1,16}$/.test(group)) throw badRequest(`Invalid group: ${group}`);
+  // An error group holds only failed invocations.
+  const status = group ? 'error' : filters.status || undefined;
   if (status && !STATUSES.includes(status)) throw badRequest(`Invalid status: ${status}`);
 
   const common = ['tenant_id = {tenant:String}'];
@@ -114,6 +120,10 @@ export async function listInvocations(scope: DataScope, range: TimeRange, filter
   if (status && status !== 'in_progress') {
     finalWhere.push('status = {status:String}');
     queryParams.status = status;
+  }
+  if (group) {
+    finalWhere.push(`${ERROR_FINGERPRINT_EXPR} = {group:String}`);
+    queryParams.group = group;
   }
   if (q) {
     finalWhere.push(

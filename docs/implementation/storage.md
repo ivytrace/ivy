@@ -52,17 +52,17 @@ overview and errors across all projects) read the tenant's range and group by `p
   a query sets it (the API always does), and `ivy_project` to the project in `SQL_ivy_project` (set by every
   project-scoped query; workspace-wide queries leave it unset). See `tenancy.md` for why they pass everything
   when the setting isn't set.
-- Skip indexes: bloom filters on `TraceId`/`trace_id`/`request_id`/`error_fingerprint` and on span
+- Skip indexes: bloom filters on `TraceId`/`trace_id`/`request_id` and on span
   attribute keys/values; ngram bloom filters on `http_path` and `error_message`. They are unchanged by projects:
   the project is in the primary key, so it prunes by range and needs no index of its own, and the existing indexes
   work within the (tenant, project) range. A trace lookup is now `TenantId`/`ProjectId` prefix + hour buckets +
   TraceId bloom filter.
 - `invocations` fields: `error_type` = `error.type` or the `exception` event's type, and `error_message` =
-  status message or `exception.message`. The `error_fingerprint` is
-  `cityHash64(function, error_type, message with UUIDs / long hex / numbers replaced)`. For failures the extension
-  reports (`platform-failures.md`) the status message is the first meaningful log line, so an init failure groups as
-  e.g. `Runtime.ImportModuleError` + `Error: Cannot find module 'left-pad'` (module names survive the normalization;
-  digits in them become `<n>`).
+  status message or `exception.message`, and `error_frame` = the top in-app stack frame (`file:function`) of the
+  `exception` event. The error group fingerprint and message template are computed from these at query time
+  (`error-grouping.md`). For failures the extension reports (`platform-failures.md`) the status message is the first
+  meaningful log line, so an init failure groups as e.g. `Runtime.ImportModuleError` + `Error: Cannot find module
+  'left-pad'`.
 - Platform columns: `failure_phase` (`ivy.failure.phase`: `init`/`invoke`, empty for handler errors), `synthetic`
   (`ivy.synthetic`: the extension created the span), `init_duration_ms` (`ivy.init_duration_ms`) and
   `memory_limit_mb` (resource `faas.max_memory`). They were added with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, and
@@ -82,7 +82,8 @@ overview and errors across all projects) read the tenant's range and group by `p
   `invocations_hourly`, and the partial hours at either edge come from raw `invocations`. Quantile states from
   both sources are merged, so counts are exact for any `from`/`to`. Buckets of 1m/5m read `invocations` only.
 - **`…/invocations`:** keyset pagination on `(ts, span_id)`. The cursor is base64url `[ts_ms, span_id]`.
-- **`…/errors`:** `GROUP BY error_fingerprint, function` over `invocations`.
+- **`…/errors`:** the fingerprint and template computed per failed row (`error-grouping.md`), grouped by
+  fingerprint and raw message, then by fingerprint (counts, variants, top messages).
 
 ## Schema application
 

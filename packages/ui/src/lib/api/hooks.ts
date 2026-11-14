@@ -111,6 +111,8 @@ export interface InvocationFilters {
   function?: string;
   status?: "ok" | "error" | "in_progress";
   q?: string;
+  /** An error group's fingerprint: only its failed invocations. */
+  group?: string;
   cursor?: string;
   limit?: number;
 }

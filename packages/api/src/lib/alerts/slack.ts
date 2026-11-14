@@ -1,6 +1,6 @@
 import { FAILURE_LABELS } from '@ivy/spans';
 import { slackApiUrl, type SlackConfig } from './config.js';
-import type { AlertGroup } from './data.js';
+import { groupMessage, type AlertGroup } from './data.js';
 
 /** Slack: the OAuth code exchange, Block Kit messages and webhook delivery (docs/implementation/alerts.md). */
 
@@ -87,10 +87,10 @@ export function countLine(group: AlertGroup, firstTime: boolean, sinceMinutes: n
  */
 export function formatGroupMessage(group: AlertGroup, ctx: MessageContext, firstTime: boolean) {
   const title = group.kind === 'throttle' ? 'Throttled' : group.failure_kind ? `${FAILURE_LABELS[group.failure_kind]}: ${group.error_type}` : group.error_type;
-  const message = trim(group.error_message, 280);
-  const counts = countLine(group, firstTime, ctx.sinceMinutes);
+  const message = trim(groupMessage(group), 280);
+  const counts = `${countLine(group, firstTime, ctx.sinceMinutes)}${group.variants > 1 ? ` · ${plural(group.variants, 'variant')}` : ''}`;
   const heading = `${firstTime ? ':red_circle: New error' : ':repeat: Error'} in ${ctx.project.name}`;
-  const text = `${firstTime ? 'New error' : 'Error'} in ${ctx.project.name}: ${trim(title, 80)}${message ? ` · ${trim(group.error_message, 120)}` : ''} (${counts})`;
+  const text = `${firstTime ? 'New error' : 'Error'} in ${ctx.project.name}: ${trim(title, 80)}${message ? ` · ${trim(groupMessage(group), 120)}` : ''} (${counts})`;
   return {
     text,
     blocks: [

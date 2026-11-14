@@ -162,12 +162,27 @@ export interface Invocation extends ProjectRef {
   last_seen?: string | null;
 }
 
+export interface ErrorGroupMessage {
+  message: string;
+  count: number;
+  sample_trace_id: string;
+  last_seen: string;
+}
+
 export interface ErrorGroup extends ProjectRef {
+  /** Also the invocations list's `group` filter. */
   fingerprint: string;
   function: string;
   error_type: string;
+  /** The latest raw message. */
   error_message: string;
+  /** The message with variable parts replaced by placeholders (`{path}`, `{id}`, …). */
+  error_template: string;
   count: number;
+  /** Distinct raw messages in the range. */
+  variants: number;
+  /** Up to five, most frequent first; empty for throttles. */
+  top_messages: ErrorGroupMessage[];
   first_seen: string;
   last_seen: string;
   /** null for the synthetic Throttled group (no trace). */

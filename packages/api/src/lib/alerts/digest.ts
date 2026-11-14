@@ -6,7 +6,7 @@ import { multiWorkspaceMode } from '../tenancy/members.js';
 import { tenancyStore, type TenantRecord } from '../tenancy/store.js';
 import { digestCron, digestEnabled, digestExtraRecipients, signingSecret } from './config.js';
 import { lastRun, parseCron } from './cron.js';
-import { alertData, type DigestData, type DigestGroup, type DigestTotals } from './data.js';
+import { alertData, groupMessage, type DigestData, type DigestGroup, type DigestTotals } from './data.js';
 import { sign, verify } from './signing.js';
 import { alertStore } from './store.js';
 
@@ -104,6 +104,7 @@ const trim = (s: string, max: number) => {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 };
 const n = (v: number) => v.toLocaleString('en-US');
+const variantsNote = (g: DigestGroup) => (g.variants > 1 ? ` (${n(g.variants)} variants)` : '');
 const day = (ms: number) => new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
 /** "+40%", "−12%", "new" or "same" against last week. */
@@ -149,13 +150,13 @@ export function renderDigest(m: DigestModel, links: RenderLinks) {
     '',
     'New error groups this week',
     ...(m.newGroups.length
-      ? m.newGroups.map((g) => `- ${groupTitle(g)}: ${trim(g.error_message, 120)}\n  ${g.function} · ${projectName(g)} · ${n(g.count)}×\n  ${groupUrl(m, g, links.baseUrl)}`)
+      ? m.newGroups.map((g) => `- ${groupTitle(g)}: ${trim(groupMessage(g), 120)}${variantsNote(g)}\n  ${g.function} · ${projectName(g)} · ${n(g.count)}×\n  ${groupUrl(m, g, links.baseUrl)}`)
       : ['None.']),
     '',
     'Top error groups',
     ...(m.topGroups.length
       ? m.topGroups.map(
-          (g) => `- ${n(g.count)}× (${trend(g.count, g.previous)}) ${groupTitle(g)}: ${trim(g.error_message, 120)}\n  ${g.function} · ${projectName(g)}\n  ${groupUrl(m, g, links.baseUrl)}`,
+          (g) => `- ${n(g.count)}× (${trend(g.count, g.previous)}) ${groupTitle(g)}: ${trim(groupMessage(g), 120)}${variantsNote(g)}\n  ${g.function} · ${projectName(g)}\n  ${groupUrl(m, g, links.baseUrl)}`,
         )
       : ['No errors this week.']),
     '',
@@ -170,7 +171,7 @@ export function renderDigest(m: DigestModel, links: RenderLinks) {
       .map(
         (g) => `<tr><td style="padding:10px 0;border-top:1px solid #e4e4e7;">
   <a href="${esc(groupUrl(m, g, links.baseUrl))}" style="color:#15803d;font-weight:600;text-decoration:none;">${esc(trim(groupTitle(g), 100))}</a>
-  <div style="color:#27272a;font-size:13px;margin-top:2px;">${esc(trim(g.error_message, 160))}</div>
+  <div style="color:#27272a;font-size:13px;margin-top:2px;">${esc(trim(groupMessage(g), 160))}${esc(variantsNote(g))}</div>
   <div style="${muted}font-size:12px;margin-top:2px;"><code style="font-family:Menlo,Consolas,monospace;">${esc(trim(g.function, 80))}</code> · ${esc(projectName(g))}</div>
 </td><td style="padding:10px 0 10px 12px;border-top:1px solid #e4e4e7;text-align:right;white-space:nowrap;vertical-align:top;font-size:13px;">
   <strong>${n(g.count)}</strong>${withTrend ? `<div style="${muted}font-size:12px;">${esc(trend(g.count, g.previous))}</div>` : ''}

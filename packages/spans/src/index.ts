@@ -6,3 +6,4 @@ export * from "./failures.js";
 export * from "./llm.js";
 export * from "./collapsed.js";
 export * from "./in-progress.js";
+export * from "./error-template.js";

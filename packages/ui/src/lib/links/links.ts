@@ -25,7 +25,7 @@ export const rowScope = (s: Scope, row: { project?: string | null }): Scope => (
 export const traceLink = (s: Scope, traceId: string, invocationSpanId?: string) =>
   `${projectBase(s)}/traces/${traceId}${invocationSpanId ? `?invocation=${invocationSpanId}` : ""}`;
 
-export const invocationsLink = (s: Scope, filters: { function?: string; status?: "ok" | "error"; q?: string } = {}) => {
+export const invocationsLink = (s: Scope, filters: { function?: string; status?: "ok" | "error"; q?: string; group?: string } = {}) => {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
   const qs = params.toString();

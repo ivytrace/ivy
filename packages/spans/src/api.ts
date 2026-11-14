@@ -43,12 +43,28 @@ export interface Invocation extends ProjectRef {
   last_seen?: string | null;
 }
 
+/** One of a group's distinct raw messages. */
+export interface ErrorGroupMessage {
+  message: string;
+  count: number;
+  sample_trace_id: string;
+  last_seen: string;
+}
+
 export interface ErrorGroup extends ProjectRef {
+  /** Hash of function, error type, code location and message template; the `group` filter of the invocations list. */
   fingerprint: string;
   function: string;
   error_type: string;
+  /** The latest raw message. */
   error_message: string;
+  /** The message with its variable parts replaced (`errorTemplate`): `Upload not found for ID: {path}`. */
+  error_template: string;
   count: number;
+  /** Distinct raw messages in the range. */
+  variants: number;
+  /** The most frequent raw messages (up to 5); empty for throttles. */
+  top_messages: ErrorGroupMessage[];
   first_seen: string;
   last_seen: string;
   /** null for the synthetic Throttled group: throttled requests never reach the function. */

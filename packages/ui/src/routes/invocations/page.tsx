@@ -9,6 +9,7 @@ import { Elapsed, InProgressStatus, rowProgress } from "@/components/common/in-p
 import { LiveBanner, LiveToggle } from "@/components/common/live";
 import { ColdStart, InvocationStatus } from "@/components/common/status";
 import { TimeseriesChart } from "@/components/stats/timeseries-chart";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -126,6 +127,7 @@ function useFilterParams() {
   const fn = params.get("function") ?? undefined;
   const status = (params.get("status") as "ok" | "error" | "in_progress" | null) ?? undefined;
   const q = params.get("q") ?? undefined;
+  const group = params.get("group") ?? undefined;
   const live = params.get("live") === "1";
   const update = (patch: Record<string, string | undefined>) => {
     const next = new URLSearchParams(params);
@@ -135,7 +137,7 @@ function useFilterParams() {
     }
     setParams(next, { replace: true });
   };
-  return { fn, status, q, live, update };
+  return { fn, status, q, group, live, update };
 }
 
 export default function Invocations() {
@@ -143,11 +145,11 @@ export default function Invocations() {
   const all = scope.project === ALL_PROJECTS;
   const columns = useMemo(() => columnsFor(scope), [scope.workspace, scope.project]);
   const { range, setRange } = useTimeRange();
-  const { fn, status, q, live, update } = useFilterParams();
+  const { fn, status, q, group, live, update } = useFilterParams();
   const [cursors, setCursors] = useState<string[]>([]);
   const [search, setSearch] = useState(q ?? "");
 
-  const filterKey = JSON.stringify([range, fn, status, q]);
+  const filterKey = JSON.stringify([range, fn, status, q, group]);
   useEffect(() => {
     setCursors([]);
     setSearch(q ?? "");
@@ -158,13 +160,14 @@ export default function Invocations() {
     function: fn,
     status,
     q,
+    group,
     cursor,
     limit: PAGE_SIZE,
   });
   // Live follows "now", so it needs a relative time range.
   const liveOn = live && "since" in range;
   const reload = useCallback(() => void mutate(), [mutate]);
-  const liveFilters = useMemo(() => ({ function: fn, status, q }), [fn, status, q]);
+  const liveFilters = useMemo(() => ({ function: fn, status, q, group }), [fn, status, q, group]);
   const liveState = useLiveInvocations({
     enabled: liveOn,
     range,
@@ -275,9 +278,22 @@ export default function Invocations() {
             <SelectItem value="in_progress">Running</SelectItem>
           </SelectContent>
         </Select>
+        {group && (
+          <Badge variant="outline" className="h-8 gap-1.5 pl-3 pr-1 text-xs font-normal">
+            One error group
+            <button
+              type="button"
+              aria-label="Show all invocations"
+              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={() => update({ group: undefined })}
+            >
+              <X className="size-3.5" />
+            </button>
+          </Badge>
+        )}
         <LiveToggle on={liveOn} paused={liveState.paused} failing={liveState.failing} onChange={setLive} />
-        {(fn || status || q) && (
-          <Button variant="ghost" size="sm" onClick={() => update({ function: undefined, status: undefined, q: undefined })}>
+        {(fn || status || q || group) && (
+          <Button variant="ghost" size="sm" onClick={() => update({ function: undefined, status: undefined, q: undefined, group: undefined })}>
             <X className="mr-1 size-4" />
             Reset
           </Button>

@@ -1,8 +1,10 @@
 import { useMemo } from "react";
 import { Link, useSearchParams } from "react-router";
 import type { ColumnDef } from "@tanstack/react-table";
+import { ChevronRight } from "lucide-react";
 
 import { DataTable } from "@/components/tables/data-table";
+import { ErrorTemplate, GroupMessages, variantsLabel } from "@/components/errors/error-template";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
 import { FailureBadge } from "@/components/common/status";
 import { Button } from "@/components/ui/button";
@@ -14,12 +16,33 @@ import type { ErrorGroup } from "@/lib/api/types";
 import { ALL_PROJECTS, invocationsLink, pageLink, rowScope, traceLink, type Scope } from "@/lib/links/links";
 import { useScope } from "@/lib/links/use-scope";
 import { formatAgo, formatNumber, formatTimestamp } from "@/lib/utils/format";
+import { cn } from "@/lib/utils/cn";
 
 const ALL = "__all";
+
+const expandable = (g: ErrorGroup) => g.kind !== "throttle" && g.variants > 1 && g.top_messages.length > 0;
 
 function columnsFor(scope: Scope): ColumnDef<ErrorGroup, unknown>[] {
   const all = scope.project === ALL_PROJECTS;
   return [
+  {
+    id: "expand",
+    header: "",
+    enableSorting: false,
+    meta: { className: "w-8 pr-0" },
+    cell: ({ row }) =>
+      expandable(row.original) ? (
+        <button
+          type="button"
+          aria-label={row.getIsExpanded() ? "Hide messages" : "Show messages"}
+          aria-expanded={row.getIsExpanded()}
+          onClick={row.getToggleExpandedHandler()}
+          className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <ChevronRight className={cn("size-4 transition-transform", row.getIsExpanded() && "rotate-90")} />
+        </button>
+      ) : null,
+  },
   {
     accessorKey: "error_type",
     header: "Error",
@@ -39,7 +62,7 @@ function columnsFor(scope: Scope): ColumnDef<ErrorGroup, unknown>[] {
             {g.failure_kind && <FailureBadge kind={g.failure_kind} hint={false} />}
             <span className="font-semibold text-red-400">{g.error_type}</span>
           </span>
-          <span className="mt-0.5 block line-clamp-2 text-muted-foreground">{g.error_message}</span>
+          <ErrorTemplate template={g.error_template} className="mt-0.5 block line-clamp-2 text-muted-foreground" />
         </Link>
       );
     },
@@ -69,6 +92,22 @@ function columnsFor(scope: Scope): ColumnDef<ErrorGroup, unknown>[] {
       ]
     : []),
   {
+    accessorKey: "variants",
+    header: "Variants",
+    cell: ({ row }) =>
+      row.original.kind === "throttle" || row.original.variants <= 1 ? null : expandable(row.original) ? (
+        <button
+          type="button"
+          onClick={row.getToggleExpandedHandler()}
+          className="whitespace-nowrap tabular-nums text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+        >
+          {variantsLabel(row.original.variants)}
+        </button>
+      ) : (
+        <span className="whitespace-nowrap tabular-nums text-muted-foreground">{variantsLabel(row.original.variants)}</span>
+      ),
+  },
+  {
     accessorKey: "count",
     header: "Occurrences",
     cell: ({ row }) => <span className="tabular-nums">{formatNumber(row.original.count)}</span>,
@@ -77,9 +116,14 @@ function columnsFor(scope: Scope): ColumnDef<ErrorGroup, unknown>[] {
     accessorKey: "last_seen",
     header: "Last seen",
     cell: ({ row }) => (
-      <Tooltipped title={`First seen ${formatTimestamp(row.original.first_seen)}`}>
-        <span className="whitespace-nowrap text-muted-foreground">{formatAgo(row.original.last_seen)}</span>
-      </Tooltipped>
+      <div className="whitespace-nowrap">
+        <Tooltipped title={formatTimestamp(row.original.last_seen)}>
+          <span className="text-muted-foreground">{formatAgo(row.original.last_seen)}</span>
+        </Tooltipped>
+        <Tooltipped title={formatTimestamp(row.original.first_seen)}>
+          <span className="block text-xs text-zinc-500">first {formatAgo(row.original.first_seen)}</span>
+        </Tooltipped>
+      </div>
     ),
   },
   {
@@ -104,11 +148,7 @@ function columnsFor(scope: Scope): ColumnDef<ErrorGroup, unknown>[] {
           </Button>
           <Button variant="outline" size="sm" asChild>
             <Link
-              to={invocationsLink(rowScope(scope, row.original), {
-                function: row.original.function,
-                status: "error",
-                q: row.original.error_message.slice(0, 120),
-              })}
+              to={invocationsLink(rowScope(scope, row.original), { function: row.original.function, group: row.original.fingerprint })}
             >
               Invocations
             </Link>
@@ -133,7 +173,8 @@ export default function Errors() {
     <div>
       <h1 className="text-2xl font-bold">Errors</h1>
       <p className="mb-4 text-sm text-muted-foreground">
-        Failed invocations, grouped by function, error type and normalized message{scope.project === ALL_PROJECTS ? ", across all projects" : ""}.
+        Failed invocations, grouped by function, error type, code location and message pattern
+        {scope.project === ALL_PROJECTS ? ", across all projects" : ""}: IDs, paths and numbers in a message don&apos;t split a group.
         Throttled requests are counted per function; they never reached the function, so they have no trace.
       </p>
       <div className="py-4">
@@ -163,6 +204,7 @@ export default function Errors() {
           columns={columns}
           data={data.items}
           getRowId={(g) => `${g.project_id ?? ""}/${g.fingerprint}/${g.function}`}
+          renderExpanded={(g) => (expandable(g) ? <GroupMessages group={g} scope={rowScope(scope, g)} /> : null)}
           defaultSorting={[{ id: "count", desc: true }]}
           empty={<EmptyState title="No errors" description="No failed invocations in this time range." />}
         />

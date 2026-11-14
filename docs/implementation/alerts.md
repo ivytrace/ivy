@@ -59,8 +59,9 @@ A project can have several channels (each "Add to Slack" adds one; the same chan
 
 **Messages** (`formatGroupMessage`, Block Kit): heading ("New error in Checkout (prod)" or "Error in …"), error type
 (with the failure kind for failures outside the handler: "Out of memory: Runtime.OutOfMemory"), the message trimmed to
-280 characters and mrkdwn-escaped, then a context line with the function, project · workspace and counts ("First
-seen", or "37 more in the last 60 min · 412 total"), the first stack frame of the latest occurrence (`at handler
+280 characters and mrkdwn-escaped (the group's template, `Upload not found for ID: {path}`, when it has several
+distinct messages; `error-grouping.md`), then a context line with the function, project · workspace and counts
+("First seen", or "37 more in the last 60 min · 412 total", plus "· 23 variants" for several messages), the first stack frame of the latest occurrence (`at handler
 (/var/task/index.mjs:12:5)`, never the message line of the stack), and a "View in Ivy" button to the latest trace (or
 the errors page of the function for throttles). No payloads, attributes or log lines. A plain `text` fallback for
 notifications.
@@ -87,14 +88,21 @@ A loop in the API process (`lib/alerts/loop.ts`), every `IVY_ALERTS_INTERVAL_SEC
    `on-error-group-created` hook installed: every project.
 3. **Candidates.** Per project, one query (`lib/alerts/data.ts`) over `invocations` (status `error`, so failures
    outside the handler are in it) for fingerprints with an occurrence in the last `interval + 15 min`, returning per
-   group the total within retention, first and last seen, the latest trace and the count after its last
-   notification (`countIf(ts > notified_at[indexOf(fps, fingerprint)])`, 0 for groups without state). With
-   `include_throttles` (off by default), the same over `function_throttles` for the synthetic
-   `throttled:<region>:<function>` groups. The fingerprints are the error groups' (`errors.ts`, the materialized view).
+   group the total within retention, first and last seen, the latest trace, the template and number of distinct
+   messages, and the count after its last notification (`countIf(ts > notified_at[indexOf(fps, fingerprint)])`, all
+   occurrences for groups without state). With `include_throttles` (off by default), the same over
+   `function_throttles` for the synthetic `throttled:<region>:<function>` groups. The fingerprints are the error
+   groups' (`error-grouping.md`), computed at query time: the query first narrows to the (function, error type) pairs
+   with a recent failure, then reads every fingerprint of each recent (function, error type, template), so it can also
+   tell whether that template occurred in the 7 days before the window (`seen_before`).
 4. **Decision** (`decide`), per group, with `ivy_control.alert_state` (tenant, project, fingerprint,
    `first_notified_at`, `last_notified_at`, `occurrences_at_last_notify`):
    - no state and first seen after the project's first channel was connected (and within 24 h): **first seen**, send;
    - no state but older: write a baseline state without sending, so connecting Slack doesn't post every existing error;
+   - no state but `seen_before`: the same function, error type and template had occurrences in the 7 days before the
+     candidate window, under another fingerprint. That happens when the grouping rules change the fingerprints (adding
+     the code location did, for every group): those groups get a baseline state too, instead of a flood of "New error"
+     messages for errors the channel already knows;
    - state: send when there are new occurrences and either `every_occurrences` (100) of them or
      `interval_minutes` (60) since the last message, whichever comes first. No new occurrences, no message.
 5. **Claim, then send.** The state is written before posting: a crash loses a message rather than sending it twice.

@@ -131,5 +131,9 @@ live in `docs/implementation/`.
 - Alerts and the digest never carry payloads: type, trimmed message, function, counts, a stack frame and links.
 - The digest goes to a workspace's members every Monday 08:00 UTC by default, skips weeks without data, can be
   switched off per workspace by owners, and every member can unsubscribe (one click in the email, no sign-in).
+- Errors with the same type, code location and message pattern are grouped; variable parts of the message (IDs,
+  paths, numbers) don't split groups. The errors page shows the pattern with the number of distinct messages and the
+  most frequent ones; alerts and the digest show the pattern too. Implementation:
+  `docs/implementation/error-grouping.md`.
 - Self-hosters get the `on-error-group-created` hook for their own integrations. Implementation:
   `docs/implementation/alerts.md`.
