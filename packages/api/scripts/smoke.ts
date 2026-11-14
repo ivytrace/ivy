@@ -50,8 +50,8 @@ const SPAN: Shape = {
   resource: 'object', events: 'array',
 };
 const ERROR_GROUP: Shape = {
-  fingerprint: 'string', function: 'string', error_type: 'string', error_message: 'string', count: 'number',
-  first_seen: 'iso', last_seen: 'iso', sample_trace_id: 'string',
+  fingerprint: 'string', function: 'string', error_type: 'string', error_message: 'string', error_template: 'string',
+  count: 'number', variants: 'number', top_messages: 'array', first_seen: 'iso', last_seen: 'iso', sample_trace_id: 'string',
 };
 const POINT: Shape = { ts: 'iso', invocations: 'number', errors: 'number', p95_ms: 'number' };
 

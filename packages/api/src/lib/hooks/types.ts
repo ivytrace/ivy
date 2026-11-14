@@ -69,8 +69,12 @@ export interface ErrorGroupCreatedData {
     kind: 'error' | 'throttle';
     function: string;
     error_type: string;
-    /** At most 500 characters. */
+    /** The latest message, at most 500 characters. */
     error_message: string;
+    /** The message with its variable parts replaced (`{id}`, `{path}`, …), at most 500 characters. */
+    error_template: string;
+    /** Distinct messages in the group so far. */
+    variants: number;
     failure_kind: 'init_failed' | 'out_of_memory' | 'timed_out' | 'crashed' | null;
     first_seen: string;
     occurrences: number;

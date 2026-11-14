@@ -137,8 +137,10 @@ Paths below are relative to `/w/:workspace/:project`.
   an "Only this invocation" switch scopes the view (this replaces trace-stack's "Filter current invocation").
   Clicking a graph node opens and scrolls to its spans in the timeline. The route is lazy-loaded so React Flow
   stays out of the main bundle.
-- `/errors?function=`: groups from `errors`, linking to the sample trace and to
-  `invocations?function=…&status=error&q=<message>`.
+- `/errors?function=`: groups from `errors` (`error-grouping.md`): the message template with its placeholders muted
+  (`ErrorTemplate`), variants, occurrences, first and last seen. A group with several distinct messages expands (chevron
+  or "N variants") to its most frequent messages with counts, each linking to its trace. Buttons: the sample trace, and
+  `invocations?function=…&group=<fingerprint>` (the list shows a removable "One error group" filter).
 - `/w/:workspace/settings/aws`: AWS accounts (see `auto-trace.md`). A "Connect AWS account" dialog (account ID, stack
   region, regions, the project to preselect → quick-create link opened in a new tab, or template download + upload
   instructions when there is no link → verify, polled every 10 s), one card per account (status, regions, last sync,

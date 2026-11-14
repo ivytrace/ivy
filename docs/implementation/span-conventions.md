@@ -90,7 +90,7 @@ creates the invocation span itself when the tracer reported nothing:
 - `ivy.platform.status`: the platform status, `failure` | `error` | `timeout`.
 - `ivy.synthetic = true`: the extension created this span; there are no tracer spans (always for init failures).
 - Status `ERROR`, message = the first meaningful log line (e.g. `Error: Cannot find module 'left-pad'`), which is
-  what error groups are keyed on. No `exception` event.
+  what error groups are keyed on (`error-grouping.md`). No `exception` event, so these groups have no code location.
 - The log tail (last 50 lines / 8 KB, redacted) as `log` events, same shape as console logs below.
 - `faas.invocation_id` is empty or absent for an init failure that had no request; the UI shows "no request".
 

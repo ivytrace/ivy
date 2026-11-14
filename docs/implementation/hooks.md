@@ -80,7 +80,9 @@ interface ErrorGroupCreatedData {
     kind: 'error' | 'throttle';
     function: string;
     error_type: string;
-    error_message: string;          // at most 500 characters
+    error_message: string;          // the latest message, at most 500 characters
+    error_template: string;         // the message with variable parts replaced ({id}, {path}, …), at most 500 characters
+    variants: number;               // distinct messages in the group so far
     failure_kind: 'init_failed' | 'out_of_memory' | 'timed_out' | 'crashed' | null;
     first_seen: string;             // ISO 8601
     occurrences: number;

@@ -84,9 +84,14 @@ const fake = {
     if (sql.includes('FROM otel_traces')) {
       const trace = storedTraces.find((t) => t.trace_id === params.query_params.trace_id);
       rows = trace ? spanRows(trace) : [];
-    } else if (sql.includes('error_fingerprint')) {
+    } else if (sql.includes('AS error_template')) {
       rows = errorGroups.map((g) => ({
-        ...g, first_seen_ms: ms(g.first_seen), last_seen_ms: ms(g.last_seen), failure_phase: g.failure_kind === 'init_failed' ? 'init' : '',
+        ...g,
+        latest_message: g.error_message,
+        first_seen_ms: ms(g.first_seen),
+        last_seen_ms: ms(g.last_seen),
+        failure_phase: g.failure_kind === 'init_failed' ? 'init' : '',
+        top: g.top_messages.map((m) => [m.message, m.count, m.sample_trace_id, ms(m.last_seen)]),
       }));
     } else if (sql.includes('FROM invocations')) {
       rows = [...invocations, ...failureInvocations]

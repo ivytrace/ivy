@@ -54,6 +54,9 @@ function occur(fingerprint: string, at: number, count = 1, extra: Partial<AlertG
       kind: 'error' as const,
       error_type: 'TypeError',
       error_message: `Cannot read properties of undefined (reading 'id') [${fingerprint}]`,
+      error_template: `Cannot read properties of undefined (reading 'id') [${fingerprint}]`,
+      variants: 1,
+      seen_before: false,
       failure_kind: null,
       sample_trace_id: '673f1a2b0000000000000000000000aa',
       ...extra,
@@ -119,6 +122,9 @@ describe('decide', () => {
     kind: 'error',
     error_type: 'E',
     error_message: '',
+    error_template: '',
+    variants: 1,
+    seen_before: false,
     failure_kind: null,
     sample_trace_id: null,
     total: 1,
@@ -132,6 +138,12 @@ describe('decide', () => {
   it('sends on first seen, and only baselines groups from before alerts were set up', () => {
     expect(decide(group({}), undefined, DEFAULT_ALERT_SETTINGS, T0, T0 - MIN)).toEqual({ send: true, first: true });
     expect(decide(group({ first_seen: T0 - 2 * MIN }), undefined, DEFAULT_ALERT_SETTINGS, T0, T0 - MIN)).toEqual({ send: false, baseline: true });
+  });
+
+  it('only baselines a group whose template was seen before under another fingerprint', () => {
+    expect(decide(group({ seen_before: true }), undefined, DEFAULT_ALERT_SETTINGS, T0, T0 - MIN)).toEqual({ send: false, baseline: true });
+    // With state, seen_before plays no part.
+    expect(decide(group({ seen_before: true, since_notify: 100 }), state(T0), DEFAULT_ALERT_SETTINGS, T0 + MIN, 0)).toEqual({ send: true, first: false });
   });
 
   it('then at most every 60 minutes or every 100 occurrences', () => {
@@ -209,6 +221,51 @@ describe('evaluateAlerts', () => {
     expect((await alertStore().listStates(workspace.id, project.id))[0]).toMatchObject({ fingerprint: 'old', last_notified_at: T0 });
     occur('old', T0 + 30 * MIN);
     expect(await evaluateAlerts({ now: T0 + 61 * MIN })).toMatchObject({ messages: 1 });
+  });
+
+  it('does not flood the channel when grouping changes the fingerprints', async () => {
+    await connect('main', T0 - 7 * 24 * 3600_000);
+    // Twenty groups that were announced under their old fingerprints, and now regroup into new ones (same
+    // template, now with a code location): their state is keyed by the old fingerprints.
+    for (let i = 0; i < 20; i++) {
+      occur(`old${i}`, T0 - 3 * 3600_000);
+      await alertStore().saveState({
+        tenant_id: workspace.id,
+        project_id: project.id,
+        fingerprint: `old${i}`,
+        first_notified_at: T0 - 3 * 3600_000,
+        last_notified_at: T0 - 3 * 3600_000,
+        occurrences_at_last_notify: 1,
+      });
+      occur(`new${i}`, T0 - MIN, 1, { seen_before: true });
+    }
+    // A group that really is new still gets its message.
+    occur('fresh', T0 - MIN);
+    expect(await evaluateAlerts({ now: T0 })).toMatchObject({ messages: 1 });
+    expect(texts()[0]).toContain('[fresh]');
+    const states = await alertStore().listStates(workspace.id, project.id);
+    expect(states.filter((s) => s.fingerprint.startsWith('new'))).toHaveLength(20);
+
+    // From then on the regrouped ones follow the usual thresholds.
+    occur('new0', T0 + 30 * MIN);
+    expect(await evaluateAlerts({ now: T0 + 61 * MIN })).toMatchObject({ messages: 1 });
+    expect(texts()[1]).toMatch(/^Error in Checkout/);
+  });
+
+  it('shows the template and the number of variants of a group with several messages', async () => {
+    await connect();
+    occur('uploads', T0 - MIN, 3, {
+      error_type: 'Error',
+      error_message: 'Upload not found for ID: favicon.ico',
+      error_template: 'Upload not found for ID: {path}',
+      variants: 23,
+    });
+    await evaluateAlerts({ now: T0 });
+    expect(texts()[0]).toContain('Error · Upload not found for ID: {path}');
+    const body = JSON.stringify(slack.posts[0].body);
+    expect(body).toContain('Upload not found for ID: {path}');
+    expect(body).toContain('23 variants');
+    expect(body).not.toContain('favicon.ico');
   });
 
   it('includes the synthetic Throttled groups only when the project asks for them', async () => {

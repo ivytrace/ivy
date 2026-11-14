@@ -41,7 +41,10 @@ export function formatInvocations(items: Invocation[], messageChars?: number, no
   return items.map((inv) => formatInvocationLine(inv, messageChars, nowMs)).join("\n");
 }
 
-/** One line per error group: count, function, error, first/last seen and a sample trace. */
+/**
+ * One line per error group: count, function, error type and message template, how many distinct messages it has
+ * (with the most frequent one), first/last seen and a sample trace.
+ */
 export function formatErrorGroups(items: ErrorGroup[]): string {
   if (!items.length) return "No errors found.";
   return items
@@ -49,9 +52,19 @@ export function formatErrorGroups(items: ErrorGroup[]): string {
       g.kind === "throttle"
         ? `${g.count}× ${g.function} · Throttled: Lambda rejected these invocations, so they never reached the function` +
           ` and there is no trace · first ${shortIso(g.first_seen)} · last ${shortIso(g.last_seen)}`
-        : `${g.count}× ${g.function}${g.failure_kind ? ` · ${failureLabel(g.failure_kind)}` : ""} · ${oneLine(`${g.error_type}: ${g.error_message}`, 160)}` +
+        : `${g.count}× ${g.function}${g.failure_kind ? ` · ${failureLabel(g.failure_kind)}` : ""} · ${oneLine(`${g.error_type}: ${message(g)}`, 160)}` +
+          variants(g) +
           (g.failure_kind === "init_failed" ? " · no trace spans: the runtime never started the handler" : "") +
           ` · first ${shortIso(g.first_seen)} · last ${shortIso(g.last_seen)} · sample trace ${g.sample_trace_id}`,
     )
     .join("\n");
+}
+
+/** The template when the group has several messages (older servers send none: the message). */
+const message = (g: ErrorGroup) => ((g.variants ?? 1) > 1 && g.error_template ? g.error_template : g.error_message);
+
+function variants(g: ErrorGroup): string {
+  if ((g.variants ?? 1) <= 1) return "";
+  const top = g.top_messages?.[0];
+  return ` · ${g.variants} variants${top ? `, most frequent: ${oneLine(JSON.stringify(top.message), 120)} (${top.count}×)` : ""}`;
 }

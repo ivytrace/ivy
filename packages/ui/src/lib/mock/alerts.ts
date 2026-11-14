@@ -153,7 +153,7 @@ function digestPreview(ws: MockWorkspace, groups: ErrorGroup[], untraced: string
   const top = groups.slice(0, 6);
   const row = (g: ErrorGroup) => `<tr><td style="padding:10px 0;border-top:1px solid #e4e4e7;">
   <a href="#" style="color:#15803d;font-weight:600;text-decoration:none;">${esc(g.error_type)}</a>
-  <div style="color:#27272a;font-size:13px;margin-top:2px;">${esc(g.error_message.slice(0, 160))}</div>
+  <div style="color:#27272a;font-size:13px;margin-top:2px;">${esc((g.variants > 1 ? g.error_template : g.error_message).slice(0, 160))}${g.variants > 1 ? ` (${g.variants} variants)` : ""}</div>
   <div style="color:#71717a;font-size:12px;margin-top:2px;"><code>${esc(g.function)}</code> · ${esc(g.project ?? "checkout-prod")}</div>
 </td><td style="padding:10px 0 10px 12px;border-top:1px solid #e4e4e7;text-align:right;vertical-align:top;font-size:13px;"><strong>${g.count}</strong><div style="color:#71717a;font-size:12px;">+${(g.count * 7) % 60}%</div></td></tr>`;
   const stat = (v: number, label: string, trend: string) =>

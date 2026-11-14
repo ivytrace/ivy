@@ -17,6 +17,22 @@ describe("list formatters", () => {
     );
   });
 
+  it("shows the template and the variants of a group with several messages", () => {
+    const uploads = {
+      ...errorGroups[0],
+      error_type: "Error",
+      error_message: "Upload not found for ID: favicon.ico",
+      error_template: "Upload not found for ID: {path}",
+      count: 52,
+      variants: 23,
+      top_messages: [{ message: "Upload not found for ID: fonts/mono-regular.woff", count: 9, sample_trace_id: "6af84d409a1b2c3d4e5f60718293a4b5", last_seen: "2026-11-14T12:00:00.000Z" }],
+    };
+    expect(formatErrorGroups([uploads])).toBe(
+      '52× checkout-createOrder · Error: Upload not found for ID: {path} · 23 variants, most frequent: "Upload not found for ID: fonts/mono-regular.woff" (9×)' +
+        " · first 2026-11-14T08:12:44Z · last 2026-11-14T12:00:00Z · sample trace 6af84d409a1b2c3d4e5f60718293a4b5",
+    );
+  });
+
   it("labels failures outside the handler and says when there is no trace", () => {
     const [init, oom] = formatInvocations(failureInvocations).split("\n");
     expect(init).toContain("· Init failed · Runtime.ImportModuleError: Error: Cannot find module 'left-pad'");

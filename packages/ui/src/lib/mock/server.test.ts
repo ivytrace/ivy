@@ -89,6 +89,23 @@ describe("mock API: workspaces and data", () => {
     expect(call("GET", "/api/w/acme/traces/abc").status).toBe(404);
   });
 
+  it("groups errors by message template, with variants, and lists one group's invocations", () => {
+    const call = client();
+    const billing = "/api/w/acme/p/billing-api-prod";
+    const groups = call<{ items: ErrorGroup[] }>("GET", `${billing}/errors?since=7d`).body.items;
+    const uploads = groups.filter((g) => g.error_template === "Upload not found for ID: {path}");
+    expect(uploads).toHaveLength(1);
+    const [group] = uploads;
+    expect(group.variants).toBeGreaterThan(1);
+    expect(group.top_messages.length).toBe(Math.min(group.variants, 5));
+    expect(group.top_messages.reduce((n, m) => n + m.count, 0)).toBeLessThanOrEqual(group.count);
+    expect(group.top_messages.every((m) => m.message.startsWith("Upload not found for ID: "))).toBe(true);
+
+    const listed = call<InvocationsResponse>("GET", `${billing}/invocations?since=7d&limit=500&group=${group.fingerprint}`).body.items;
+    expect(listed.length).toBe(group.count);
+    expect(listed.every((i) => i.status === "error" && i.error_message?.startsWith("Upload not found"))).toBe(true);
+  });
+
   it("serves a rich trace for an error group sample, only in its project", () => {
     const call = client();
     const groups = call<{ items: ErrorGroup[] }>("GET", `${P}/errors?since=7d`).body.items;

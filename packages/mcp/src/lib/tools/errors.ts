@@ -11,12 +11,15 @@ export function registerErrorTools(server: McpServer, data: IvyData) {
     {
       title: "List error groups",
       description:
-        "Distinct errors across your workspaces (or one), grouped by function, error type and normalized message, most " +
-        "frequent first. Use it for an overview of what is breaking and how often. Each line: [workspace/project], count, " +
-        "function, the failure label for errors outside the handler (Init failed, Out of memory, Timed out, Crashed), error, " +
-          "first and last seen (UTC), and a sample trace ID to pass to get_trace_summary. Init failures have no trace spans: " +
-          "the sample trace holds only the platform report and the log tail. Lambda throttles appear as one \"Throttled\" " +
-          "group per function with a count; throttled requests never reach the function, so they have no trace.",
+        "Distinct errors across your workspaces (or one), grouped by function, error type, code location and message " +
+        "pattern, most frequent first. Use it for an overview of what is breaking and how often. Each line: " +
+        "[workspace/project], count, function, the failure label for errors outside the handler (Init failed, Out of " +
+        "memory, Timed out, Crashed), error type and message. When a group's messages differ only in variable parts, the " +
+        "message is a template with placeholders ({id}, {num}, {path}, {email}, {url}, {ip}, {date}, {str}) followed by " +
+        "the number of variants and the most frequent actual message. Then first and last seen (UTC), and a sample trace " +
+        "ID to pass to get_trace_summary. Init failures have no trace spans: the sample trace holds only the platform " +
+        "report and the log tail. Lambda throttles appear as one \"Throttled\" group per function with a count; throttled " +
+        "requests never reach the function, so they have no trace.",
       inputSchema: { workspace, project, function: functionName, since: since("24h"), limit: limit(20) },
       annotations: { title: "List error groups", ...READ_ONLY },
     },

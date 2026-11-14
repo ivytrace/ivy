@@ -212,13 +212,30 @@ function errorFor(fn: FunctionDef, r: () => number): MockError {
             kind: "out_of_memory",
           };
     case "email-sendReceipt":
-      return { type: "SESv2.MessageRejected", message: "Email address is not verified." };
+      return {
+        type: "SESv2.MessageRejected",
+        message: `Email address is not verified. The following identities failed the check in region EU-WEST-1: ${pick(RECIPIENTS, r)}`,
+      };
     case SUPPORT_FUNCTION:
       return RATE_LIMIT;
     default:
-      return { type: "UnauthorizedError", message: "jwt expired" };
+      return r() < 0.5
+        ? { type: "UnauthorizedError", message: "jwt expired" }
+        : { type: "Error", message: `Upload not found for ID: ${pick(UPLOADS, r)}` };
   }
 }
+
+const RECIPIENTS = ["bob@example.com", "carol@example.com", "dave@example.org"];
+const UPLOADS = [
+  "fonts/mono-regular.woff",
+  "favicon.ico",
+  "_code-highlighting.js",
+  "fonts/semibold.woff2",
+  "_mermaid.js",
+  "avatars/3f1c9a2e.png",
+  "fonts/mono-bold.woff2",
+];
+const pick = <T,>(list: T[], r: () => number) => list[Math.floor(r() * list.length)];
 
 /** The import worker, every three hours; the most recent one has a fixed trace ID (`IMPORT_TRACE_ID`). */
 function importInvocations(): MockInvocation[] {

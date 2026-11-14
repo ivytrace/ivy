@@ -239,7 +239,7 @@ Function overview for the range.
 reached the function. A function that was only throttled in the range is listed with 0 invocations and `last_invoked: null`.
 
 ### `GET …/invocations`
-Query: `function`, `status` (`ok`|`error`|`in_progress`), `q` (free text: matches request ID, trace ID, error message, HTTP path), `limit` (default 50, max 500), `cursor` (opaque; from `next_cursor`), `ids` (comma-separated span IDs, up to 100: only those invocations, in their current state; the dashboard's Live mode uses it to refresh in-progress rows, and `from` to fetch rows newer than the newest one it has).
+Query: `function`, `status` (`ok`|`error`|`in_progress`), `q` (free text: matches request ID, trace ID, error message, HTTP path), `limit` (default 50, max 500), `cursor` (opaque; from `next_cursor`), `ids` (comma-separated span IDs, up to 100: only those invocations, in their current state; the dashboard's Live mode uses it to refresh in-progress rows, and `from` to fetch rows newer than the newest one it has), `group` (an error group's `fingerprint` from `…/errors`: only the failed invocations in that group; 400 if it isn't one).
 ```json
 { "items": [ {
   "trace_id": "673f1a2b…", "span_id": "…", "ts": "…",
@@ -297,21 +297,28 @@ JSON-valued attributes (`ivy.payload.*`, headers, arrays) are JSON strings for t
 `detail=summary|normal|full` (default `normal`), `max_tokens` (default 4000, `0` = no limit). 400 for other values.
 
 ### `GET …/errors`
-Error groups, grouped by fingerprint (function + error type + normalized message).
+Error groups: one per fingerprint, a hash of function, error type, code location (top in-app stack frame, without line
+numbers) and message template (the message with IDs, paths, numbers … replaced). See `error-grouping.md`.
 Query: `function`.
 ```json
 { "items": [ {
-  "fingerprint": "…", "function": "…", "error_type": "TypeError",
-  "error_message": "Cannot read properties of undefined (reading 'id')",
-  "count": 42, "first_seen": "…", "last_seen": "…", "sample_trace_id": "…", "kind": "error", "failure_kind": null
+  "fingerprint": "9c1f…", "function": "uploads-get", "error_type": "Error",
+  "error_message": "Upload not found for ID: favicon.ico",
+  "error_template": "Upload not found for ID: {path}",
+  "count": 52, "variants": 23,
+  "top_messages": [ { "message": "Upload not found for ID: fonts/mono-regular.woff", "count": 9, "sample_trace_id": "…", "last_seen": "…" } ],
+  "first_seen": "…", "last_seen": "…", "sample_trace_id": "…", "kind": "error", "failure_kind": null
 } ] }
 ```
-`failure_kind` as in `/api/invocations` (from the newest occurrence). Init failures group by function, error type and
-the first meaningful log line, e.g. `Runtime.ImportModuleError` + `Error: Cannot find module 'left-pad'`.
+`error_message` is the latest raw message, `variants` the number of distinct raw messages in the range and
+`top_messages` the five most frequent, each with its latest trace. `failure_kind` as in `/api/invocations` (from the
+newest occurrence). Init failures group by function, error type and the first meaningful log line, which is kept as it
+is for missing modules and handlers: `Runtime.ImportModuleError` + `Error: Cannot find module 'left-pad'`. Pass
+`fingerprint` as `group` to `…/invocations` for the group's invocations.
 
 Each throttled function also gets one synthetic group: `kind: "throttle"`, `error_type: "Throttled"`,
 `fingerprint: "throttled:<region>:<function>"`, `count` = throttles in the range, `sample_trace_id: null` (throttled
-requests never reach the function, so there is no trace), `failure_kind: null`. Groups are sorted by count.
+requests never reach the function, so there is no trace), `failure_kind: null`, `variants: 1`, `top_messages: []`. Groups are sorted by count.
 
 ### `GET …/stats/timeseries`
 Query: `function` (optional), `bucket` (`1m`|`5m`|`15m`|`1h`|`1d`, default picked from range to keep about 100 points or fewer).

@@ -1,8 +1,7 @@
 import { createClient, type ClickHouseClient } from '@clickhouse/client';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { setClientsForTests } from '../clickhouse/client.js';
+import { schemaStatements } from '../clickhouse/test-schema.js';
 import { clearUsageCacheForTests, countMonthlyTraces } from '../limits/usage.js';
 import { listInvocations } from './invocations.js';
 import { getTrace } from './traces.js';
@@ -18,20 +17,6 @@ const tenant = { id: 'ten_test', shardId: 'shard-1' };
 const scope = { tenant, projectId: 'prj_test' };
 const T0 = Date.UTC(2026, 10, 14, 10, 0, 0);
 let admin: ClickHouseClient;
-
-/** The span-data part of deploy/clickhouse/schema.sql, pointed at the test database. */
-function schemaStatements(): string[] {
-  const sql = readFileSync(join(import.meta.dirname, '../../../../../deploy/clickhouse/schema.sql'), 'utf8')
-    .split('\n')
-    .filter((l) => !l.trim().startsWith('--'))
-    .join('\n')
-    .replaceAll('{{RETENTION_DAYS}}', '3650');
-  return sql
-    .split(/;\s*\n/)
-    .map((s) => s.trim())
-    .filter((s) => s && !/ROW POLICY|ivy_control|CREATE DATABASE/.test(s) && /\bivy\./.test(s))
-    .map((s) => s.replace(/\bivy\.(otel_traces|invocations\w*|function_throttles)\b/g, `${db}.$1`));
-}
 
 interface Span {
   trace: string;
@@ -77,7 +62,7 @@ describe.skipIf(!url)('in-progress invocations in ClickHouse', () => {
   beforeAll(async () => {
     admin = createClient({ url, username: process.env.IVY_CLICKHOUSE_USER ?? 'ivy', password: process.env.IVY_CLICKHOUSE_PASSWORD ?? 'ivy' });
     await admin.command({ query: `CREATE DATABASE ${db}` });
-    for (const query of schemaStatements()) await admin.command({ query });
+    for (const query of schemaStatements(db)) await admin.command({ query });
     const shard = createClient({
       url,
       username: process.env.IVY_CLICKHOUSE_USER ?? 'ivy',

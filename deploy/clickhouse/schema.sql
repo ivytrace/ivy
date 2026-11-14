@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS ivy.invocations
     `http_status` UInt16,
     `error_type` LowCardinality(String),
     `error_message` String CODEC(ZSTD(1)),
-    `error_fingerprint` String,
+    `error_frame` String CODEC(ZSTD(1)),
     `memory_used_mb` Float32,
     `memory_limit_mb` UInt32,
     `failure_phase` LowCardinality(String),
@@ -74,8 +74,7 @@ CREATE TABLE IF NOT EXISTS ivy.invocations
     INDEX idx_trace_id trace_id TYPE bloom_filter(0.001) GRANULARITY 1,
     INDEX idx_request_id request_id TYPE bloom_filter(0.001) GRANULARITY 1,
     INDEX idx_http_path http_path TYPE ngrambf_v1(3, 4096, 3, 0) GRANULARITY 1,
-    INDEX idx_error_message error_message TYPE ngrambf_v1(3, 8192, 3, 0) GRANULARITY 1,
-    INDEX idx_error_fingerprint error_fingerprint TYPE bloom_filter(0.01) GRANULARITY 1
+    INDEX idx_error_message error_message TYPE ngrambf_v1(3, 8192, 3, 0) GRANULARITY 1
 )
 ENGINE = MergeTree
 PARTITION BY toDate(ts)
@@ -88,6 +87,7 @@ ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `memory_limit_mb` UInt32 AF
 ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `failure_phase` LowCardinality(String) AFTER `memory_limit_mb`;
 ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `synthetic` Bool AFTER `failure_phase`;
 ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `init_duration_ms` Float32 AFTER `synthetic`;
+ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `error_frame` String CODEC(ZSTD(1)) AFTER `error_message`;
 
 -- Dropped and recreated (rather than IF NOT EXISTS) so a re-run picks up changes to the query.
 -- Spans inserted during the few milliseconds in between are not copied into `invocations`.
@@ -101,11 +101,21 @@ WITH
     if(ResourceAttributes['faas.name'] != '', ResourceAttributes['faas.name'], ServiceName) AS fn,
     if(is_error, if(SpanAttributes['error.type'] != '', SpanAttributes['error.type'], ex['exception.type']), '') AS err_type,
     if(is_error, if(StatusMessage != '', StatusMessage, ex['exception.message']), '') AS err_message,
+    -- The code location of the error, for the error group fingerprint (docs/implementation/error-grouping.md):
+    -- `file:function` of the top in-app frame, without line and column, so a deploy doesn't split groups.
+    -- JavaScript: the first `at …` frame outside node_modules, Node internals, the Lambda runtime and the Ivy layer.
+    -- Python: the last `File "…", line N, in fn` outside packages and the runtime (tracebacks list the innermost last).
+    splitByChar('\n', ex['exception.stacktrace']) AS stack_lines,
+    arrayFirst(l -> match(l, '^[ \t]*at ') AND match(l, '/') AND NOT match(l, 'node_modules|node:|\\(internal/|/var/runtime/|/opt/nodejs/'), stack_lines) AS js_frame,
+    extract(js_frame, '^[ \t]*at (?:async )?(.+?) \\(') AS js_fn,
     replaceRegexpAll(
-        replaceRegexpAll(
-            replaceRegexpAll(err_message, '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', '<uuid>'),
-            '\\b[0-9a-fA-F]{16,}\\b', '<hex>'),
-        '\\d+(\\.\\d+)?', '<n>') AS err_normalized
+        if(js_fn != '', extract(js_frame, '\\(([^()]*)\\)[ \t]*$'), extract(js_frame, '^[ \t]*at (?:async )?(.*)$')),
+        '^file://|\\?[^:]*|(?::[0-9]+){1,2}$', '') AS js_file,
+    arrayLast(l -> match(l, '^[ \t]*File "') AND NOT match(l, 'site-packages|dist-packages|/var/runtime/|/var/lang/'), stack_lines) AS py_frame,
+    multiIf(
+        js_file != '', concat(js_file, if(js_fn != '', concat(':', js_fn), '')),
+        py_frame != '', concat(extract(py_frame, 'File "([^"]*)"'), ':', trimBoth(extract(py_frame, ', in (.*)$'))),
+        '') AS err_frame
 SELECT
     TenantId AS tenant_id,
     ProjectId AS project_id,
@@ -124,7 +134,7 @@ SELECT
     toUInt16OrZero(SpanAttributes['http.response.status_code']) AS http_status,
     err_type AS error_type,
     err_message AS error_message,
-    if(is_error, lower(hex(cityHash64(fn, err_type, err_normalized))), '') AS error_fingerprint,
+    if(is_error, err_frame, '') AS error_frame,
     toFloat32OrZero(SpanAttributes['ivy.memory_used_mb']) AS memory_used_mb,
     toUInt32(toUInt64OrZero(ResourceAttributes['faas.max_memory']) / 1048576) AS memory_limit_mb,
     SpanAttributes['ivy.failure.phase'] AS failure_phase,
@@ -132,6 +142,11 @@ SELECT
     toFloat32OrZero(SpanAttributes['ivy.init_duration_ms']) AS init_duration_ms
 FROM ivy.otel_traces
 WHERE SpanAttributes['ivy.invocation'] = 'true' AND SpanAttributes['ivy.in_progress'] != 'true';
+
+-- Error group fingerprints are computed at query time now (docs/implementation/error-grouping.md); the view used to
+-- store one. Dropped after the view is replaced, so no insert writes to a missing column.
+ALTER TABLE ivy.invocations DROP INDEX IF EXISTS idx_error_fingerprint;
+ALTER TABLE ivy.invocations DROP COLUMN IF EXISTS `error_fingerprint`;
 
 -- Long-running invocations the extension reported as in progress (`ivy.in_progress`, docs/implementation/layer.md).
 -- Kept apart from `invocations`, so that table, its rollup and the trace count (billing) only ever see the final

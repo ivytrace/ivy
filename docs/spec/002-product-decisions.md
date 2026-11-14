@@ -142,5 +142,9 @@ live in `docs/implementation/`.
 - The digest lists Lambda functions first seen that week in the workspace's AWS accounts that nothing traces yet (at
   most three names, then "and N more", with a "Choose what to trace" link); left out when there are none or no
   account is connected, and never listing functions excluded in the dashboard or tagged `ivy:trace=false`.
+- Errors with the same type, code location and message pattern are grouped; variable parts of the message (IDs,
+  paths, numbers) don't split groups. The errors page shows the pattern with the number of distinct messages and the
+  most frequent ones; alerts and the digest show the pattern too. Implementation:
+  `docs/implementation/error-grouping.md`.
 - Self-hosters get the `on-error-group-created` hook for their own integrations. Implementation:
   `docs/implementation/alerts.md`.

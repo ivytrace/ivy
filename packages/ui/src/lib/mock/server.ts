@@ -1,3 +1,5 @@
+// A direct import: vite.config.ts loads this file with Node, which resolves no `.js` -> `.ts` imports.
+import { errorTemplate } from "@ivy/spans/error-template";
 import type { ErrorGroup, FunctionSummary, Invocation, InvocationsResponse, TimeseriesPoint } from "../api/types.ts";
 import { createAlertsMock } from "./alerts.ts";
 import { createAwsMock, type MockOptions } from "./aws.ts";
@@ -125,8 +127,13 @@ function invocations(pool: Row[], params: URLSearchParams, ids?: Map<string, str
   const limit = Math.min(Number(params.get("limit") ?? 50) || 50, 500);
   const offset = Number(params.get("cursor") ? atob(params.get("cursor")!) : 0);
   const only = params.get("ids") ? new Set(params.get("ids")!.split(",")) : null;
+  const group = params.get("group");
   const found = inRange(pool, params).filter(
-    (i) => (!only || only.has(i.span_id)) && (!status || i.status === status) && (!q || [i.request_id, i.trace_id, i.error_message, i.http_path].some((v) => v?.toLowerCase().includes(q))),
+    (i) =>
+      (!only || only.has(i.span_id)) &&
+      (!group || (i.status === "error" && fingerprint(groupKey(i, false)) === group)) &&
+      (!status || i.status === status) &&
+      (!q || [i.request_id, i.trace_id, i.error_message, i.http_path].some((v) => v?.toLowerCase().includes(q))),
   );
   const page = found.slice(offset, offset + limit);
   const next = offset + limit < found.length ? btoa(String(offset + limit)) : null;
@@ -136,28 +143,46 @@ function invocations(pool: Row[], params: URLSearchParams, ids?: Map<string, str
   };
 }
 
+/** Mock grouping: function, error type and message template (the mock has no stacks, so no code location). */
+const groupKey = (i: Row, byProject: boolean) =>
+  `${byProject ? i.project : ""}|${i.function}|${i.error_type}|${errorTemplate(i.error_message ?? "", i.error_type ?? "")}`;
+
+/** Project-independent, so the invocations list (one project) finds a group listed under all projects. */
+const fingerprint = (key: string) =>
+  Math.abs([...key.slice(key.indexOf("|") + 1)].reduce((h, c) => (Math.imul(31, h) + c.charCodeAt(0)) | 0, 0))
+    .toString(16)
+    .padStart(8, "0");
+
 function errors(pool: Row[], throttles: ThrottleRow[], params: URLSearchParams, byProject: boolean, ids: Map<string, string>): ErrorGroup[] {
   const groups = new Map<string, Row[]>();
   for (const inv of finished(inRange(pool, params)).filter((i) => i.status === "error")) {
-    const key = `${byProject ? inv.project : ""}|${inv.function}|${inv.error_type}|${inv.error_message}`;
+    const key = groupKey(inv, byProject);
     groups.set(key, [...(groups.get(key) ?? []), inv]);
   }
   return [...groups.entries()]
-    .map(([key, list]): ErrorGroup => ({
-      fingerprint: Math.abs([...key].reduce((h, c) => (Math.imul(31, h) + c.charCodeAt(0)) | 0, 0))
-        .toString(16)
-        .padStart(8, "0"),
-      function: list[0].function,
-      ...(byProject ? { project_id: ids.get(list[0].project) ?? list[0].project, project: list[0].project } : {}),
-      error_type: list[0].error_type ?? "Error",
-      error_message: list[0].error_message ?? "",
-      count: list.length,
-      first_seen: list[list.length - 1].ts,
-      last_seen: list[0].ts,
-      sample_trace_id: list[0].trace_id,
-      kind: "error" as const,
-      failure_kind: list[0].failure_kind,
-    }))
+    .map(([key, list]): ErrorGroup => {
+      const messages = new Map<string, Row[]>();
+      for (const inv of list) messages.set(inv.error_message ?? "", [...(messages.get(inv.error_message ?? "") ?? []), inv]);
+      return {
+        fingerprint: fingerprint(key),
+        function: list[0].function,
+        ...(byProject ? { project_id: ids.get(list[0].project) ?? list[0].project, project: list[0].project } : {}),
+        error_type: list[0].error_type ?? "Error",
+        error_message: list[0].error_message ?? "",
+        error_template: key.slice(key.indexOf("|", key.indexOf("|", key.indexOf("|") + 1) + 1) + 1),
+        count: list.length,
+        variants: messages.size,
+        top_messages: [...messages.entries()]
+          .map(([message, rows]) => ({ message, count: rows.length, sample_trace_id: rows[0].trace_id, last_seen: rows[0].ts }))
+          .sort((a, b) => b.count - a.count || b.last_seen.localeCompare(a.last_seen))
+          .slice(0, 5),
+        first_seen: list[list.length - 1].ts,
+        last_seen: list[0].ts,
+        sample_trace_id: list[0].trace_id,
+        kind: "error" as const,
+        failure_kind: list[0].failure_kind,
+      };
+    })
     .concat(throttleGroups(throttles, params, byProject, ids))
     .sort((a, b) => b.count - a.count);
 }
@@ -174,7 +199,10 @@ function throttleGroups(pool: ThrottleRow[], params: URLSearchParams, byProject:
     ...(byProject ? { project_id: ids.get(list[0].project) ?? list[0].project, project: list[0].project } : {}),
     error_type: "Throttled",
     error_message: THROTTLED_MESSAGE,
+    error_template: THROTTLED_MESSAGE,
     count: list.reduce((n, t) => n + t.throttles, 0),
+    variants: 1,
+    top_messages: [],
     first_seen: new Date(Math.min(...list.map((t) => t.minute))).toISOString(),
     last_seen: new Date(Math.max(...list.map((t) => t.minute))).toISOString(),
     sample_trace_id: null,
