@@ -7,6 +7,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as esbuild from 'esbuild';
 import { startCaptureServer } from './capture-server.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -24,6 +25,17 @@ const opt = join(root, 'dist/e2e-opt');
 rmSync(opt, { recursive: true, force: true });
 mkdirSync(opt, { recursive: true });
 run('unzip', ['-q', join(root, 'dist/layer.zip'), '-d', opt]);
+
+const bundledDir = join(root, 'dist/e2e-bundled');
+await esbuild.build({
+  entryPoints: [join(root, 'example/bundled/index.js')],
+  bundle: true,
+  platform: 'node',
+  target: 'node22',
+  format: 'cjs',
+  outfile: join(bundledDir, 'index.js'),
+  logLevel: 'warning',
+});
 
 const capture = await startCaptureServer({ port: CAPTURE_PORT, apiKey });
 // Fake upstreams (echo, DynamoDB) on a separate port: calls to the Ivy endpoint itself are never traced.
@@ -48,7 +60,7 @@ function startContainer(name, port, taskDir, handler, extraEnv = {}, { layer = t
   const args = ['run', '-d', '--rm', '--name', cname, '-p', `${port}:8080`, '--add-host=host.docker.internal:host-gateway'];
   for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
   if (layer) args.push('-v', `${opt}:/opt:ro`);
-  args.push('-v', `${join(root, 'example', taskDir)}:/var/task:ro`, IMAGE, handler);
+  args.push('-v', `${taskDir.startsWith('/') ? taskDir : join(root, 'example', taskDir)}:/var/task:ro`, IMAGE, handler);
   run('docker', args);
   containers.push(cname);
   const proc = spawn('docker', ['logs', '-f', cname]);
@@ -104,6 +116,7 @@ try {
   const esm = startContainer('esm', 9103, 'esm', 'index.handler');
   const slow = startContainer('timeout', 9104, 'cjs', 'index.handler', { AWS_LAMBDA_FUNCTION_TIMEOUT: '2' });
   const broken = startContainer('unreachable', 9105, 'cjs', 'index.handler', { IVY_ENDPOINT: 'http://host.docker.internal:1' });
+  const bundled = startContainer('bundled', 9107, bundledDir, 'index.handler');
   const baseline = startContainer('baseline', 9106, 'cjs', 'index.handler', { AWS_LAMBDA_EXEC_WRAPPER: '', IVY_ENDPOINT: '' }, { layer: false });
 
   console.log('invoking…');
@@ -114,6 +127,7 @@ try {
     sqs: await invoke(cjs, sqs),
     callback: await invoke(cb, scheduled),
     esm: await invoke(esm, sqs),
+    bundled: await invoke(bundled, {}),
     timeout: await invoke(slow, { sleepMs: 4000 }),
   };
   for (const [k, r] of Object.entries(results)) console.log(`  ${k.padEnd(9)} ${String(r.ms).padStart(5)}ms  ${r.body.slice(0, 110)}`);
@@ -153,8 +167,8 @@ try {
     await new Promise((r) => setTimeout(r, 3000));
   } else {
     const roots = () => capture.spans().filter((s) => s.attributes.some((a) => a.key === 'ivy.invocation'));
-    const arrived = await capture.waitFor(() => roots().length >= 7, 20000);
-    check(arrived, `received ${roots().length}/7 invocation spans`);
+    const arrived = await capture.waitFor(() => roots().length >= 8, 20000);
+    check(arrived, `received ${roots().length}/8+ invocation spans`);
     const spans = capture.spans();
     const attr = (s, k) => {
       const v = s.attributes.find((a) => a.key === k)?.value;
@@ -194,6 +208,12 @@ try {
     const esmRoot = rootsBy('esm')[0];
     const esmDdb = esmRoot && spans.find((s) => s.parentSpanId === esmRoot.spanId && s.name === 'DynamoDB.PutItem');
     check(!!esmRoot && !!esmDdb && esmDdb.status.code === 2 && attr(esmDdb, 'http.response.status_code') === '400', 'ESM handler: failed DynamoDB call recorded as error span');
+    const bundledRoot = rootsBy('bundled')[0];
+    const bundledDdb = bundledRoot && spans.find((s) => s.parentSpanId === bundledRoot.spanId);
+    check(
+      !!bundledDdb && bundledDdb.name === 'DynamoDB.GetItem' && attr(bundledDdb, 'rpc.service') === 'DynamoDB' && attr(bundledDdb, 'aws.dynamodb.table_names')?.[0] === 'bundled-table' && attr(bundledDdb, 'aws.request_id') === 'FAKE-REQ-1',
+      'bundled SDK: AWS span derived from the signed HTTP request',
+    );
     const timeoutRoot = rootsBy('timeout')[0];
     check(!!timeoutRoot && attr(timeoutRoot, 'error.type') === 'Timeout', 'timeout recorded with error.type=Timeout');
 
