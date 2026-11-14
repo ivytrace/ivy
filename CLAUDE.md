@@ -8,3 +8,4 @@
 - Deviations from the usual stack are deliberate (see `docs/spec/001-ivy-trace-v1.md`): pnpm instead of Yarn, ClickHouse instead of DynamoDB, docker compose instead of CDK/Lambda for the backend.
 - The UI (and later the website) is dark mode only. No light theme, no theme toggle.
 - No Claude Code attribution in commits or PRs: no `Co-Authored-By: Claude` or `Claude-Session` trailers, no "Generated with Claude Code" lines.
+- The product is called "Ivy" in all prose and UI. "ivytrace"/"Ivy Trace" is only for domains (ivytrace.dev) and GitHub/npm org names, because "ivy" alone is too generic.

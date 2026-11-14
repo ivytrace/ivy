@@ -1,4 +1,4 @@
-# Running Ivy Trace locally
+# Running Ivy locally
 
 ```sh
 docker compose -f deploy/docker-compose.yml up --build      # or: pnpm up

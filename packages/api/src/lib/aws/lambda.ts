@@ -104,7 +104,7 @@ async function findOrPublishLayer(lambda: LambdaClient, layer: LayerZip): Promis
   const published = await lambda.send(
     new PublishLayerVersionCommand({
       LayerName: LAYER_NAME,
-      Description: `Ivy Trace Node.js layer ${marker}`,
+      Description: `Ivy Node.js layer ${marker}`,
       Content: { ZipFile: layer.bytes },
       CompatibleRuntimes: COMPATIBLE_RUNTIMES,
       CompatibleArchitectures: ['x86_64', 'arm64'],

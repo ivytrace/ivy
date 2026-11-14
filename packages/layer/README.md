@@ -1,7 +1,7 @@
 # @ivy/layer
 
 Lambda layer that traces Node.js functions without code changes and ships the spans
-to an Ivy Trace collector (or any OTLP/HTTP endpoint). Design notes live in
+to an Ivy collector (or any OTLP/HTTP endpoint). Design notes live in
 [`docs/implementation/layer.md`](../../docs/implementation/layer.md); the span format in
 [`docs/implementation/span-conventions.md`](../../docs/implementation/span-conventions.md).
 
@@ -31,7 +31,7 @@ With a connected AWS account (Settings → AWS accounts) Ivy publishes and attac
 ```sh
 aws lambda publish-layer-version \
   --layer-name ivy-trace-nodejs \
-  --description "Ivy Trace Node.js layer" \
+  --description "Ivy Node.js layer" \
   --zip-file fileb://packages/layer/dist/layer.zip \
   --compatible-runtimes nodejs20.x nodejs22.x \
   --compatible-architectures x86_64 arm64 \

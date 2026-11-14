@@ -8,7 +8,7 @@ export const Menu = () => (
   <header className="border-b">
     <div className="flex h-16 items-center gap-4 px-4">
       <nav className="flex items-center gap-4 lg:gap-6">
-        <Link to="/" className="mr-1 flex items-center gap-2 font-semibold" aria-label="Ivy Trace">
+        <Link to="/" className="mr-1 flex items-center gap-2 font-semibold" aria-label="Ivy">
           <svg className="ml-1 size-6" viewBox="0 0 32 32" fill="none" aria-hidden="true">
             <path
               fill="#4ade80"
@@ -17,7 +17,7 @@ export const Menu = () => (
             <path className="stroke-background" strokeWidth="1.5" strokeLinecap="round" d="M16 21.5V8M16 17l7.5-4.2M16 17l-7.5-4.2" />
             <path stroke="#4ade80" strokeWidth="1.8" strokeLinecap="round" d="M16 23.5c.3 2.2-.2 4-1.2 5.8" />
           </svg>
-          <span className="hidden sm:inline">Ivy Trace</span>
+          <span className="hidden sm:inline">Ivy</span>
         </Link>
         <MenuLink to="/functions">Functions</MenuLink>
         <MenuLink to="/invocations">Invocations</MenuLink>

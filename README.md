@@ -1,4 +1,4 @@
-# Ivy Trace
+# Ivy
 
 Open-source observability for AWS Lambda (Node.js first). One `docker compose up`
 runs everything: OpenTelemetry Collector → ClickHouse → API (Hono) → UI (React).

@@ -47,7 +47,7 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.title=ivy-api
-            org.opencontainers.image.description=Ivy Trace API and dashboard
+            org.opencontainers.image.description=Ivy API and dashboard
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

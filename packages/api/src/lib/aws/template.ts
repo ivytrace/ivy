@@ -27,21 +27,21 @@ export function buildTemplate(params: TemplateParams): Record<string, unknown> {
 
   return {
     AWSTemplateFormatVersion: '2010-09-09',
-    Description: 'Ivy Trace: cross-account role that lets Ivy attach its tracing layer to Node.js Lambda functions',
+    Description: 'Ivy: cross-account role that lets Ivy attach its tracing layer to Node.js Lambda functions',
     Parameters: {
       TrustedPrincipalArn: withDefault(
-        { Type: 'String', Description: 'The Ivy Trace AWS principal allowed to assume the role', AllowedPattern: '^arn:aws[\\w-]*:(iam|sts)::\\d{12}:.+$' },
+        { Type: 'String', Description: 'The Ivy AWS principal allowed to assume the role', AllowedPattern: '^arn:aws[\\w-]*:(iam|sts)::\\d{12}:.+$' },
         params.principalArn,
       ),
       ExternalId: withDefault(
-        { Type: 'String', Description: 'External ID Ivy Trace sends when assuming the role', MinLength: 16 },
+        { Type: 'String', Description: 'External ID Ivy sends when assuming the role', MinLength: 16 },
         params.externalId,
       ),
-      RoleName: withDefault({ Type: 'String', Description: 'Name of the role Ivy Trace assumes', Default: 'IvyTraceAccess' }, params.roleName),
+      RoleName: withDefault({ Type: 'String', Description: 'Name of the role Ivy assumes', Default: 'IvyTraceAccess' }, params.roleName),
       EventsUrl: withDefault(
         {
           Type: 'String',
-          Description: 'Optional HTTPS URL of the Ivy Trace events endpoint, for attaching to new functions immediately',
+          Description: 'Optional HTTPS URL of the Ivy events endpoint, for attaching to new functions immediately',
           Default: '',
         },
         params.eventsUrl,
@@ -59,7 +59,7 @@ export function buildTemplate(params: TemplateParams): Record<string, unknown> {
         Type: 'AWS::IAM::Role',
         Properties: {
           RoleName: ref('RoleName'),
-          Description: 'Assumed by Ivy Trace to attach its tracing layer to Node.js Lambda functions',
+          Description: 'Assumed by Ivy to attach its tracing layer to Node.js Lambda functions',
           MaxSessionDuration: 3600,
           AssumeRolePolicyDocument: {
             Version: '2012-10-17',
@@ -108,7 +108,7 @@ export function buildTemplate(params: TemplateParams): Record<string, unknown> {
         Type: 'AWS::Events::Connection',
         Condition: 'EventsEnabled',
         Properties: {
-          Description: 'Ivy Trace events endpoint',
+          Description: 'Ivy events endpoint',
           AuthorizationType: 'API_KEY',
           AuthParameters: { ApiKeyAuthParameters: { ApiKeyName: EVENT_SECRET_HEADER, ApiKeyValue: ref('EventSecret') } },
         },
@@ -149,7 +149,7 @@ export function buildTemplate(params: TemplateParams): Record<string, unknown> {
         Type: 'AWS::Events::Rule',
         Condition: 'EventsEnabled',
         Properties: {
-          Description: 'Tells Ivy Trace about new and reconfigured Lambda functions (needs a CloudTrail trail)',
+          Description: 'Tells Ivy about new and reconfigured Lambda functions (needs a CloudTrail trail)',
           EventPattern: {
             source: ['aws.lambda'],
             'detail-type': ['AWS API Call via CloudTrail'],
@@ -169,7 +169,7 @@ export function buildTemplate(params: TemplateParams): Record<string, unknown> {
       },
     },
     Outputs: {
-      RoleArn: { Description: 'Role assumed by Ivy Trace', Value: { 'Fn::GetAtt': ['IvyTraceRole', 'Arn'] } },
+      RoleArn: { Description: 'Role assumed by Ivy', Value: { 'Fn::GetAtt': ['IvyTraceRole', 'Arn'] } },
       ExternalId: { Description: 'External ID', Value: ref('ExternalId') },
     },
   };
