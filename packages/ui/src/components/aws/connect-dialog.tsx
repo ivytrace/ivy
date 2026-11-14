@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { createAwsAccount, refreshAws, verifyAwsAccount } from "@/lib/api/aws";
+import { downloadFile } from "@/lib/api/client";
 import { useAwsSetup } from "@/lib/api/hooks";
 import type { AwsAccount } from "@/lib/api/types";
 import { accountLink } from "@/lib/links/links";
@@ -197,11 +198,15 @@ function Deploy({ account, onConnected }: { account: AwsAccount; onConnected: (a
       ) : (
         <ol className="grid gap-3 text-sm">
           <Step n={1}>
-            <Button variant="outline" asChild onClick={startPolling}>
-              <a href={account.template_download_url} download>
-                <Download className="mr-2 size-4" />
-                Download template
-              </a>
+            <Button
+              variant="outline"
+              onClick={() => {
+                startPolling();
+                void downloadFile(account.template_download_url, `ivy-trace-${account.id.slice(0, 8)}.yaml`);
+              }}
+            >
+              <Download className="mr-2 size-4" />
+              Download template
             </Button>
           </Step>
           <Step n={2}>

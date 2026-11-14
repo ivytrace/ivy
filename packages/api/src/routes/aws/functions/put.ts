@@ -6,7 +6,7 @@ import { jsonBody } from '../../../lib/aws/requests.js';
 import { awsStore } from '../../../lib/aws/store.js';
 import { syncFunction } from '../../../lib/aws/sync.js';
 import type { FunctionSetting } from '../../../lib/aws/types.js';
-import { tenantOf } from '../../../lib/clickhouse/tenant.js';
+import { tenantOf } from '../../../lib/tenancy/context.js';
 import { badRequest } from '../../../lib/utils/http-error.js';
 
 /**
@@ -14,7 +14,7 @@ import { badRequest } from '../../../lib/utils/http-error.js';
  * it fails now, the next sync converges.
  */
 export async function putAwsFunction(c: Context) {
-  const tenant = tenantOf(c);
+  const tenant = tenantOf(c).id;
   const { accountId, region, name } = c.req.param() as { accountId: string; region: string; name: string };
   if (!isRegion(region)) throw badRequest(`Invalid region: ${region}`);
   const body = await jsonBody(c);

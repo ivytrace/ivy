@@ -1,7 +1,9 @@
 import type { Context } from 'hono';
-import { clickhouse } from '../../lib/clickhouse/client.js';
+import { controlClient, shardClient } from '../../lib/clickhouse/client.js';
+import { shardConfigs } from '../../lib/tenancy/shards.js';
 
 export async function getHealth(c: Context) {
-  const ping = await clickhouse.ping();
-  return c.json({ ok: ping.success, clickhouse: ping.success }, ping.success ? 200 : 503);
+  const pings = await Promise.all([controlClient(), ...[...shardConfigs().keys()].map(shardClient)].map((client) => client.ping()));
+  const ok = pings.every((p) => p.success);
+  return c.json({ ok, clickhouse: ok }, ok ? 200 : 503);
 }

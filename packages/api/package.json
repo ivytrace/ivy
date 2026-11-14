@@ -5,11 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/server.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
-    "start": "node dist/server.mjs",
+    "dev:ingest": "tsx watch src/ingest.ts",
+    "build": "esbuild src/index.ts src/ingest.ts scripts/tenants.ts --bundle --platform=node --target=node22 --format=esm --outdir=dist --entry-names=[name] --out-extension:.js=.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "start": "node dist/index.mjs",
+    "start:ingest": "node dist/ingest.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "tenants": "tsx scripts/tenants.ts"
   },
   "dependencies": {
     "@aws-sdk/client-lambda": "^3.1169.0",
@@ -18,6 +21,7 @@
     "@clickhouse/client": "^1.25.0",
     "@hono/node-server": "^2.1.8",
     "hono": "^4.13.18",
+    "jose": "^6.2.17",
     "yaml": "^2.9.1"
   },
   "devDependencies": {

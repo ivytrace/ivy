@@ -12,7 +12,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground",
+      "inline-flex items-center justify-center gap-0.5 rounded-full border border-border/60 bg-muted/40 p-[3px] text-muted-foreground",
       className
     )}
     {...props}
@@ -27,13 +27,23 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm",
+      "group relative inline-flex h-7 items-center before:absolute before:-left-[2px] before:top-1/2 before:h-4 before:w-px before:-translate-y-1/2 before:bg-white/10 first:before:hidden data-[state=active]:before:hidden [[data-state=active]+&]:before:hidden justify-center gap-1.5 whitespace-nowrap rounded-full px-3 text-[13px] font-medium ring-offset-background transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-white/10 data-[state=active]:text-foreground",
       className
     )}
     {...props}
   />
 ))
 TabsTrigger.displayName = TabsPrimitive.Trigger.displayName
+
+const TabsCount = ({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) => (
+  <span
+    className={cn(
+      "-mr-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-white/[0.06] px-1.5 text-[11px] font-medium tabular-nums text-muted-foreground transition-colors group-data-[state=active]:bg-white/15 group-data-[state=active]:text-foreground",
+      className
+    )}
+    {...props}
+  />
+)
 
 const TabsContent = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.Content>,
@@ -50,4 +60,4 @@ const TabsContent = React.forwardRef<
 ))
 TabsContent.displayName = TabsPrimitive.Content.displayName
 
-export { Tabs, TabsList, TabsTrigger, TabsContent }
+export { Tabs, TabsList, TabsTrigger, TabsCount, TabsContent }

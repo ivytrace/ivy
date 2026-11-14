@@ -3,15 +3,15 @@ import { principalArn } from '../../lib/aws/clients.js';
 import { cfnTemplateUrl, defaultRegion, eventsUrl, ingestConfig, publicUrl, syncIntervalMs } from '../../lib/aws/config.js';
 import { layerZip } from '../../lib/aws/lambda.js';
 import { AWS_REGIONS } from '../../lib/aws/regions.js';
-import { tenantOf } from '../../lib/clickhouse/tenant.js';
+import { tenantOf } from '../../lib/tenancy/context.js';
 
 export async function getAwsSetup(c: Context) {
   const principal = await principalArn();
-  const ingest = ingestConfig(tenantOf(c));
+  const ingest = await ingestConfig(tenantOf(c).id);
   const layer = layerZip();
   const issues: string[] = [];
   if (!principal) issues.push('No AWS credentials found. Set IVY_AWS_PRINCIPAL_ARN and give the server credentials through the standard AWS SDK chain.');
-  if (!ingest) issues.push('IVY_INGEST_PUBLIC_URL and IVY_INGEST_API_KEY must be set so functions know where to send traces.');
+  if (!ingest) issues.push('Set IVY_INGEST_PUBLIC_URL, plus IVY_SECRET_KEY (or IVY_INGEST_API_KEY for the default tenant), so functions know where to send traces and with which key.');
   if (!layer) issues.push('The layer zip was not found on the server (IVY_LAYER_ZIP).');
 
   return c.json({

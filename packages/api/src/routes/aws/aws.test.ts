@@ -17,7 +17,7 @@ import { memoryStore } from '../../lib/aws/memory-store.js';
 import { syncInProgress } from '../../lib/aws/scheduler.js';
 import { setAwsStore } from '../../lib/aws/store.js';
 
-const app = createApp({ uiDir: '/nonexistent' });
+const app = createApp({ uiDir: '/nonexistent', tenants: { resolve: async () => ({ id: 'default', shardId: 'shard-1' }) } });
 const lambda = mockClient(LambdaClient);
 const tagging = mockClient(ResourceGroupsTaggingAPIClient);
 const sts = mockClient(STSClient);

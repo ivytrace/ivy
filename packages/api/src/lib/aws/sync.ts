@@ -97,7 +97,7 @@ async function syncRegion(account: AwsAccount, region: string, disabled: Set<str
   const fns = configs.map((c) => fromConfiguration(c, tags.get(c.FunctionArn ?? '') ?? {}));
   const enabled = (fn: LambdaFunction) => !disabled.has(settingKey(region, fn.name));
 
-  const ingest = ingestConfig(account.tenant_id);
+  const ingest = await ingestConfig(account.tenant_id);
   const layer = ingest && fns.some((fn) => needsLayer(fn, enabled(fn))) ? await layerFor(lambda, account, region) : { arn: null };
 
   const rows = await mapLimit(fns, FUNCTION_CONCURRENCY, (fn) =>
@@ -157,7 +157,7 @@ export async function syncAccount(account: AwsAccount, options: SyncOptions = {}
 export async function syncFunction(account: AwsAccount, region: string, name: string, enabled: boolean): Promise<FunctionStatus> {
   const { lambda, tagging } = await regionClients(account, region);
   const fn = await getFunction(lambda, tagging, name);
-  const ingest = ingestConfig(account.tenant_id);
+  const ingest = await ingestConfig(account.tenant_id);
   const layer = ingest && needsLayer(fn, enabled) ? await layerFor(lambda, account, region) : { arn: null };
   const row = await processFunction(account, region, fn, {
     lambda,

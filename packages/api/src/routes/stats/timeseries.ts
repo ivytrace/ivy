@@ -1,6 +1,5 @@
 import type { Context } from 'hono';
-import { query } from '../../lib/clickhouse/client.js';
-import { tenantOf } from '../../lib/clickhouse/tenant.js';
+import { dataQuery } from '../../lib/tenancy/context.js';
 import { buildRollupSource } from '../../lib/stats/rollup-query.js';
 import { isoFromMs, round } from '../../lib/utils/format.js';
 import { badRequest } from '../../lib/utils/http-error.js';
@@ -20,13 +19,13 @@ export async function getTimeseries(c: Context) {
   if ((range.to - first) / stepMs > MAX_POINTS) throw badRequest('Too many buckets for this range');
 
   const source = buildRollupSource({
-    tenant: tenantOf(c),
     range,
     bucketSeconds: step,
     functionName: params.function || undefined,
     useRollup: step >= 3600,
   });
-  const rows = await query<{ bucket_ms: number; invocations: number; errors: number; quantiles: number[] }>(
+  const rows = await dataQuery<{ bucket_ms: number; invocations: number; errors: number; quantiles: number[] }>(
+    c,
     `SELECT toUnixTimestamp(bucket) * 1000 AS bucket_ms,
        sum(invocations) AS invocations,
        sum(errors) AS errors,

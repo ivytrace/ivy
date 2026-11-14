@@ -3,16 +3,27 @@
 Served by `packages/api` (Hono) on port `3000`. All JSON. Timestamps in responses are
 ISO 8601 strings with millisecond precision (UTC). Durations are milliseconds (float).
 
+Auth (`auth.md`): with OIDC configured (`IVY_OIDC_ISSUER`), every `/api/*` route except `GET /api/health`,
+`GET /api/config` and `POST /api/aws/events` needs `Authorization: Bearer <access token>` (a JWT from the configured
+issuer, for `IVY_OIDC_AUDIENCE`, issued to the dashboard's client or one of its agents). Without it: 401
+`{ "error": "Authentication required" }`; invalid or expired: 401 with `WWW-Authenticate: Bearer error="invalid_token"`;
+provider unreachable: 503. Without OIDC configured nothing is checked.
+
+Every `/api/*` route except `/api/health`, `/api/config` and `/api/aws/events` runs for one tenant, resolved by
+middleware from the request: `default` with auth off or in single-tenant mode, otherwise the signed-in user's tenant
+(`auth.md`, "Users and tenants"). Data is only ever read for that tenant. See `tenancy.md`.
+
 Time range params, accepted by every list endpoint:
 - `since=15m|1h|24h|7d` (default `24h`), or
 - `from` / `to` as ISO strings (override `since`).
 
 ## `GET /api/health`
-`{ "ok": true, "clickhouse": true }`
+`{ "ok": true, "clickhouse": true }` (the control database and every shard answer a ping; 503 otherwise)
 
 ## `GET /api/config`
-`{ "version": "0.1.0", "auth": { "enabled": false } }`
-The UI shows the "authentication disabled" banner when `auth.enabled` is false.
+`{ "version": "0.1.0", "auth": { "enabled": false } }`, or with OIDC:
+`{ "version": "0.1.0", "auth": { "enabled": true, "issuer": "https://auth.includable.com", "clientId": "ivy", "audience": "https://ivytrace.dev/api", "scopes": "openid email profile offline_access" } }`.
+The UI configures sign-in from it at runtime, and shows the "authentication disabled" banner when `auth.enabled` is false. Public.
 
 ## `GET /api/functions`
 Function overview for the range.
@@ -84,7 +95,7 @@ Server-side configuration the connect flow needs.
   "events_url": "https://ivy.example.com/api/aws/events" | null, "public_url": "…" | null,
   "ingest_endpoint": "https://ingest.example.com" | null, "layer_sha256": "…" | null,
   "default_region": "us-east-1", "regions": ["us-east-1", "…"], "sync_interval_seconds": 300,
-  "issues": ["IVY_INGEST_PUBLIC_URL and IVY_INGEST_API_KEY must be set …"] }
+  "issues": ["Set IVY_INGEST_PUBLIC_URL, plus IVY_SECRET_KEY (or IVY_INGEST_API_KEY for the default tenant), …"] }
 ```
 
 ### `GET /api/aws/template.yaml`
@@ -143,3 +154,16 @@ Body `{ "tracing_enabled": false }`. Stores the setting, then attaches/detaches 
 ### `POST /api/aws/events`
 EventBridge API destination target, authenticated with the `x-ivy-event-secret` header (per connection), not user auth.
 Syncs the event's region. 202, or 401/403.
+
+## Ingest (separate service, port 4318)
+
+Not part of the API process: the ingest router (`tenancy.md`) serves OTLP/HTTP.
+
+### `POST /v1/traces`
+OTLP/HTTP `ExportTraceServiceRequest`, `application/x-protobuf` or `application/json`, optionally
+`content-encoding: gzip`/`deflate`. Authenticated with `Authorization: Bearer <key>` or `x-api-key: <key>`.
+Answers as OTLP/HTTP: the collector's response on success; 400, 401, 413, 415, 429 (`Retry-After`) or 503
+(`Retry-After`) with a `google.rpc.Status` body otherwise. `/v1/logs` and `/v1/metrics` are 404; there is no gRPC.
+
+### `GET /health`
+`{ "ok": true }`

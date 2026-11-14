@@ -92,7 +92,7 @@ pnpm --filter @ivy/layer e2e
 ```
 
 By default spans go to a capture server on the host (`:4399`) and the script asserts on them.
-To send them to the local collector instead (`docker compose up` from the repo root first):
+To send them to the local ingest router instead (`docker compose up` from the repo root first):
 
 ```sh
 IVY_ENDPOINT=http://host.docker.internal:4318 IVY_API_KEY=dev-ingest-key pnpm --filter @ivy/layer e2e

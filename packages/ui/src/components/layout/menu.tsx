@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { MenuLink } from "@/components/layout/menu-link";
 import { SearchMenu } from "@/components/layout/search-menu";
 import { TimeRangePicker } from "@/components/layout/time-range";
+import { UserMenu } from "@/components/layout/user-menu";
 
 export const Menu = () => (
   <header className="border-b">
@@ -27,6 +28,7 @@ export const Menu = () => (
       <div className="ml-auto flex items-center gap-2">
         <TimeRangePicker />
         <SearchMenu />
+        <UserMenu />
       </div>
     </div>
   </header>

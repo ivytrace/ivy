@@ -31,7 +31,8 @@ supported function in that account, including new ones, and keeps it attached. C
 
 ### Where config lives: three small ClickHouse tables
 
-No new datastore. `deploy/clickhouse/schema.sql` adds (all `CREATE TABLE IF NOT EXISTS`, `tenant_id` first in `ORDER BY`):
+No new datastore. `deploy/clickhouse/schema.sql` adds, in the control-plane database `ivy_control` (`tenancy.md`; all
+`CREATE TABLE IF NOT EXISTS`, `tenant_id` first in `ORDER BY`):
 
 | table | engine | key | |
 |---|---|---|---|
@@ -123,14 +124,16 @@ In order:
 5. `AWS_LAMBDA_EXEC_WRAPPER` set to something else → `conflict`. Five non-Ivy layers already → `conflict`.
 6. No ingest config → `pending`. Otherwise: desired layers = existing non-Ivy layers + the current Ivy layer version
    (older Ivy versions replaced), desired env = existing + `AWS_LAMBDA_EXEC_WRAPPER=/opt/ivy-wrapper`,
-   `IVY_ENDPOINT=$IVY_INGEST_PUBLIC_URL`, `IVY_API_KEY=$IVY_INGEST_API_KEY`. Equal to current → no call. → `traced`.
+   `IVY_ENDPOINT=$IVY_INGEST_PUBLIC_URL`, `IVY_API_KEY=<the tenant's auto-trace key>`. Equal to current → no call. → `traced`.
 
 Applying: `ResourceConflictException` (an update in progress) is retried after 2, 4, 8 and 16 s. If tags could not be
 read (`tag:GetResources` denied), Ivy does not attach to functions that would change, since one of them could carry
 the opt-out tag; they show as `pending`. In "all enabled regions" mode, regions that reject the credentials
 (`UnrecognizedClientException` etc., i.e. not enabled) are skipped silently; with explicit regions they're reported.
 
-Ingest config is single-tenant for now (`ingestConfig(tenant)` returns the env values); M6 maps tenants to their keys.
+`ingestConfig(tenant)` gives the endpoint and the tenant's auto-trace key: `IVY_INGEST_API_KEY` for `default`, otherwise a
+system-managed key stored hashed and encrypted with `IVY_SECRET_KEY` (`tenancy.md`, "Auto-trace key"). Revoking that key
+makes the next sync write a new one into every function.
 
 ## API
 
@@ -140,8 +143,9 @@ See `api.md` (`/api/aws/*`).
 
 | variable | | |
 |---|---|---|
-| `IVY_INGEST_PUBLIC_URL` | required to attach | collector URL reachable from Lambda, e.g. `https://ingest.example.com` (the OTLP/HTTP base, without `/v1/traces`) |
-| `IVY_INGEST_API_KEY` | required to attach | the ingest key written into functions (`dev-ingest-key` in compose) |
+| `IVY_INGEST_PUBLIC_URL` | required to attach | ingest router URL reachable from Lambda, e.g. `https://ingest.example.com` (the OTLP/HTTP base, without `/v1/traces`) |
+| `IVY_INGEST_API_KEY` | default tenant | the key written into the `default` tenant's functions (`dev-ingest-key` in compose) |
+| `IVY_SECRET_KEY` | other tenants | encrypts the per-tenant auto-trace keys |
 | `IVY_AWS_PRINCIPAL_ARN` | recommended | principal customers trust; derived from the credentials if unset |
 | AWS credentials | required | standard SDK chain: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_SESSION_TOKEN`, `AWS_PROFILE`, or a role |
 | `IVY_CFN_TEMPLATE_URL` | optional | S3 URL of the generic template; enables one-click quick-create links |
@@ -170,4 +174,4 @@ Not verified: a real AWS account (stack deploy, AssumeRole, PublishLayerVersion,
 - One EventBridge rule in the stack region only; other regions poll. Organizations / StackSets are not supported.
 - Opt-outs are applied immediately, but a sync that already planned the function may re-attach it once; the next sync
   (interval) corrects it.
-- Self-hosted Ivy on a laptop needs a public ingest URL (a tunnel) for Lambda to reach the collector.
+- Self-hosted Ivy on a laptop needs a public ingest URL (a tunnel) for Lambda to reach the ingest router.

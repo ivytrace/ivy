@@ -2,11 +2,11 @@ import type { Context } from 'hono';
 import { presentFunction } from '../../../lib/aws/present.js';
 import { awsStore } from '../../../lib/aws/store.js';
 import type { FunctionSetting } from '../../../lib/aws/types.js';
-import { tenantOf } from '../../../lib/clickhouse/tenant.js';
+import { tenantOf } from '../../../lib/tenancy/context.js';
 
 /** Tracing state of every function in the connected accounts; `account` (12-digit ID) narrows it. */
 export async function getAwsFunctions(c: Context) {
-  const tenant = tenantOf(c);
+  const tenant = tenantOf(c).id;
   const accountId = c.req.query('account') || undefined;
   const store = awsStore();
   const [functions, accounts] = await Promise.all([store.listFunctions(tenant, accountId), store.listAccounts(tenant)]);
