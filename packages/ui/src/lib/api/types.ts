@@ -11,6 +11,24 @@ export interface AuthSettings {
 export interface Config {
   version: string;
   auth: AuthSettings | { enabled: false };
+  /** Hosted billing service; no billing buttons without it. */
+  billing?: { url: string };
+}
+
+export interface WorkspaceLimits {
+  plan: string;
+  monthly_trace_quota: number | null;
+  over_quota: "block" | "allow";
+  source: "workspace" | "unset";
+}
+
+export interface Usage {
+  workspace: string;
+  month: string;
+  period: { start: string; end: string };
+  traces: number;
+  limits: WorkspaceLimits;
+  blocked: boolean;
 }
 
 export interface FunctionSummary {

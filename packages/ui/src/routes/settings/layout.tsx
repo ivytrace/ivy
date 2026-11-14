@@ -1,10 +1,13 @@
 import { NavLink, Outlet } from "react-router";
-import { Cloud } from "lucide-react";
+import { Cloud, Gauge } from "lucide-react";
 
-import { AWS_ACCOUNTS_PATH } from "@/lib/links/links";
+import { AWS_ACCOUNTS_PATH, USAGE_PATH } from "@/lib/links/links";
 import { cn } from "@/lib/utils/cn";
 
-const SECTIONS = [{ to: AWS_ACCOUNTS_PATH, label: "AWS accounts", icon: Cloud }];
+const SECTIONS = [
+  { to: AWS_ACCOUNTS_PATH, label: "AWS accounts", icon: Cloud },
+  { to: USAGE_PATH, label: "Usage", icon: Gauge },
+];
 
 export default function SettingsLayout() {
   return (

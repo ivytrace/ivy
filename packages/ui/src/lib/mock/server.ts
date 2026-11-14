@@ -7,6 +7,7 @@ import type {
 } from "../api/types.ts";
 import { createAwsMock, type MockOptions } from "./aws.ts";
 import { buildTrace, INVOCATIONS, NOW, type MockInvocation } from "./fixtures.ts";
+import { mockUsage, MOCK_BILLING_URL } from "./usage.ts";
 
 export type { MockOptions };
 
@@ -160,6 +161,16 @@ export function createMockHandler(options: MockOptions = {}) {
   const aws = createAwsMock(options);
   return (url: URL, req: MockRequest = {}): MockResponse => {
     const method = req.method ?? "GET";
+    if (url.pathname === "/api/config") {
+      return { status: 200, body: { version: "0.1.0-mock", auth: { enabled: false }, ...(options.noBilling ? {} : { billing: { url: MOCK_BILLING_URL } }) } };
+    }
+    if (url.pathname === "/api/usage") return { status: 200, body: mockUsage(options.usage ?? "free") };
+    if (url.pathname.startsWith(`${MOCK_BILLING_URL}/`) && method === "POST") {
+      // Stands in for Stripe: Checkout returns to the usage page as Stripe's success_url would.
+      const action = url.pathname.slice(MOCK_BILLING_URL.length + 1);
+      if (action === "checkout") return { status: 200, body: { url: "/settings/usage?checkout=success" } };
+      if (action === "portal") return { status: 200, body: { url: "/settings/usage" } };
+    }
     if (url.pathname.startsWith("/api/aws/")) {
       return aws.handle(method, url.pathname, url.searchParams, req.body ?? {}) ?? { status: 404, body: { error: "not found" } };
     }

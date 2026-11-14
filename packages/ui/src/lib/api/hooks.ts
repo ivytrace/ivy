@@ -13,6 +13,7 @@ import type {
   TimeRange,
   TimeseriesPoint,
   Trace,
+  Usage,
 } from "./types";
 
 function useApi<T>(url: string | null, options?: SWRConfiguration<T>) {
@@ -24,6 +25,9 @@ function useApi<T>(url: string | null, options?: SWRConfiguration<T>) {
 }
 
 export const useConfig = () => useApi<Config>(buildUrl("/config"), { revalidateIfStale: false });
+
+/** This month's traces and the workspace's limits (refreshed every minute, like the server's count). */
+export const useUsage = () => useApi<Usage>(buildUrl("/usage"), { refreshInterval: 60_000 });
 
 export const useFunctions = (range: TimeRange) =>
   useApi<ListResponse<FunctionSummary>>(buildUrl("/functions", rangeParams(range)));

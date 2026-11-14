@@ -12,6 +12,7 @@ import NotFound from "@/routes/not-found";
 import SettingsLayout from "@/routes/settings/layout";
 import AwsAccounts from "@/routes/settings/aws/page";
 import AwsAccountPage from "@/routes/settings/aws/account";
+import UsagePage from "@/routes/settings/usage/page";
 import { TimeRangeProvider } from "@/components/layout/time-range";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/lib/auth/provider";
@@ -40,6 +41,7 @@ const router = createBrowserRouter([
           { index: true, element: <Navigate to="/settings/aws" replace /> },
           { path: "aws", element: <AwsAccounts /> },
           { path: "aws/:id", element: <AwsAccountPage /> },
+          { path: "usage", element: <UsagePage /> },
         ],
       },
       { path: "*", element: <NotFound /> },

@@ -10,4 +10,6 @@ export const invocationsLink = (filters: { function?: string; status?: "ok" | "e
 
 export const AWS_ACCOUNTS_PATH = "/settings/aws";
 
+export const USAGE_PATH = "/settings/usage";
+
 export const accountLink = (id: string) => `${AWS_ACCOUNTS_PATH}/${encodeURIComponent(id)}`;

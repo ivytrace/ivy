@@ -4,6 +4,7 @@ import type { Plugin } from "vite";
 import { defineConfig } from "vitest/config";
 import type { IncomingMessage } from "node:http";
 import { createMockHandler } from "./src/lib/mock/server.ts";
+import type { MockUsage } from "./src/lib/mock/aws.ts";
 
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown> | undefined> {
   if (req.method === "GET" || req.method === "HEAD") return undefined;
@@ -22,6 +23,8 @@ const mockApi = (): Plugin => ({
     const handle = createMockHandler({
       empty: process.env.VITE_MOCK_EMPTY === "1",
       noTemplate: process.env.VITE_MOCK_NO_TEMPLATE === "1",
+      usage: (process.env.VITE_MOCK_USAGE as MockUsage | undefined) || undefined,
+      noBilling: process.env.VITE_MOCK_NO_BILLING === "1",
     });
     server.middlewares.use((req, res, next) => {
       if (!req.url?.startsWith("/api/")) return next();
