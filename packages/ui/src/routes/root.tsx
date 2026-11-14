@@ -20,7 +20,7 @@ export default function Root() {
         {isTracePage ? (
           <Outlet />
         ) : (
-          <main className="mx-auto w-full max-w-screen-2xl p-6 md:p-8 md:pt-6">
+          <main className="mx-auto w-full min-w-0 max-w-screen-2xl p-4 sm:p-6 md:p-8 md:pt-6">
             <Outlet />
           </main>
         )}

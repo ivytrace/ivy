@@ -65,18 +65,23 @@ Everything lives under a workspace and, for data, a project (`workspaces-project
 |---|---|
 | `/w/:workspace/:project/functions`, `…/invocations`, `…/errors`, `…/traces/:traceId` | data pages of a project |
 | `/w/:workspace/all/functions`, `…/all/invocations`, `…/all/errors` | every project of the workspace (charts included); rows have a quiet Project column and link into their own project (`rowScope`). `/w/:workspace/all/traces/:id` finds the trace's project and redirects there |
-| `/w/:workspace` | the last-used project of that workspace, else its first active project |
+| `/w/:workspace` | the last-used project of that workspace, else All projects |
 | `/w/:workspace/settings/general` · `members` · `projects` · `aws` · `aws/:id` · `usage` · `alerts/:project` · `notifications` | workspace settings |
 | `/invite/:token` | accept an invitation (signed in, outside the layout) |
 | `/welcome/:step?ws=&project=&account=&from=&mode=` | the first-run quick start (signed in, outside the layout) |
 
 - The scope comes from the URL (`parseScope`, `useScope`); the API hooks build `/api/w/:ws/p/:project/…` or
   `/api/w/:ws/…` from it. Pages outside `/w/…` (the wizard) set it with `ScopeProvider`.
-- The last-used workspace and project are kept in localStorage (`ivy.lastScope`, in try/catch); `all` is a valid
-  last choice.
+- The last-used workspace, and the last-used project per workspace, are kept in localStorage (`ivy.lastScope`:
+  `{ workspace, project, projects: { <workspace>: <project> } }`, in try/catch; the older `{ workspace, project }`
+  still reads). `all` is a valid last choice.
+- **All projects is the default selection**: without a remembered project for the workspace (first visit, a new
+  workspace, cleared storage, or the remembered project was archived), `pickProject` returns `all`. That covers the
+  post-login redirect (`/` → `LegacyRedirect`), switching workspace (`/w/:workspace` → `WorkspaceIndex`), the old
+  routes, and the header's and ⌘K's links on settings pages (`useNavScope`). (Workspaces have no default project.)
 - Old links keep working: `/`, `/functions`, `/invocations`, `/errors`, `/traces/:id`, `/settings`, `/settings/aws`,
   `/settings/aws/:id`, `/settings/notifications` and `/settings/digest` redirect to the same page in the last-used workspace and project (else the first workspace from
-  `GET /api/workspaces` and its first active project), keeping the query string and hash (`legacyTarget`, unit-tested).
+  `GET /api/workspaces` and All projects), keeping the query string and hash (`legacyTarget`, unit-tested).
 - Merged settings pages keep their URLs: `/w/:workspace/settings/digest` redirects to `…/settings/notifications`
   (`routes/settings/redirects.ts`, a loader redirect so it is tested with a memory router).
 - Routing behind a shared domain: `/w/*`, `/invite/*` and `/welcome/*` are app paths (`auth.md`).
@@ -85,7 +90,30 @@ Everything lives under a workspace and, for data, a project (`workspaces-project
 "Create workspace" in multi-workspace mode, and "Workspace settings"), and the projects: "All projects" first with a divider after it, then the active projects, then
 "New project" and "Manage projects". Switching project keeps the list page you're on (Functions, Invocations, Errors);
 from a trace or a settings page it opens Functions (`switchProjectLink`, unit-tested).
-Menu and ⌘K links carry the current scope.
+Menu and ⌘K links carry the current scope (on settings pages: the workspace's last-used project, else All projects;
+`useNavScope`).
+
+**Narrow screens** (below Tailwind's `md`, 768 px; `useIsDesktop` in `lib/utils/media.ts` picks the header and the
+table mode, so only one ⌘K listener is mounted). The header is a compact bar (`mobile-nav.tsx`): logo, the current
+project's name as a switcher trigger (truncated), search and a menu button. Both open a right-hand sheet
+(`components/ui/sheet.tsx`, Radix Dialog: focus trap, Esc and overlay close) that closes on every navigation
+(`location.key`). The menu sheet lists the pages (active one marked), workspaces (when there are several) and projects
+(All projects first), the time range presets and the account (email, sign out); the trigger's sheet shows only the
+workspace and project lists. Below `md`:
+
+- `DataTable` renders `renderCard` rows instead of the table when a page passes one: Invocations (function, duration,
+  result, time, trigger and project; tapping opens the trace) and Errors (error, pattern, count, last seen, function;
+  tapping expands the first-seen date, the variants and the Sample trace / Invocations buttons). Other tables scroll
+  horizontally inside their bordered box (`Table`'s wrapper), never the page.
+- Buttons, inputs, selects, tabs and the Live pill are at least 40 px tall (`max-md:` variants on the shared
+  components), and filter bars wrap with the search on its own row.
+- Settings' section nav is a horizontally scrolling row that keeps the current section in view.
+- The trace page stacks graph, then tabs. The waterfall's name column is 40% instead of 48% below `sm`, with smaller
+  indents, a narrower duration column and only the 0 / middle / end time labels.
+- Between `md` and `lg` the full header hides the time range's label (icon only) so the names fit.
+
+Checked at 375 px, 768 px and desktop on every main route: no horizontal page scroll. The MCP App views reuse the
+waterfall and tabs, so in an iframe narrower than 640 px they get the same narrow waterfall.
 
 Creating a workspace or project takes a name only: the server makes the slug (with `-2`, `-3`, … on collisions), and
 renaming never changes it. Settings show the URL read-only, with "Change URL" under Advanced.
@@ -103,7 +131,8 @@ page sends the user to the quick-start wizard. Once it was finished or skipped (
 the page shows a two-step empty state instead (create the first project, then connect AWS or copy an ingest key).
 A workspace without active projects (new, or all archived) always shows that empty state on Functions.
 
-**Quick-start wizard** (`/welcome/<step>`; progress in the URL; "Skip" goes to the project's Functions):
+**Quick-start wizard** (`/welcome/<step>`; progress in the URL; "Skip" goes to All projects' Functions; "Go to
+Functions" after the first trace goes to the project that received it, since that is the one the wizard set up):
 
 1. `workspace`: the name, prefilled from a work email's domain (`erin@acme.io` → "Acme") or the user's name. Only
    for owners in multi-workspace mode, and skipped after joining through an invitation.

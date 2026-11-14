@@ -114,12 +114,48 @@ function columnsFor(scope: Scope): ColumnDef<Invocation, unknown>[] {
     accessorKey: "request_id",
     header: "Request ID",
     cell: ({ row }) => (
-      <Link to={linkTo(row.original)} className="font-mono text-xs text-muted-foreground hover:text-foreground">
+      <Link to={linkTo(row.original)} className="whitespace-nowrap font-mono text-xs text-muted-foreground hover:text-foreground">
         {row.original.request_id || <span className="font-sans italic">no request</span>}
       </Link>
     ),
   },
 ];
+}
+
+/** An invocation as a card (narrow screens): the key fields; tapping opens the trace. */
+function InvocationCard({ scope, inv }: { scope: Scope; inv: Invocation }) {
+  const progress = inv.status === "in_progress" ? rowProgress(inv) : null;
+  return (
+    <Link to={traceLink(rowScope(scope, inv), inv.trace_id, inv.span_id)} className="block px-4 py-3 hover:bg-muted/50">
+      <div className="flex items-baseline gap-3">
+        <span className="min-w-0 flex-1 truncate font-medium">{inv.function}</span>
+        <span className="flex shrink-0 items-center gap-2 text-sm tabular-nums">
+          {progress ? <Elapsed progress={progress} /> : formatDuration(inv.duration_ms)}
+          {inv.cold_start && <ColdStart />}
+        </span>
+      </div>
+      <div className="mt-1 min-w-0 text-sm">
+        {progress ? (
+          <InProgressStatus progress={progress} />
+        ) : (
+          <InvocationStatus
+            ok={inv.status === "ok"}
+            errorType={inv.error_type}
+            errorMessage={inv.error_message}
+            httpStatus={inv.http_status}
+            failureKind={inv.failure_kind}
+          />
+        )}
+      </div>
+      <div className="mt-1 flex min-w-0 gap-2 text-xs text-muted-foreground">
+        <span className="shrink-0">{formatAgo(inv.ts)}</span>
+        <span className="min-w-0 truncate">
+          {inv.http_method && inv.http_path ? `${inv.http_method} ${inv.http_path}` : triggerLabel(inv.trigger)}
+          {inv.project && scope.project === ALL_PROJECTS ? ` · ${inv.project}` : ""}
+        </span>
+      </div>
+    </Link>
+  );
 }
 
 function useFilterParams() {
@@ -238,24 +274,24 @@ export default function Invocations() {
 
       <div className="flex flex-wrap items-center gap-3 py-4">
         <form
-          className="relative"
+          className="relative w-full sm:w-auto"
           onSubmit={(e) => {
             e.preventDefault();
             update({ q: search.trim() || undefined });
           }}
         >
-          <Search className="pointer-events-none absolute left-3 top-2 size-4 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Request ID, trace ID, error, path…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onBlur={() => search.trim() !== (q ?? "") && update({ q: search.trim() || undefined })}
-            className="h-8 w-80 pl-9"
+            className="h-8 w-full pl-9 sm:w-80"
             aria-label="Search invocations"
           />
         </form>
         <Select value={fn ?? ALL} onValueChange={(v) => update({ function: v === ALL ? undefined : v })}>
-          <SelectTrigger className="h-8 w-56" aria-label="Function">
+          <SelectTrigger className="h-8 min-w-0 flex-1 sm:w-56 sm:flex-none" aria-label="Function">
             <SelectValue placeholder="All functions" />
           </SelectTrigger>
           <SelectContent>
@@ -268,7 +304,7 @@ export default function Invocations() {
           </SelectContent>
         </Select>
         <Select value={status ?? ALL} onValueChange={(v) => update({ status: v === ALL ? undefined : v })}>
-          <SelectTrigger className="h-8 w-36" aria-label="Status">
+          <SelectTrigger className="h-8 w-36 max-sm:flex-1" aria-label="Status">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -314,6 +350,7 @@ export default function Invocations() {
             manualSorting
             getRowId={(i) => i.span_id + i.trace_id}
             rowClassName={(i) => (liveState.fresh.has(rowKey(i)) ? "live-fresh" : undefined)}
+            renderCard={(i) => <InvocationCard scope={scope} inv={i} />}
             empty={<EmptyState title="No invocations" description="Nothing matches these filters in this time range." />}
           />
         </div>

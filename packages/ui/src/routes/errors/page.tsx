@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ChevronRight } from "lucide-react";
@@ -159,6 +159,64 @@ function columnsFor(scope: Scope): ColumnDef<ErrorGroup, unknown>[] {
   ];
 }
 
+/** An error group as a card (narrow screens): error, function and counts; tapping shows the details. */
+function ErrorCard({ scope, group: g }: { scope: Scope; group: ErrorGroup }) {
+  const [open, setOpen] = useState(false);
+  const own = rowScope(scope, g);
+  const throttle = g.kind === "throttle";
+  return (
+    <div>
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex w-full gap-2 px-4 py-3 text-left hover:bg-muted/50">
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-2">
+            {!throttle && g.failure_kind && <FailureBadge kind={g.failure_kind} hint={false} />}
+            <span className={cn("truncate font-semibold", throttle ? "text-orange-400" : "text-red-400")}>{throttle ? "Throttled" : g.error_type}</span>
+          </span>
+          {throttle ? (
+            <span className="mt-0.5 block line-clamp-2 text-sm text-muted-foreground">{g.error_message}</span>
+          ) : (
+            <ErrorTemplate template={g.error_template} className="mt-0.5 block line-clamp-2 text-sm text-muted-foreground" />
+          )}
+          <span className="mt-1 flex min-w-0 gap-2 text-xs text-muted-foreground">
+            <span className="shrink-0 tabular-nums text-foreground">{formatNumber(g.count)}×</span>
+            <span className="shrink-0">{formatAgo(g.last_seen)}</span>
+            <span className="min-w-0 truncate">
+              {g.function}
+              {g.project && scope.project === ALL_PROJECTS ? ` · ${g.project}` : ""}
+            </span>
+          </span>
+        </span>
+        <ChevronRight className={cn("mt-1 size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
+      </button>
+      {open && (
+        <div className="space-y-3 px-4 pb-4 text-sm">
+          <p className="text-xs text-muted-foreground">
+            First seen {formatAgo(g.first_seen)}
+            {!throttle && g.variants > 1 ? ` · ${variantsLabel(g.variants)}` : ""}
+          </p>
+          {expandable(g) && <GroupMessages group={g} scope={own} />}
+          <div className="flex flex-wrap gap-2">
+            {throttle ? (
+              <Button variant="outline" size="sm" asChild>
+                <Link to={invocationsLink(own, { function: g.function })}>Function</Link>
+              </Button>
+            ) : (
+              <>
+                <Button variant="outline" size="sm" asChild>
+                  <Link to={traceLink(own, g.sample_trace_id ?? "")}>Sample trace</Link>
+                </Button>
+                <Button variant="outline" size="sm" asChild>
+                  <Link to={invocationsLink(own, { function: g.function, group: g.fingerprint })}>Invocations</Link>
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Errors() {
   const scope = useScope();
   const columns = useMemo(() => columnsFor(scope), [scope.workspace, scope.project]);
@@ -182,7 +240,7 @@ export default function Errors() {
           value={fn ?? ALL}
           onValueChange={(v) => setParams(v === ALL ? {} : { function: v }, { replace: true })}
         >
-          <SelectTrigger className="h-8 w-56" aria-label="Function">
+          <SelectTrigger className="h-8 w-full sm:w-56" aria-label="Function">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -205,6 +263,7 @@ export default function Errors() {
           data={data.items}
           getRowId={(g) => `${g.project_id ?? ""}/${g.fingerprint}/${g.function}`}
           renderExpanded={(g) => (expandable(g) ? <GroupMessages group={g} scope={rowScope(scope, g)} /> : null)}
+          renderCard={(g) => <ErrorCard scope={scope} group={g} />}
           defaultSorting={[{ id: "count", desc: true }]}
           empty={<EmptyState title="No errors" description="No failed invocations in this time range." />}
         />

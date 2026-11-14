@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { Since, TimeRange } from "@/lib/api/types";
 
-const PRESETS: { since: Since; label: string }[] = [
+export const PRESETS: { since: Since; label: string }[] = [
   { since: "15m", label: "Last 15 minutes" },
   { since: "1h", label: "Last hour" },
   { since: "24h", label: "Last 24 hours" },
@@ -74,9 +74,9 @@ export function TimeRangePicker() {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" className="px-3">
-          <CalendarIcon className="mr-2 size-4" />
-          {rangeLabel(range)}
+        <Button variant="outline" className="px-3" aria-label={rangeLabel(range)}>
+          <CalendarIcon className="size-4 lg:mr-2" />
+          <span className="hidden lg:inline">{rangeLabel(range)}</span>
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align="end">

@@ -22,19 +22,19 @@ export function LegacyRedirect() {
   if (projects.error) return <ErrorState error={projects.error} onRetry={() => void projects.mutate()} />;
   if (!workspace || !projects.data) return <LoadingState />;
 
-  const project = pickProject(projects.data.items, workspace.slug, last);
+  const project = pickProject(projects.data.items, workspace.slug, readLastScope(workspace.slug));
   const target = legacyTarget(location.pathname, { workspace: workspace.slug, project });
   if (!target) return <NotFound />;
   return <Navigate to={`${target}${location.search}${location.hash}`} replace />;
 }
 
-/** `/w/:workspace`: the last-used project of that workspace, else its first active project. */
+/** `/w/:workspace`: the last-used project of that workspace, else All projects. */
 export function WorkspaceIndex() {
   const { workspace = "" } = useParams();
   const projects = useProjects(workspace);
   if (projects.error) return <ErrorState error={projects.error} onRetry={() => void projects.mutate()} />;
   if (!projects.data) return <LoadingState />;
-  return <Navigate to={pageLink({ workspace, project: pickProject(projects.data.items, workspace, readLastScope()) }, "functions")} replace />;
+  return <Navigate to={pageLink({ workspace, project: pickProject(projects.data.items, workspace, readLastScope(workspace)) }, "functions")} replace />;
 }
 
 /** Project pages: 404 for a project the workspace doesn't have. */

@@ -25,7 +25,7 @@ export function LiveToggle({ on, paused, failing, onChange }: { on: boolean; pau
         aria-checked={on}
         onClick={() => onChange(!on)}
         className={cn(
-          "inline-flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors",
+          "inline-flex h-8 max-md:h-10 items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors",
           on ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
         )}
       >

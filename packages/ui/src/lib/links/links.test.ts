@@ -1,5 +1,48 @@
-import { describe, expect, it } from "vitest";
-import { accountLink, invocationsLink, legacyTarget, parseScope, pickProject, pickWorkspace, rowScope, switchProjectLink, traceLink } from "./links";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  accountLink,
+  invocationsLink,
+  legacyTarget,
+  parseScope,
+  pickProject,
+  pickWorkspace,
+  readLastScope,
+  rowScope,
+  switchProjectLink,
+  traceLink,
+  writeLastScope,
+} from "./links";
+
+describe("last-used scope", () => {
+  beforeEach(() => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("remembers a project per workspace", () => {
+    expect(readLastScope()).toBeNull();
+    writeLastScope({ workspace: "acme", project: "checkout-prod" });
+    writeLastScope({ workspace: "side-project", project: "all" });
+    writeLastScope({ workspace: "other" });
+    expect(readLastScope()).toEqual({ workspace: "other" });
+    expect(readLastScope("acme")).toEqual({ workspace: "acme", project: "checkout-prod" });
+    expect(readLastScope("side-project")).toEqual({ workspace: "side-project", project: "all" });
+    // A settings page keeps the workspace's project.
+    writeLastScope({ workspace: "acme" });
+    expect(readLastScope()).toEqual({ workspace: "acme", project: "checkout-prod" });
+  });
+
+  it("reads the format from before per-workspace projects", () => {
+    localStorage.setItem("ivy.lastScope", JSON.stringify({ workspace: "acme", project: "billing" }));
+    expect(readLastScope("acme")).toEqual({ workspace: "acme", project: "billing" });
+    expect(readLastScope("other")).toEqual({ workspace: "other" });
+  });
+});
 
 const scope = { workspace: "acme", project: "checkout-prod" };
 
@@ -60,13 +103,14 @@ describe("picking the scope to open", () => {
     expect(pickWorkspace([], null)).toBeNull();
   });
 
-  it("prefers the last-used project of that workspace, else the first active one", () => {
+  it("prefers the last-used project of that workspace, else All projects", () => {
     expect(pickProject(projects, "acme", { workspace: "acme", project: "checkout-prod" })).toBe("checkout-prod");
     expect(pickProject(projects, "acme", { workspace: "acme", project: "all" })).toBe("all");
-    expect(pickProject(projects, "acme", { workspace: "other", project: "checkout-prod" })).toBe("billing");
-    expect(pickProject(projects, "acme", { workspace: "acme", project: "old" })).toBe("billing");
-    expect(pickProject([projects[2]], "acme", null)).toBe("all");
-    expect(pickProject([projects[1]], "acme", null)).toBe("checkout-prod");
+    // Without a remembered choice (another workspace, an archived or deleted project, none): All projects.
+    expect(pickProject(projects, "acme", { workspace: "other", project: "checkout-prod" })).toBe("all");
+    expect(pickProject(projects, "acme", { workspace: "acme", project: "old" })).toBe("all");
+    expect(pickProject(projects, "acme", { workspace: "acme" })).toBe("all");
+    expect(pickProject([projects[1]], "acme", null)).toBe("all");
     expect(pickProject([], "acme", null)).toBe("all");
   });
 });

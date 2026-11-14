@@ -15,8 +15,8 @@ import { Button } from "@/components/ui/button";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { useTimeRange } from "@/components/layout/time-range";
 import { useFunctions } from "@/lib/api/hooks";
-import { ALL_PROJECTS, invocationsLink, pageLink, traceLink } from "@/lib/links/links";
-import { useRouteScope } from "@/lib/links/use-scope";
+import { invocationsLink, pageLink, traceLink } from "@/lib/links/links";
+import { useNavScope } from "@/lib/links/use-scope";
 
 const TRACE_ID = /^[0-9a-f]{32}$/i;
 
@@ -25,8 +25,7 @@ export function SearchMenu() {
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
   const { range } = useTimeRange();
-  const route = useRouteScope();
-  const scope = route ? { workspace: route.workspace, project: route.project ?? ALL_PROJECTS } : null;
+  const scope = useNavScope();
   const { data } = useFunctions(range);
 
   useEffect(() => {

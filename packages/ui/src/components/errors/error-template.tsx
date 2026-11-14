@@ -31,11 +31,11 @@ export function GroupMessages({ group, scope }: { group: ErrorGroup; scope: Scop
     <div className="rounded-md border bg-zinc-950/40">
       <ul className="divide-y text-sm">
         {shown.map((m) => (
-          <li key={m.message} className="flex items-center gap-3 px-3 py-1.5">
-            <span className="w-12 shrink-0 text-right tabular-nums text-muted-foreground">{formatNumber(m.count)}×</span>
+          <li key={m.message} className="flex items-center gap-3 px-3 py-1.5 max-md:py-2.5">
+            <span className="w-12 shrink-0 text-right tabular-nums text-muted-foreground max-md:w-auto">{formatNumber(m.count)}×</span>
             <Link
               to={traceLink(scope, m.sample_trace_id)}
-              className="min-w-0 flex-1 truncate font-mono text-xs text-foreground hover:text-primary hover:underline"
+              className="min-w-0 flex-1 truncate font-mono text-xs text-foreground hover:text-primary hover:underline max-md:line-clamp-2 max-md:whitespace-normal max-md:break-all"
               title={m.message}
             >
               {m.message}
