@@ -1,7 +1,7 @@
 # UI (`packages/ui`)
 
-React dashboard, started from `includable/trace-stack`'s `packages/dashboard`. Trace-stack served as a
-visual reference. Most of the code was rewritten.
+React dashboard, started from an earlier Lambda tracing dashboard, which served as a visual reference. Most of the
+code was rewritten.
 
 ## Stack
 
@@ -76,7 +76,7 @@ Everything lives under a workspace and, for data, a project (`workspaces-project
 - Old links keep working: `/`, `/functions`, `/invocations`, `/errors`, `/traces/:id`, `/settings`, `/settings/aws` and
   `/settings/aws/:id` redirect to the same page in the last-used workspace and project (else the first workspace from
   `GET /api/workspaces` and its default project), keeping the query string and hash (`legacyTarget`, unit-tested).
-- Hosted routing: `/w/*`, `/invite/*` and `/welcome/*` are app paths.
+- Routing behind a shared domain: `/w/*`, `/invite/*` and `/welcome/*` are app paths (`auth.md`).
 
 **Header.** A `Workspace / Project ▾` breadcrumb next to the logo with a popover on each part: the workspaces (plus
 "Create workspace" in multi-workspace mode, and "Workspace settings"), and the projects: "All projects" first with a divider after it, then the active projects, then
@@ -120,7 +120,7 @@ Paths below are relative to `/w/:workspace/:project`.
   per-function sparklines, error rate, cold starts, p50/p95 and the auto-trace state in a "Tracing" column (matched by
   region + name; functions not in a connected account show "Manual"). Under `all` the totals charts sum every project
   (`/api/w/:ws/stats/timeseries`) and each row's sparklines are its own project's.
-- `/invocations?function=&status=&q=`: filters live in the URL so links can deep-link into a filtered list.
+- `/invocations?function=&status=&q=&live=`: filters (and the Live toggle, below) live in the URL so links can deep-link into a filtered list.
   Uses cursor pagination (a stack of `next_cursor`s for Previous/Next). With `function` set, the function's
   charts are shown, as on trace-stack's per-function page. Under `all` the list and charts cover every project that
   has the function, and rows link to their project's trace.
@@ -161,6 +161,47 @@ Paths below are relative to `/w/:workspace/:project`.
 - Auth (`auth.md`): with OIDC on, every route above needs a signed-in user (`RequireAuth` → `/login?returnTo=…`).
   `/login`, `/auth/callback` and `/logout` render outside the layout. The header has a user menu (email, sign out).
   `src/lib/auth/` holds the oidc-client-ts wrapper, the provider, `returnTo` handling and the `ivy_session` marker cookie.
+
+## In-progress invocations
+
+The extension exports a provisional invocation span (`ivy.in_progress`) for invocations that run past a threshold
+(`layer.md`, `span-conventions.md`). The list API returns them with `status: "in_progress"`, `deadline` and
+`last_seen`; on the trace page the root carries `ivy.in_progress`, `ivy.deadline_ms` and `ivy.last_seen_ms`.
+Components in `src/components/common/in-progress.tsx`, used by the invocation list, the trace page and the MCP App
+views (header and waterfall), so the three stay in sync:
+
+- `InProgressStatus`: "Running…" with a pulsing dot (static under `prefers-reduced-motion`), then "No completion
+  recorded" in amber, with `NO_COMPLETION_EXPLANATION` in a tooltip, once `inProgressState` (`@ivy/spans`) says the
+  deadline plus a 15 s grace has passed. Clients decide this from `deadline` and the clock, so a row flips without a
+  reload.
+- `Elapsed`: time since the start, ticking every second (`useNow`); after the deadline, `> <last reported>`.
+- `InProgressNote`: a note under the trace header (sky while running, amber afterwards).
+- Waterfall: the root bar of a running invocation is sky with slowly moving stripes and a faded open end (`.running-bar`
+  in `index.css`; no animation under reduced motion); without completion it is amber, faded, without stripes.
+- The status filter has "Running" (`status=in_progress`).
+
+## Live mode (Invocations page)
+
+A "Live" pill next to the filters (`?live=1`, project and All projects) with a pulsing green dot while it updates.
+Logic in `src/lib/live/` (`live.ts` pure functions with tests, `use-live.ts` the hook):
+
+- Every 3 s (`LIVE_INTERVAL_MS`, never under 2 s) it asks the existing list endpoint for rows newer than the newest
+  shown: `from=<newest ts − 1 s>`, the current filters and search, `limit=100`. Rows are merged by trace + span ID:
+  known rows are replaced in place, new ones prepended with a short green fade (`.live-fresh`). The list holds at
+  most 200 rows. If a poll returns a `next_cursor` (more than 100 new rows) the first page is reloaded instead.
+- In-progress rows on screen are refreshed in place with one extra request, `ids=<span IDs>` (at most 100) over the
+  page's range, so "Running…" turns into the final result.
+- Live needs a relative range so that it follows now; switching it on with a custom range selects "Last hour".
+- Pauses: a hidden tab (Page Visibility API) and 15 minutes without input stop polling, the latter with "Live paused"
+  and a Resume button. Scrolling down (more than 240 px) or opening another page keeps polling but holds new rows back
+  ("Paused, N new · Resume"); Resume merges them (or reloads the first page after paging) and scrolls to the top.
+- Cost: one list query per 3 s per open tab while live and visible (two when in-progress rows are shown). Failed
+  polls back off (6, 12, 24, then 30 s) and nothing is polled when the toggle is off.
+- Mock mode: the first live poll (`from` without `to`) starts a stream of new invocations every 4 s, every third
+  running for 9 s first; the seeded running import completes 20 s later, and a queue run shows "No completion
+  recorded" (`src/lib/mock/progress.ts`). The MCP host has "in progress" and "no completion" fixtures.
+- The website's trace demo (private repo) is a copy: it needs the in-progress states if it shows invocation lists or
+  traces.
 
 ## Span → service rendering (`src/lib/spans/services.ts`)
 

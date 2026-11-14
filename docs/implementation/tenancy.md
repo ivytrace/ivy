@@ -1,6 +1,6 @@
 # Tenancy
 
-Groundwork for hosted mode (spec M6). Every row of data belongs to a tenant, the tenant is decided on the
+Groundwork for multi-tenant mode (spec M6). Every row of data belongs to a tenant, the tenant is decided on the
 server from the API key, and the routing seams for sharding by tenant exist now, with one shard.
 
 ## Model

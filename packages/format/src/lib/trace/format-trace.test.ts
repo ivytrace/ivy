@@ -14,6 +14,33 @@ describe("formatTrace", () => {
     expect(formatTrace(checkoutOk)).toMatchSnapshot();
   });
 
+  it("renders an in-progress invocation as running, and as no completion recorded past its deadline", () => {
+    const start = Date.UTC(2026, 10, 14, 12, 0, 0);
+    const root = {
+      span_id: "aa43ecc22bca145b",
+      parent_span_id: "",
+      name: "import-worker",
+      kind: "INTERNAL",
+      service: "import-worker",
+      start: new Date(start).toISOString(),
+      end: new Date(start + 5000).toISOString(),
+      duration_ms: 5000,
+      status_code: "UNSET" as const,
+      status_message: "",
+      attributes: { "ivy.invocation": "true", "ivy.in_progress": "true", "faas.coldstart": "false", "faas.invocation_id": "req-1", "ivy.deadline_ms": String(start + 900_000) },
+      resource: { "cloud.region": "eu-west-1" },
+      events: [],
+    };
+    const trace = { trace_id: "6aa1c6a0306e643c836b93bd7315f15e", spans: [root] };
+    const running = formatTrace(trace, { nowMs: start + 134_000 }).split("\n");
+    expect(running[0]).toBe("import-worker · warm · running for 2m 14s (in progress)");
+    expect(running[2]).toBe("(deadline 2026-11-14T12:15:00.000Z; the handler's spans arrive when it finishes)");
+    expect(running.at(-1)).toMatch(/import-worker \[invocation\].*  in progress$/);
+    const dead = formatTrace(trace, { nowMs: start + 960_000 }).split("\n");
+    expect(dead[0]).toBe("import-worker · warm · no completion recorded");
+    expect(dead[2]).toMatch(/^\(deadline 2026-11-14T12:15:00.000Z; The invocation passed its deadline without a final record/);
+  });
+
   it("collapses repeated calls and shows payloads cut at the source", () => {
     expect(formatTrace(queueFailed)).toMatchSnapshot();
   });

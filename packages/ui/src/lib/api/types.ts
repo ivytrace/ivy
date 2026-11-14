@@ -15,7 +15,9 @@ export interface Config {
   workspaces?: { multi: boolean };
   email?: { enabled: boolean };
   aws?: { quick_create: boolean };
-  /** Hosted billing service; no billing buttons without it. */
+  /** Which alert channels this server has configured (env vars); each is hidden or disabled otherwise. */
+  alerts?: { slack: boolean; email: boolean };
+  /** Billing service (`IVY_BILLING_URL`); no billing buttons without it. */
   billing?: { url: string };
 }
 
@@ -138,7 +140,8 @@ export interface Invocation extends ProjectRef {
   ts: string;
   function: string;
   region: string;
-  status: "ok" | "error";
+  /** `in_progress`: still running, or past `deadline` with no completion recorded (`inProgressState`). */
+  status: "ok" | "error" | "in_progress";
   duration_ms: number;
   cold_start: boolean;
   request_id: string;
@@ -154,6 +157,9 @@ export interface Invocation extends ProjectRef {
   failure_kind: FailureKind | null;
   synthetic: boolean;
   init_duration_ms: number | null;
+  /** In-progress rows: the invocation's deadline and when the extension last reported it running. */
+  deadline?: string | null;
+  last_seen?: string | null;
 }
 
 export interface ErrorGroup extends ProjectRef {
@@ -303,4 +309,57 @@ export interface TracingResponse {
   applied: boolean;
   error: string | null;
   function: AwsFunction | null;
+}
+
+export interface AlertSettings {
+  slack_enabled: boolean;
+  interval_minutes: number;
+  every_occurrences: number;
+  include_throttles: boolean;
+}
+
+export interface SlackChannel {
+  id: string;
+  team_name: string;
+  channel: string;
+  status: "ok" | "broken";
+  error: string | null;
+  configuration_url: string | null;
+  created_at: string;
+}
+
+export interface AlertsResponse {
+  available: { slack: boolean; missing: string[] };
+  can_edit: boolean;
+  settings: AlertSettings;
+  integrations: SlackChannel[];
+}
+
+export interface DigestInfo {
+  available: boolean;
+  missing: string[];
+  schedule: string;
+  enabled: boolean;
+  can_edit: boolean;
+  subscribed: boolean | null;
+  recipients: number;
+}
+
+export interface DigestPreview {
+  subject: string;
+  html: string;
+  text: string;
+  period: { from: string; to: string };
+  empty: boolean;
+}
+
+export interface NotificationItem {
+  workspace: { id: string; slug: string; name: string };
+  digest: boolean;
+}
+
+export interface NotificationsResponse {
+  email: string | null;
+  digest_available: boolean;
+  items: NotificationItem[];
 }

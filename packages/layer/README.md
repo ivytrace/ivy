@@ -100,6 +100,7 @@ extension idles.
 | `IVY_PLATFORM_TELEMETRY` | `true` | subscribe to the Lambda Telemetry API to report init failures, crashes, out of memory and timeouts (see `docs/implementation/platform-failures.md`) |
 | `IVY_TELEMETRY_PORT` | `9791` | port the extension receives Telemetry API events on |
 | `IVY_REPORT_METRICS` | `true` | send billed duration and max memory used (from `platform.report`) as update spans |
+| `IVY_INPROGRESS_AFTER_MS` | `5000` | once an invocation has run this long, the extension reports it as in progress (one small request, refreshed every 60 s), so long invocations show up while they run; `0` turns it off |
 | `IVY_DEBUG` | `false` | log layer diagnostics |
 
 ## LLM calls (Vercel AI SDK)

@@ -8,14 +8,13 @@ live in `docs/implementation/`.
 - Dark mode only, for the app, the MCP App views and the website. No light theme, no theme toggle.
 - One visual language across the dashboard, the MCP App views and the website's demo: zinc neutrals, the logo's
   green (`#4ade80`) as the accent for buttons and links. A visual change to one surface is applied to all of them.
-- The website shows the product calmly: few elements, no decorative grids or glows. Its demo looks exactly like
-  the real trace page, and its agent example shows a chat with an inline trace result.
-- The website never mentions the hosted service's infrastructure, sizing or capacity.
+- There is also a hosted version of Ivy at ivytrace.dev. Its website, prices and infrastructure are not part of
+  this repository.
 
 ## Repositories
 - `ivytrace/ivy` (public) holds the open-source product: layer, API, dashboard, MCP server, deploy files.
-- `ivytrace/ivy-hosted` (private) holds the hosted deployment, the marketing website and hosted-only code
-  (billing, hooks). Every push to `ivy` main deploys hosted.
+- This repository contains nothing specific to the hosted service: no prices or plans, no payment provider, no
+  hosted infrastructure, no hosted-only identity provider or domain configuration.
 - No AI-tool attribution in commits or pull requests.
 - `ivy` is MIT licensed.
 - Storage uses the OpenTelemetry Collector's ClickHouse exporter rather than a custom exporter (see
@@ -48,8 +47,9 @@ live in `docs/implementation/`.
 ## Authentication
 - Dashboard, API and MCP: **either no auth or OIDC**, never passwords or basic auth, not even temporarily.
   Without OIDC configured, the UI shows a persistent "authentication disabled" banner.
-- Hosted uses Includable Auth. Coding agents and MCP clients sign in through it on the user's behalf: agents with
-  device-flow registration (the user's email passed as `login_hint`), MCP clients with the MCP authorization spec.
+- Any OIDC provider works. Coding agents and MCP clients sign in through it on the user's behalf where the provider
+  supports it: agents with device-flow registration (the user's email passed as `login_hint`), MCP clients with the
+  MCP authorization spec.
 - Ingest always requires an API key, and the key alone decides which workspace and project data lands in.
 
 ## Auto-tracing
@@ -57,8 +57,8 @@ live in `docs/implementation/`.
   CloudFormation stack; the user picks stacks or name/tag patterns, and that choice is saved as a rule that also
   names the project. New functions matching a rule are traced automatically.
 - Lambda tags `ivy:trace=true|false` and `ivy:project=<slug>` override rules.
-- The CloudFormation quick-create link must not carry secrets. Hosted publishes each connection's template through
-  a hook; self-hosted without that hook offers a template download.
+- The CloudFormation quick-create link must not carry secrets. A deployment can publish each connection's template
+  through a hook; without that hook Ivy offers a template download.
 
 ## Agents (AI-native)
 - No CLI. Agents use the **MCP server** or the **HTTP API** (with an OpenAPI spec).
@@ -79,23 +79,25 @@ live in `docs/implementation/`.
 ## Hooks
 - The backend runs optional executables from a hooks directory, git-hooks style: notification hooks
   (`on-<noun>-<past-tense>`, async, result ignored) and provider hooks (`<verb>-<noun>`, return a result, with a
-  built-in fallback). Hosted-only behaviour goes into hooks in `ivy-hosted`, not into `ivy`.
+  built-in fallback). Deployment-specific behaviour goes into hooks, not into Ivy itself.
 
 ## Billing
-- Billing is per **workspace**. Free tier of **100,000 traces per month**, then **€2 per million traces**;
-  one trace is one Lambda invocation.
-- Billing and Stripe code live in `ivy-hosted`. The open-source product only knows generic per-workspace limits:
-  no limits set means unlimited, so self-hosted is unlimited. Hosted sets the free tier through the
-  `on-workspace-created` hook, with a scheduled reconcile as a safety net.
-- Usage is counted per calendar month in UTC. A free workspace at its quota is **rejected at ingest** (HTTP 429 with
-  `Retry-After` and an upgrade link), not silently dropped; a paid workspace is never blocked and pays for traces
-  beyond the free tier. Enforcement may overshoot by a little (seconds of traffic); invoices use the stored count.
+- Billing is per **workspace**, counted in traces; one trace is one Lambda invocation.
+- The open-source product has no payment code and only knows generic per-workspace limits: no limits set means
+  unlimited, so self-hosted is unlimited. A deployment can plug in billing with `IVY_BILLING_URL` (the dashboard's
+  Upgrade / Manage billing buttons), the internal admin API and hooks (for example `on-workspace-created` to set
+  limits on new workspaces, with a scheduled reconcile as a safety net).
+- Usage is counted per calendar month in UTC. A workspace whose limits block at its quota is **rejected at ingest**
+  (HTTP 429 with `Retry-After` and an upgrade link), not silently dropped; a workspace whose limits allow overage
+  is never blocked. Enforcement may overshoot by a little (seconds of traffic); invoices use the stored count.
 - The dashboard shows usage per workspace with a warning at 80% and at 100% of the quota, and Upgrade / Manage
   billing buttons only where a billing service is configured.
 
 ## Dashboard
 - First visit: a quick-start wizard (workspace, project, connect AWS and pick functions, wait for the first trace).
 - Keyboard shortcuts and a ⌘K command menu across the app.
+- A "Live" toggle on the Invocations page (`?live=1`) shows new invocations as they arrive and updates running ones in
+  place; it pauses on a hidden tab, while scrolled down or paging, and after 15 minutes idle.
 
 ## Performance
 - Cold-start overhead of the layer must be minimal: the Lambda extension is a small Rust binary (the one exception
@@ -108,6 +110,10 @@ live in `docs/implementation/`.
   customer). What is left out is said on the trace ("N spans omitted") and in one line in the function's logs.
 - Each invocation has a payload budget (1 MB): the invocation's own event and response first, then failing spans,
   then the slowest; spans past it keep their timing and attributes but not their bodies.
+- Long-running invocations appear as in progress while they run. After 5 s (`IVY_INPROGRESS_AFTER_MS`, 0 turns it
+  off) the extension sends one small provisional record, refreshed every minute; the final invocation always
+  replaces it and it is never counted or billed as a trace. Without a final record past the deadline it shows as
+  "No completion recorded". Shorter invocations cost nothing extra. Implementation: `docs/implementation/layer.md`.
 
 ## LLM spans
 - Ivy captures OpenTelemetry spans from libraries such as the Vercel AI SDK and renders LLM calls (messages,
@@ -120,3 +126,15 @@ live in `docs/implementation/`.
   spans, also for spans already stored by older layers. A generic AWS span is never titled by its region.
 - Token counts are not secrets: redaction keeps `max_tokens`, `input_tokens`, `inputTokens`, … while `token`,
   `accessToken`, `sessionToken` and the like stay redacted.
+
+## Alerts
+- Alerts: Slack per error group (first seen, then at most every 60 min or 100 occurrences, customizable per project)
+  and a weekly email digest; each only when configured. This replaces 001's "alerting beyond a webhook on new error
+  groups: not in v1".
+- Slack connects through Ivy's Slack app with only the `incoming-webhook` scope ("Add to Slack" per project; the
+  installer picks the channel). Throttles alert only when a project turns them on.
+- Alerts and the digest never carry payloads: type, trimmed message, function, counts, a stack frame and links.
+- The digest goes to a workspace's members every Monday 08:00 UTC by default, skips weeks without data, can be
+  switched off per workspace by owners, and every member can unsubscribe (one click in the email, no sign-in).
+- Self-hosters get the `on-error-group-created` hook for their own integrations. Implementation:
+  `docs/implementation/alerts.md`.

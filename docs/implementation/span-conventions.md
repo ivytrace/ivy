@@ -98,6 +98,28 @@ Readers derive one of four labels (`failureKind` in `@ivy/spans`): "Init failed"
 type), "Out of memory" (`Runtime.OutOfMemory`), "Timed out" (`Sandbox.Timedout` or `Timeout`), "Crashed" (other
 invoke-phase failures).
 
+### IDs of the invocation span (Lambda layer)
+
+With a request ID the layer derives the invocation span's IDs from it (`layer.md`, "Long-running invocations"): span ID
+= the first 16 hex chars of FNV-1a 32 over `"0:<id>"` … `"4:<id>"`, trace ID = the usual 8-char start second plus the
+other 24. Other producers can use random IDs.
+
+### In-progress records (long-running invocations)
+
+While an invocation runs past `IVY_INPROGRESS_AFTER_MS`, the extension exports a **provisional invocation span**
+with the trace and span ID the final invocation span will have:
+
+- `ivy.invocation = true` and `ivy.in_progress = true` **(marker)**
+- `faas.invocation_id`, `cloud.resource_id`, `faas.coldstart`
+- `ivy.deadline_ms` (int, unix ms): the invocation's deadline
+- `ivy.last_seen_ms` (int, unix ms): when the extension last saw it running; also the span's end time
+- status UNSET, kind INTERNAL, name = function name, no payloads, no trigger attributes, no children
+
+It may be sent again (every 60 s) with a later `ivy.last_seen_ms`. Readers keep one record per span ID: the final
+span (no `ivy.in_progress`) always wins, else the newest record (`mergeInProgressSpans`). It creates no
+`invocations` row (it goes to `invocations_in_progress`) and is not a trace for billing. Past `ivy.deadline_ms` + 15 s
+without a final span, readers show "No completion recorded" (`inProgressState` in `@ivy/spans`).
+
 ### Update spans (late Lambda report data)
 
 `platform.report` (billed duration, max memory) only exists after the invoke phase has ended, i.e. after the

@@ -3,11 +3,13 @@ import { ALL_PROJECTS, type Scope } from "../links/links";
 import { useScope, useWorkspace } from "../links/use-scope";
 import { buildUrl, fetchJson, rangeParams, type QueryParams } from "./client";
 import type {
+  AlertsResponse,
   ApiKey,
   AwsAccount,
   AwsFunction,
   AwsSetup,
   Config,
+  DigestInfo,
   ErrorGroup,
   FunctionGroup,
   FunctionSummary,
@@ -15,6 +17,7 @@ import type {
   InvocationsResponse,
   ListResponse,
   Member,
+  NotificationsResponse,
   Project,
   Rule,
   Since,
@@ -106,7 +109,7 @@ export function useTimeseries(range: TimeRange, params: { function?: string; buc
 
 export interface InvocationFilters {
   function?: string;
-  status?: "ok" | "error";
+  status?: "ok" | "error" | "in_progress";
   q?: string;
   cursor?: string;
   limit?: number;
@@ -180,3 +183,10 @@ export function useRules() {
   const ws = useWorkspace();
   return useApi<ListResponse<Rule>>(buildUrl(`${wsPath(ws)}/aws/rules`));
 }
+
+export const useAlerts = (workspace: string, project: string | null) =>
+  useApi<AlertsResponse>(project ? buildUrl(`${wsPath(workspace)}/p/${enc(project)}/alerts`) : null, { keepPreviousData: false });
+
+export const useDigest = (workspace: string) => useApi<DigestInfo>(buildUrl(`${wsPath(workspace)}/digest`));
+
+export const useNotifications = () => useApi<NotificationsResponse>(buildUrl("/me/notifications"));

@@ -15,7 +15,9 @@ export interface Invocation extends ProjectRef {
   ts: string;
   function: string;
   region: string;
-  status: "ok" | "error";
+  /** `in_progress`: a long-running invocation without its final record yet (see `deadline`, `inProgressState`). */
+  status: "ok" | "error" | "in_progress";
+  /** For `in_progress` rows: time since the start when the extension last reported it. */
   duration_ms: number;
   cold_start: boolean;
   request_id: string;
@@ -35,6 +37,10 @@ export interface Invocation extends ProjectRef {
   /** The extension created this invocation span itself: the tracer reported nothing (init failure, crash). */
   synthetic: boolean;
   init_duration_ms: number | null;
+  /** `in_progress` rows only: the invocation's deadline. Past it (plus a grace), "no completion recorded". */
+  deadline?: string | null;
+  /** `in_progress` rows only: when the extension last reported the invocation as running. */
+  last_seen?: string | null;
 }
 
 export interface ErrorGroup extends ProjectRef {

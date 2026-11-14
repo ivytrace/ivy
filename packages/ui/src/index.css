@@ -67,3 +67,57 @@ details summary::-webkit-details-marker {
 .react-flow__attribution {
   display: none;
 }
+
+/* Live mode: a row that just arrived fades from a green tint. */
+@keyframes live-fresh {
+  from {
+    background-color: rgb(52 211 153 / 0.14);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.live-fresh {
+  animation: live-fresh 2.5s ease-out;
+}
+
+/* A still-running invocation: the bar runs to "now" and fades out at its open end, with slowly moving stripes. */
+@keyframes running-bar {
+  from {
+    background-position:
+      0 0,
+      0 0;
+  }
+  to {
+    background-position:
+      0 0,
+      24px 0;
+  }
+}
+
+.running-bar {
+  background-image:
+    linear-gradient(to right, transparent 60%, hsl(var(--background)) 100%),
+    repeating-linear-gradient(135deg, transparent 0 6px, hsl(var(--background) / 0.35) 6px 12px);
+  background-size:
+    100% 100%,
+    24px 100%;
+  animation: running-bar 1.2s linear infinite;
+}
+
+/* Past its deadline with no completion: no stripes, only the open end. */
+.running-bar.stalled {
+  background-image: linear-gradient(to right, transparent 60%, hsl(var(--background)) 100%);
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-fresh {
+    animation: none;
+    background-color: rgb(52 211 153 / 0.1);
+  }
+  .running-bar {
+    animation: none;
+  }
+}

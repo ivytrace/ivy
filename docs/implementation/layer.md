@@ -195,7 +195,7 @@ request, against a 2 s budget and a 2000-span queue, all or nothing. Now (`src/l
    collapsed LLM calls are summed (bridge usage attributes, or the `usage` in a provider's response body for
    plain HTTP calls, recognised by host or by the providers' paths such as `/v1/chat/completions`). 50/10/3 keep
    every ordinary trace untouched (few functions make 50 identical calls) while turning a 3,000-call loop into
-   ~16 spans; the stored bytes fall accordingly, which matters at €2 per million traces.
+   ~16 spans; the stored bytes fall accordingly, which matters when storage is paid per trace.
    Known limit: calls from a bundled SDK are only recognised as AWS calls at flush time, so they group by HTTP
    method, host and path (`POST dynamodb.eu-west-1.amazonaws.com /`), mixing operations.
 2. **Span limit**: after collapsing, at most `IVY_MAX_SPANS` (2000) children. Kept first: failing spans, summaries
@@ -214,6 +214,48 @@ ones arrive as the invocation span plus 16 children (10 first, 3 slowest, 2 erro
 exported in 1 chunk in 3–10 ms. 300 model calls with 16 KB request and response bodies and `IVY_COLLAPSE_KEEP=40`:
 44 children, 1008 KB of payloads kept and 347 KB trimmed, the summary's tokens equal 257 × the per-call usage,
 2 chunks in 13–23 ms.
+
+## Long-running invocations
+
+The tracer only reports when the handler settles, so a 10-minute import used to be invisible for 10 minutes, and
+forever if the environment died. Now the extension reports a long invocation while it runs
+(`extension/src/main.rs` `report_in_progress`, `store.rs` `in_progress`):
+
+- **Timer.** The extension is not frozen during an invocation: its main thread already waits on the span store's
+  `Condvar` for the tracer's final batch. With `IVY_INPROGRESS_AFTER_MS` (default 5000, `0` off) that wait is split:
+  if the invocation is still running at the threshold (no final batch, no `platform.runtimeDone`), the extension
+  exports a **provisional invocation span**, then keeps waiting; every 60 s it sends a refreshed copy (new end time and
+  `ivy.last_seen_ms`) until the invocation ends or its deadline passes. Only when the tracer is expected (the same
+  condition as waiting for spans), since nothing else would ever replace the record.
+- **Content** (`span-conventions.md`): `ivy.invocation`, `ivy.in_progress`, `faas.invocation_id`, `cloud.resource_id`,
+  `faas.coldstart`, `ivy.deadline_ms`, `ivy.last_seen_ms`; start = `platform.start` (or the `INVOKE`), end = last seen,
+  status UNSET, the function name and the tracer's last resource (or one built from the environment). No payloads,
+  and no trigger: the tracer only says what triggered the invocation at the end.
+- **IDs: derived, not communicated.** The provisional span must have the IDs the final one will have. Sending them
+  from the tracer at the start of each invocation would cost every invocation a localhost request; instead both
+  sides derive them from the request ID (`invocationIds` in `src/lib/utils/ids.ts`, `derived_ids` in `spans.rs`):
+  FNV-1a 32 over `"<i>:<request id>"` for i = 0..4 gives 40 hex chars; the span ID is the first 16, the trace ID is
+  the start second (the usual timestamp prefix) plus the other 24. A unit test on each side pins the same vector.
+  The start second can differ by one between the extension (`INVOKE`) and the tracer (handler start), so once a
+  request was reported in progress, the extension sets the provisional's trace ID on every span the tracer hands
+  over for it (also for chunks that arrive after the export). Lambda retries async invocations with the same request
+  ID; a retry starts a new trace (other second), and the extension forgets the old IDs at its `INVOKE`.
+- **The final span supersedes it.** Same trace and span ID. In the extension: a crash, OOM or timeout completes the
+  tracer's root or creates a synthetic one with these IDs (`platform-failures.md`); if the tracer's spans never come and
+  the platform says the runtime finished, a closing synthetic root (status UNSET) is exported so the invocation does
+  not stay "running". In the backend (`storage.md`): `invocations_mv` skips `ivy.in_progress` spans and a separate
+  `invocations_in_progress` table holds them; the list shows an in-progress row only while `invocations` has no row
+  with its trace and span ID, the trace view drops the record once the final span is there (`mergeInProgressSpans`),
+  and the ingest quota counter does not count it. So counts, rollups, error groups and billed traces only ever see
+  the final invocation. If the environment dies (extension included) the record stays, and past its deadline (+15 s)
+  readers show "No completion recorded".
+- **Cost.** Shorter invocations: nothing, the extension waits exactly as before (the threshold is the wait's
+  timeout). Long ones: one request at 5 s, ~770 bytes of JSON / ~370 bytes gzipped, plus one per minute after that;
+  sent while the function runs, so it adds no billed duration. Storage: one `otel_traces` row and one small
+  `invocations_in_progress` row per record. Not a trace for billing.
+- e2e: the `long` case sleeps 7 s; the in-progress span arrives ~5.0 s after the invoke and the final one replaces
+  it (same IDs, one final invocation). `in-progress.clickhouse.test.ts` (API) runs the real schema against ClickHouse
+  and checks the billed trace count, the list and the trace view.
 
 ## Instrumentation
 

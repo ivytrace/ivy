@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation, useParams, useSearchParams } from "react-r
 import { ExternalLink, ScrollText } from "lucide-react";
 
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
+import { Elapsed, InProgressNote, InProgressStatus, spanProgress } from "@/components/common/in-progress";
 import { ColdStart, InvocationStatus, MemoryUsage } from "@/components/common/status";
 import { PayloadPreview } from "@/components/stats/payload-preview";
 import { ErrorBlock } from "@/components/trace/error-block";
@@ -73,24 +74,29 @@ function Summary({ invocation, traceId, usage }: { invocation: Span; traceId: st
   const a = invocation.attributes;
   const exception = getException(invocation);
   const res = invocationResources(invocation);
+  const progress = spanProgress(invocation);
   const tokens = usage && usage.calls > 0;
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <dl className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
         <span className="mr-4">
-          <InvocationStatus
-            ok={invocation.status_code !== "ERROR"}
-            errorType={exception?.type}
-            errorMessage={exception?.message}
-            httpStatus={a["http.response.status_code"]}
-            failureKind={spanFailureKind(invocation)}
-          />
+          {progress ? (
+            <InProgressStatus progress={progress} />
+          ) : (
+            <InvocationStatus
+              ok={invocation.status_code !== "ERROR"}
+              errorType={exception?.type}
+              errorMessage={exception?.message}
+              httpStatus={a["http.response.status_code"]}
+              failureKind={spanFailureKind(invocation)}
+            />
+          )}
         </span>
         <dt className="hidden md:block">Start time</dt>
         <dd className="mr-4 hidden font-semibold text-foreground md:block">{formatTimestamp(invocation.start)}</dd>
         <dt className="hidden md:block">Duration</dt>
         <dd className="mr-4 flex items-center gap-2 font-semibold text-foreground">
-          {formatDuration(invocation.duration_ms)}
+          {progress ? <Elapsed progress={progress} /> : formatDuration(invocation.duration_ms)}
           {a["faas.coldstart"] === "true" && <ColdStart />}
         </dd>
         {res.billedDurationMs !== null && (
@@ -221,6 +227,7 @@ function TraceView({ traceId, spans }: { traceId: string; spans: Span[] }) {
         </h1>
         <Summary invocation={invocation} traceId={traceId} usage={usage} />
         <FailureNote invocation={invocation} className="mt-3 max-w-3xl" />
+        <InProgressNote invocation={invocation} className="mt-3 max-w-3xl" />
       </div>
 
       <div className="h-full flex-1 overflow-hidden md:flex">

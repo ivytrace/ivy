@@ -18,6 +18,57 @@ pub struct InvocationContext {
     pub cold_start: bool,
 }
 
+/// Invocation span IDs derived from the request ID, the same way the tracer derives them
+/// (`src/lib/utils/ids.ts`): FNV-1a 32 of `"<i>:<request id>"` for i = 0..5, as 40 hex chars. The span ID is the
+/// first 16; the trace ID is the start second (8 hex chars) plus the other 24. So the extension knows at `INVOKE`
+/// which IDs the tracer's invocation span will have.
+pub fn derived_ids(request_id: &str, start_ms: i64) -> (String, String) {
+    let hex: String = (0..5)
+        .map(|i| {
+            let mut h: u32 = 0x811c_9dc5;
+            for b in format!("{i}:{request_id}").bytes() {
+                h ^= b as u32;
+                h = h.wrapping_mul(0x0100_0193);
+            }
+            format!("{h:08x}")
+        })
+        .collect();
+    let mut span_id = hex[..16].to_string();
+    if span_id == "0000000000000000" {
+        span_id = "0000000000000001".into();
+    }
+    (format!("{:08x}{}", (start_ms / 1000) as u32, &hex[16..]), span_id)
+}
+
+/// Provisional invocation span for an invocation that is still running (`ivy.in_progress`). The final span has
+/// the same IDs and supersedes it.
+pub fn in_progress_root(ctx: &InvocationContext, function_name: &str, trace_id: &str, span_id: &str, deadline_ms: i64, now_ms: i64) -> Value {
+    let mut attrs = vec![
+        kv("ivy.invocation", Attr::Bool(true)),
+        kv("ivy.in_progress", Attr::Bool(true)),
+        kv("faas.coldstart", Attr::Bool(ctx.cold_start)),
+        kv("ivy.deadline_ms", Attr::Int(deadline_ms)),
+        kv("ivy.last_seen_ms", Attr::Int(now_ms)),
+    ];
+    if let Some(id) = &ctx.request_id {
+        attrs.push(kv("faas.invocation_id", Attr::Str(id.clone())));
+    }
+    if let Some(arn) = &ctx.function_arn {
+        attrs.push(kv("cloud.resource_id", Attr::Str(arn.clone())));
+    }
+    json!({
+        "traceId": trace_id,
+        "spanId": span_id,
+        "name": function_name,
+        "kind": KIND_INTERNAL,
+        "startTimeUnixNano": nanos(ctx.start_ms),
+        "endTimeUnixNano": nanos(now_ms.max(ctx.start_ms)),
+        "attributes": attrs,
+        "events": [],
+        "status": { "code": 0 },
+    })
+}
+
 /// Enough of an exported root to address a later update to it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RootRef {
@@ -76,6 +127,10 @@ pub fn has_error_status(span: &Value) -> bool {
     span.pointer("/status/code").and_then(Value::as_u64) == Some(STATUS_ERROR)
 }
 
+pub fn epoch_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
 pub fn nanos(ms: i64) -> Value {
     Value::String(format!("{}", ms.max(0) as u128 * 1_000_000))
 }
@@ -113,7 +168,7 @@ pub fn apply_failure(span: &mut Value, error_type: &str, message: &str, phase: &
 }
 
 /// An invocation root for a failure where the tracer produced nothing (init errors, crashes).
-pub fn synthetic_root(ctx: &InvocationContext, function_name: &str) -> Value {
+pub fn synthetic_root(ctx: &InvocationContext, function_name: &str, ids: Option<(String, String)>) -> Value {
     let mut attrs = vec![
         kv("ivy.invocation", Attr::Bool(true)),
         kv("ivy.synthetic", Attr::Bool(true)),
@@ -127,9 +182,10 @@ pub fn synthetic_root(ctx: &InvocationContext, function_name: &str) -> Value {
     if let Some(arn) = &ctx.function_arn {
         attrs.push(kv("cloud.resource_id", Attr::Str(arn.clone())));
     }
+    let (trace, span) = ids.unwrap_or_else(|| (trace_id(ctx.start_ms), random_hex(8)));
     json!({
-        "traceId": trace_id(ctx.start_ms),
-        "spanId": random_hex(8),
+        "traceId": trace,
+        "spanId": span,
         "name": function_name,
         "kind": KIND_INTERNAL,
         "startTimeUnixNano": nanos(ctx.start_ms),
@@ -253,6 +309,15 @@ mod tests {
         assert!(t.starts_with("6553f100"));
         assert_eq!(random_hex(8).len(), 16);
         assert_ne!(random_hex(8), random_hex(8));
+    }
+
+    #[test]
+    fn derived_ids_match_the_tracer() {
+        // The same request ID and values as src/lib/utils/ids.test.ts.
+        let (trace, span) = derived_ids("8f1c2a7e-3b9d-4c55-9a51-0f6f1e2b7c3d", 1_700_000_000_123);
+        assert_eq!((trace.as_str(), span.as_str()), ("6553f100306e643c836b93bd7315f15e", "aa43ecc22bca145b"));
+        assert_eq!((trace, span.clone()), derived_ids("8f1c2a7e-3b9d-4c55-9a51-0f6f1e2b7c3d", 1_700_000_000_999));
+        assert_ne!(span, derived_ids("8f1c2a7e-3b9d-4c55-9a51-0f6f1e2b7c3e", 0).1);
     }
 
     #[test]

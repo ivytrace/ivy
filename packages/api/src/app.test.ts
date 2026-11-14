@@ -6,7 +6,7 @@ beforeEach(() => resetTenancyForTests());
 describe('app', () => {
   it('returns config', async () => {
     const res = await (await appFor()).request('/api/config');
-    expect(await res.json()).toEqual({ version: '0.1.0', auth: { enabled: false }, workspaces: { multi: false }, email: { enabled: false }, aws: { quick_create: false } });
+    expect(await res.json()).toEqual({ version: '0.1.0', auth: { enabled: false }, workspaces: { multi: false }, email: { enabled: false }, alerts: { slack: false, email: false }, aws: { quick_create: false } });
   });
 
   it('returns JSON 404 for unknown API paths', async () => {

@@ -11,8 +11,8 @@ before it can report them:
 | throttles | the request never reaches the function |
 
 Ivy covers the first three in the Rust extension with the Lambda **Telemetry API**, and throttles in the API's
-auto-trace loop with **CloudWatch metrics**. The guiding constraint is the margin: a trace is one invocation and is
-billed at €2 per million, so a healthy invocation must not get extra spans, and function logs are never shipped
+auto-trace loop with **CloudWatch metrics**. The guiding constraint is cost: a trace is one invocation and storage
+is paid per trace, so a healthy invocation must not get extra spans, and function logs are never shipped
 wholesale. Data is added only on failure, plus a few attributes on the existing invocation span.
 
 ## Extension: Telemetry API
@@ -91,7 +91,9 @@ it get one?
 - If there is no root at all (crash before the tracer's first batch, which is the normal case since the tracer only
   sends at the end), a synthetic root is created with the same attributes and the request ID.
 
-The span keeps one span ID per invocation in every case, so there is never a duplicate invocation.
+The span keeps one span ID per invocation in every case, so there is never a duplicate invocation. When the invocation was
+already reported as in progress (`layer.md`, "Long-running invocations"), a synthetic root takes the in-progress
+record's IDs, so it replaces that record.
 
 **Status message.** The error group fingerprint is `function + error.type + normalized message`
 (`storage.md`), so the message is chosen to be the most telling single line: the `errorMessage` of a JSON error the

@@ -131,7 +131,52 @@ SELECT
     SpanAttributes['ivy.synthetic'] = 'true' AS synthetic,
     toFloat32OrZero(SpanAttributes['ivy.init_duration_ms']) AS init_duration_ms
 FROM ivy.otel_traces
-WHERE SpanAttributes['ivy.invocation'] = 'true';
+WHERE SpanAttributes['ivy.invocation'] = 'true' AND SpanAttributes['ivy.in_progress'] != 'true';
+
+-- Long-running invocations the extension reported as in progress (`ivy.in_progress`, docs/implementation/layer.md).
+-- Kept apart from `invocations`, so that table, its rollup and the trace count (billing) only ever see the final
+-- invocation span. The list reads rows from here whose final span (same trace and span ID) is not in `invocations`
+-- yet. A refresh replaces the row (newest `last_seen` wins).
+CREATE TABLE IF NOT EXISTS ivy.invocations_in_progress
+(
+    `tenant_id` LowCardinality(String),
+    `project_id` LowCardinality(String),
+    `ts` DateTime64(3) CODEC(Delta(8), ZSTD(1)),
+    `trace_id` String CODEC(ZSTD(1)),
+    `span_id` String CODEC(ZSTD(1)),
+    `function` LowCardinality(String),
+    `region` LowCardinality(String),
+    `cold_start` Bool,
+    `request_id` String CODEC(ZSTD(1)),
+    `trigger` LowCardinality(String),
+    `memory_limit_mb` UInt32,
+    `deadline` DateTime64(3),
+    `last_seen` DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(last_seen)
+PARTITION BY toDate(ts)
+ORDER BY (tenant_id, project_id, function, ts, span_id)
+TTL toDateTime(ts) + toIntervalDay({{RETENTION_DAYS}})
+SETTINGS ttl_only_drop_parts = 1;
+
+DROP VIEW IF EXISTS ivy.invocations_in_progress_mv;
+CREATE MATERIALIZED VIEW ivy.invocations_in_progress_mv TO ivy.invocations_in_progress AS
+SELECT
+    TenantId AS tenant_id,
+    ProjectId AS project_id,
+    toDateTime64(Timestamp, 3) AS ts,
+    TraceId AS trace_id,
+    SpanId AS span_id,
+    if(ResourceAttributes['faas.name'] != '', ResourceAttributes['faas.name'], ServiceName) AS function,
+    ResourceAttributes['cloud.region'] AS region,
+    SpanAttributes['faas.coldstart'] = 'true' AS cold_start,
+    SpanAttributes['faas.invocation_id'] AS request_id,
+    if(SpanAttributes['ivy.trigger.source'] != '', SpanAttributes['ivy.trigger.source'], 'unknown') AS trigger,
+    toUInt32(toUInt64OrZero(ResourceAttributes['faas.max_memory']) / 1048576) AS memory_limit_mb,
+    fromUnixTimestamp64Milli(toInt64OrZero(SpanAttributes['ivy.deadline_ms'])) AS deadline,
+    toDateTime64(Timestamp, 3) + toIntervalMillisecond(intDiv(Duration, 1000000)) AS last_seen
+FROM ivy.otel_traces
+WHERE SpanAttributes['ivy.invocation'] = 'true' AND SpanAttributes['ivy.in_progress'] = 'true';
 
 CREATE TABLE IF NOT EXISTS ivy.invocations_hourly
 (
@@ -197,6 +242,8 @@ CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations_hourly AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
+CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.invocations_in_progress AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.function_throttles AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR tenant_id = getSettingOrDefault('SQL_ivy_tenant', '') TO ALL;
 -- The same for projects: project-scoped API queries also set SQL_ivy_project. Workspace-wide
@@ -206,6 +253,8 @@ CREATE ROW POLICY OR REPLACE ivy_project ON ivy.otel_traces AS RESTRICTIVE
 CREATE ROW POLICY OR REPLACE ivy_project ON ivy.invocations AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_project ON ivy.invocations_hourly AS RESTRICTIVE
+    USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
+CREATE ROW POLICY OR REPLACE ivy_project ON ivy.invocations_in_progress AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_project ON ivy.function_throttles AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
@@ -417,3 +466,104 @@ CREATE TABLE IF NOT EXISTS ivy_control.workspace_limits
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY tenant_id;
+
+-- Alerts (docs/implementation/alerts.md).
+
+-- Per-project alert settings. No row means the defaults: Slack on (once a channel is connected),
+-- first seen, then at most every 60 minutes or every 100 occurrences, throttles off.
+CREATE TABLE IF NOT EXISTS ivy_control.alert_settings
+(
+    `tenant_id` String,
+    `project_id` String,
+    `slack_enabled` Bool DEFAULT true,
+    `interval_minutes` UInt32 DEFAULT 60,
+    `every_occurrences` UInt32 DEFAULT 100,
+    `include_throttles` Bool DEFAULT false,
+    `updated_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, project_id);
+
+-- Slack channels of a project (OAuth v2, scope incoming-webhook). The webhook URL is encrypted with
+-- IVY_SECRET_KEY. `status` 'broken' after Slack rejected the webhook (revoked, channel archived).
+CREATE TABLE IF NOT EXISTS ivy_control.slack_integrations
+(
+    `tenant_id` String,
+    `project_id` String,
+    `id` String,
+    `team_id` String,
+    `team_name` String,
+    `channel` String,
+    `channel_id` String,
+    `encrypted_webhook_url` String,
+    `configuration_url` String DEFAULT '',
+    `status` LowCardinality(String) DEFAULT 'ok',
+    `error` String DEFAULT '',
+    `created_by` String DEFAULT '',
+    `created_at` DateTime64(3, 'UTC'),
+    `updated_at` DateTime64(3, 'UTC'),
+    `deleted` UInt8 DEFAULT 0
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, project_id, id);
+
+-- What was last sent to Slack per error group: first-seen detection and the throttle.
+CREATE TABLE IF NOT EXISTS ivy_control.alert_state
+(
+    `tenant_id` String,
+    `project_id` String,
+    `fingerprint` String,
+    `first_notified_at` DateTime64(3, 'UTC'),
+    `last_notified_at` DateTime64(3, 'UTC'),
+    `occurrences_at_last_notify` UInt64,
+    `updated_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, project_id, fingerprint);
+
+-- Weekly email digest: per-workspace switch (no row = on).
+CREATE TABLE IF NOT EXISTS ivy_control.digest_settings
+(
+    `tenant_id` String,
+    `enabled` Bool DEFAULT true,
+    `updated_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY tenant_id;
+
+-- A user's digest choice per workspace (no row = subscribed). `sub` is the OIDC subject, or
+-- `email:<address>` for IVY_DIGEST_TO recipients. Also the recipient list in single-workspace mode.
+CREATE TABLE IF NOT EXISTS ivy_control.notification_prefs
+(
+    `tenant_id` String,
+    `sub` String,
+    `email` String DEFAULT '',
+    `digest` Bool DEFAULT true,
+    `updated_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, sub);
+
+-- Digest sends, one row per workspace and week (Monday, UTC): makes the weekly send idempotent.
+CREATE TABLE IF NOT EXISTS ivy_control.digest_sends
+(
+    `tenant_id` String,
+    `week` Date,
+    `recipients` UInt32,
+    `sent_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(sent_at)
+ORDER BY (tenant_id, week);
+
+-- Single-instance leases for background jobs (alert evaluator, digest) across API processes.
+CREATE TABLE IF NOT EXISTS ivy_control.job_leases
+(
+    `name` String,
+    `holder` String,
+    `since` DateTime64(3, 'UTC'),
+    `expires_at` DateTime64(3, 'UTC'),
+    `updated_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (name, holder)
+TTL toDateTime(expires_at) + INTERVAL 1 DAY;

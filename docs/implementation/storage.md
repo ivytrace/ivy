@@ -35,7 +35,8 @@ in `ivy_control`. Every table has the tenant first in `ORDER BY`; the span table
 | table | engine | ORDER BY | purpose |
 |---|---|---|---|
 | `otel_traces` | MergeTree, daily partitions | `(TenantId, ProjectId, toStartOfHour(Timestamp), TraceId)` | all spans; trace lookups |
-| `invocations` (MV `invocations_mv`) | MergeTree, daily partitions | `(tenant_id, project_id, function, ts)` | one row per root span with `ivy.invocation = 'true'` |
+| `invocations` (MV `invocations_mv`) | MergeTree, daily partitions | `(tenant_id, project_id, function, ts)` | one row per root span with `ivy.invocation = 'true'`, except in-progress records |
+| `invocations_in_progress` (MV `invocations_in_progress_mv`) | ReplacingMergeTree(last_seen), daily partitions | `(tenant_id, project_id, function, ts, span_id)` | long-running invocations the extension reported while they ran (`ivy.in_progress`); read with `FINAL` and only while `invocations` has no row with the same trace and span ID (`layer.md`, "Long-running invocations") |
 | `invocations_hourly` (MV `invocations_hourly_mv`) | AggregatingMergeTree | `(tenant_id, project_id, function, region, hour)` | counts, errors, cold starts, duration sum, last invoked, `quantilesTDigest(0.5,0.95,0.99)` state |
 | `function_throttles` | ReplacingMergeTree(updated_at), monthly partitions | `(tenant_id, project_id, function, region, minute)` | Lambda throttles per function and minute, polled from CloudWatch (`auto-trace.md`, "Throttles"); read with `FINAL`; the project is the function's assignment when it was polled |
 

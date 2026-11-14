@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 
+import { Elapsed, spanProgress, useNow } from "@/components/common/in-progress";
 import { ServiceIcon } from "@/components/common/service-icon";
 import { SpanDetails } from "@/components/trace/span-details";
 import { CollapsedBadge, SpanTitle } from "@/components/trace/span-title";
-import { describeSpan, type ServiceIcon as Icon } from "@/lib/spans/services";
+import { describeSpan, inProgressState, type ServiceIcon as Icon } from "@/lib/spans/services";
 import type { WaterfallRow } from "@/lib/spans/tree";
 import { cn } from "@/lib/utils/cn";
 import { formatDuration } from "@/lib/utils/format";
@@ -44,6 +45,8 @@ export function Waterfall({
   /** Content of an expanded row; the span's details by default. */
   details?: (span: WaterfallRow["span"]) => ReactNode;
 }) {
+  const running = rows.some((r) => spanProgress(r.span));
+  const now = useNow(running, 5000);
   return (
     <div className="rounded-md border text-sm">
       <div className="flex border-b text-xs text-muted-foreground">
@@ -66,6 +69,9 @@ export function Waterfall({
         {rows.map((row) => {
           const d = describeSpan(row.span);
           const open = openIds.has(row.span.span_id);
+          const progress = spanProgress(row.span);
+          const stalled = progress && inProgressState(progress.deadlineMs, now) === "no_completion";
+          const color = d.isError ? "bg-red-400" : stalled ? "bg-amber-400" : progress ? "bg-sky-400" : (BAR_COLORS[d.icon] ?? "bg-zinc-400");
           return (
             <div key={row.span.span_id} id={`span-${row.span.span_id}`} className="transition-colors">
               <button
@@ -95,14 +101,16 @@ export function Waterfall({
                     <span
                       className={cn(
                         "absolute top-1/2 h-2.5 -translate-y-1/2 rounded-sm",
-                        d.isError ? "bg-red-400" : (BAR_COLORS[d.icon] ?? "bg-zinc-400"),
+                        color,
                         d.collapsed && "opacity-70",
+                        progress && "running-bar rounded-r-none",
+                        stalled && "stalled",
                       )}
                       style={{ left: `${row.offsetPct}%`, width: `${row.widthPct}%`, ...(d.collapsed && COLLAPSED_BAR) }}
                     />
                   </div>
                   <span className="absolute right-3 text-xs tabular-nums text-muted-foreground">
-                    {formatDuration(row.span.duration_ms)}
+                    {progress ? <Elapsed progress={progress} /> : formatDuration(row.span.duration_ms)}
                   </span>
                 </div>
               </button>

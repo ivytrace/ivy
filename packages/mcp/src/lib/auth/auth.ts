@@ -23,7 +23,7 @@ export interface McpAuth<U extends AuthUser = AuthUser> {
   scopesSupported?: string[];
 }
 
-/** RFC 9728 path-suffixed metadata URL for the resource, e.g. https://ivytrace.dev/.well-known/oauth-protected-resource/mcp. */
+/** RFC 9728 path-suffixed metadata URL for the resource, e.g. https://ivy.example.com/.well-known/oauth-protected-resource/mcp. */
 export function resourceMetadataUrl(resource: string): string {
   const url = new URL(resource);
   const path = url.pathname === "/" ? "" : url.pathname.replace(/\/$/, "");

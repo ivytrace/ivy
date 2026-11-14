@@ -3,6 +3,7 @@ import type { App, McpUiDisplayMode, McpUiHostContext } from "@modelcontextproto
 import { useApp } from "@modelcontextprotocol/ext-apps/react";
 import { Maximize2, Minimize2 } from "lucide-react";
 
+import { Elapsed, InProgressNote, InProgressStatus, spanProgress } from "@/components/common/in-progress";
 import { ColdStart, InvocationStatus, MemoryUsage } from "@/components/common/status";
 import { ErrorBlock } from "@/components/trace/error-block";
 import { FailureNote } from "@/components/trace/failure-note";
@@ -76,6 +77,7 @@ function Header({ data, invocation, actions }: { data: ViewData; invocation: Spa
   const a = invocation.attributes;
   const exception = getException(invocation);
   const res = invocationResources(invocation);
+  const progress = spanProgress(invocation);
   return (
     <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
       <div className="min-w-0">
@@ -85,16 +87,20 @@ function Header({ data, invocation, actions }: { data: ViewData; invocation: Spa
         </div>
         <h1 className="mt-1 truncate text-base font-semibold">{invocation.name}</h1>
         <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <InvocationStatus
-            ok={invocation.status_code !== "ERROR"}
-            errorType={exception?.type}
-            errorMessage={exception?.message}
-            httpStatus={a["http.response.status_code"]}
-            failureKind={spanFailureKind(invocation)}
-          />
+          {progress ? (
+            <InProgressStatus progress={progress} />
+          ) : (
+            <InvocationStatus
+              ok={invocation.status_code !== "ERROR"}
+              errorType={exception?.type}
+              errorMessage={exception?.message}
+              httpStatus={a["http.response.status_code"]}
+              failureKind={spanFailureKind(invocation)}
+            />
+          )}
           <span>{formatTimestamp(invocation.start)}</span>
           <span className="flex items-center gap-2 font-semibold text-foreground">
-            {formatDuration(invocation.duration_ms)}
+            {progress ? <Elapsed progress={progress} /> : formatDuration(invocation.duration_ms)}
             {a["faas.coldstart"] === "true" && <ColdStart />}
           </span>
           {res.billedDurationMs !== null && <span>billed {formatDuration(res.billedDurationMs)}</span>}
@@ -102,6 +108,7 @@ function Header({ data, invocation, actions }: { data: ViewData; invocation: Spa
           {res.memoryUsedMb !== null && <MemoryUsage used={res.memoryUsedMb} limit={res.memoryLimitMb} />}
         </div>
         <FailureNote invocation={invocation} className="mt-2" />
+        <InProgressNote invocation={invocation} className="mt-2" />
       </div>
       <div className="flex items-center gap-1">{actions}</div>
     </div>

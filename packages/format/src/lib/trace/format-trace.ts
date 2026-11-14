@@ -7,10 +7,15 @@ import {
   failureLabel,
   formatCount,
   getException,
+  inProgressState,
+  inProgressText,
   invocationResources,
+  isInProgressSpan,
   isInvocationSpan,
   llmUsage,
   missingTraceNote,
+  NO_COMPLETION_EXPLANATION,
+  spanDeadlineMs,
   spanFailureKind,
   type LlmMessage,
   type LlmPart,
@@ -36,9 +41,12 @@ export interface FormatTraceOptions {
   maxTokens?: number;
   /** Characters per payload before trimming (default 300 for normal, 1000 for full). */
   payloadChars?: number;
+  /** Clock for in-progress invocations ("running for 2m 14s"); defaults to now. */
+  nowMs?: number;
 }
 
 interface Settings {
+  nowMs: number;
   payloads: "none" | "key" | "all";
   payloadChars: number;
   headers: boolean;
@@ -48,14 +56,14 @@ interface Settings {
   collapse: boolean;
 }
 
-function settingsFor(detail: Detail, payloadChars?: number): Settings {
+function settingsFor(detail: Detail, payloadChars?: number, nowMs = Date.now()): Settings {
   switch (detail) {
     case "summary":
-      return { payloads: "none", payloadChars: 0, headers: false, allLogs: false, logChars: 160, stackFrames: 2, collapse: true };
+      return { nowMs, payloads: "none", payloadChars: 0, headers: false, allLogs: false, logChars: 160, stackFrames: 2, collapse: true };
     case "full":
-      return { payloads: "all", payloadChars: payloadChars ?? 1000, headers: true, allLogs: true, logChars: 1000, stackFrames: 10, collapse: false };
+      return { nowMs, payloads: "all", payloadChars: payloadChars ?? 1000, headers: true, allLogs: true, logChars: 1000, stackFrames: 10, collapse: false };
     default:
-      return { payloads: "key", payloadChars: payloadChars ?? 300, headers: false, allLogs: true, logChars: 300, stackFrames: 4, collapse: true };
+      return { nowMs, payloads: "key", payloadChars: payloadChars ?? 300, headers: false, allLogs: true, logChars: 300, stackFrames: 4, collapse: true };
   }
 }
 
@@ -82,7 +90,7 @@ function hasStatusAtLeast400(span: Span) {
   return Number(span.attributes["http.response.status_code"] ?? 0) >= 400;
 }
 
-function header(trace: Trace, spans: Span[]): Line[] {
+function header(trace: Trace, spans: Span[], nowMs: number): Line[] {
   const root = rootInvocation(spans);
   const { start, end } = traceBounds(spans);
   const failed = spans.some((s) => s.status_code === "ERROR");
@@ -97,13 +105,16 @@ function header(trace: Trace, spans: Span[]): Line[] {
   const a = root.attributes;
   const kind = spanFailureKind(root);
   const res = invocationResources(root);
+  const inProgress = isInProgressSpan(root);
+  const deadline = spanDeadlineMs(root);
   const first = [
     root.name,
-    triggerText(root),
+    !inProgress && triggerText(root),
     a["faas.coldstart"] === "true" ? "cold start" : "warm",
-    ms(root.duration_ms),
-    root.status_code === "ERROR" ? (kind ? `ERROR (${failureLabel(kind)})` : "ERROR") : failed ? "ok (with failed calls)" : "ok",
-  ];
+    ...(inProgress
+      ? [inProgressText(Date.parse(root.start), deadline, nowMs)]
+      : [ms(root.duration_ms), root.status_code === "ERROR" ? (kind ? `ERROR (${failureLabel(kind)})` : "ERROR") : failed ? "ok (with failed calls)" : "ok"]),
+  ].filter(Boolean);
   const memory =
     res.memoryUsedMb !== null && `${res.memoryUsedMb} MB used${res.memoryLimitMb !== null ? ` of ${res.memoryLimitMb} MB` : ""}`;
   const second = [
@@ -123,6 +134,17 @@ function header(trace: Trace, spans: Span[]): Line[] {
   ];
   const note = missingTraceNote(kind, a["ivy.synthetic"] === "true");
   if (note) lines.push({ text: `(${note})`, keep: true });
+  if (inProgress) {
+    const state = inProgressState(deadline, nowMs);
+    const due = deadline === null ? "" : `deadline ${new Date(deadline).toISOString()}; `;
+    lines.push({
+      text:
+        state === "running"
+          ? `(${due}the handler's spans arrive when it finishes)`
+          : `(${due}${NO_COMPLETION_EXPLANATION})`,
+      keep: true,
+    });
+  }
   const dropped = droppedSpans(a);
   const collapsed = collapsedCalls(a);
   const volume = [
@@ -204,7 +226,7 @@ function render(trace: Trace, settings: Settings): Line[] {
   const spans = trace.spans;
   const { start } = traceBounds(spans);
   const offset = (at: number) => `+${ms(at - start)}`;
-  const lines: Line[] = [...header(trace, spans), { text: "" }];
+  const lines: Line[] = [...header(trace, spans, settings.nowMs), { text: "" }];
 
   const visit = (node: TraceNode, depth: number) => {
     const { span } = node;
@@ -308,7 +330,7 @@ export function formatTrace(trace: Trace, options: FormatTraceOptions = {}): str
   if (!trace.spans.length) return `trace ${trace.trace_id}: no spans`;
   const detail = options.detail ?? "normal";
   const maxTokens = options.maxTokens ?? 2000;
-  let settings = settingsFor(detail, options.payloadChars);
+  let settings = settingsFor(detail, options.payloadChars, options.nowMs);
   let lines = render(trace, settings);
   const over = () => maxTokens > 0 && estimateTokens(join(lines)) > maxTokens;
 
@@ -316,7 +338,7 @@ export function formatTrace(trace: Trace, options: FormatTraceOptions = {}): str
     settings = { ...settings, payloadChars: Math.floor(settings.payloadChars / 2), headers: false };
     lines = render(trace, settings);
   }
-  if (over() && detail !== "summary") lines = render(trace, settingsFor("summary"));
+  if (over() && detail !== "summary") lines = render(trace, settingsFor("summary", undefined, settings.nowMs));
   if (over()) lines = fit(lines, maxTokens);
   return join(lines);
 }

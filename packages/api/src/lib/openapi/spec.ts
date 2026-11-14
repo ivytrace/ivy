@@ -23,10 +23,11 @@ const range = [
 const fn = query('function', 'Exact function name.');
 const invocationFilters = [
   fn,
-  query('status', 'Only ok or error.', { type: 'string', enum: ['ok', 'error'] }),
+  query('status', 'Only ok, error or in_progress (still running).', { type: 'string', enum: ['ok', 'error', 'in_progress'] }),
   query('q', 'Free text: request ID or trace ID (exact), or text in the error message or HTTP path.'),
   query('limit', 'Page size.', { type: 'integer', minimum: 1, maximum: 500, default: 50 }),
   query('cursor', 'Opaque cursor from next_cursor.'),
+  query('ids', 'Comma-separated span IDs (up to 100): only these invocations, in their current state (the final row once it arrived). Used by Live to refresh in-progress rows.'),
 ];
 const accountId = path('id', 'Connection ID (not the AWS account ID).');
 const ws = path('workspace', 'Workspace slug or ID.');
@@ -77,6 +78,7 @@ export const openApiDocument = {
     { name: 'Projects', description: 'Projects and their ingest keys.' },
     { name: 'Traces', description: 'Functions, invocations, traces, errors and stats, per project (or workspace-wide).' },
     { name: 'Auto-trace', description: 'AWS account connections, opt-in tracing rules and the state of their functions (auto-trace.md).' },
+    { name: 'Alerts', description: 'Slack alerts per project, the weekly email digest and your notification settings (alerts.md).' },
     { name: 'Meta', description: 'Health, configuration and this document.' },
   ],
   paths: {
@@ -288,6 +290,79 @@ export const openApiDocument = {
           query('download', '1 adds content-disposition: attachment.'),
         ],
         responses: { 200: { description: 'Template', content: { 'text/yaml': { schema: { type: 'string' } } } }, ...notFound },
+      },
+    },
+    '/api/me/notifications': {
+      get: {
+        tags: ['Alerts'], summary: 'Your digest subscription per workspace', operationId: 'getNotifications',
+        responses: { 200: json(ref('Notifications')), 403: error('Auth is off') },
+      },
+      put: {
+        tags: ['Alerts'], summary: 'Subscribe to or unsubscribe from a workspace\'s digest', operationId: 'updateNotifications',
+        requestBody: body('NotificationUpdate'),
+        responses: { 200: json(ref('NotificationItem')), ...bad, 403: error('Auth is off'), ...notFound },
+      },
+    },
+    '/api/w/{workspace}/p/{project}/alerts': {
+      get: {
+        tags: ['Alerts'], summary: 'Alert settings and Slack channels of the project', operationId: 'getAlerts',
+        parameters: [ws, prj], responses: { 200: json(ref('Alerts')), ...notFound },
+      },
+      put: {
+        tags: ['Alerts'], summary: 'Change the alert settings (owner)', operationId: 'updateAlerts',
+        description: 'Partial update. A message is sent when a group is first seen, then at most every `interval_minutes` or every `every_occurrences` occurrences, whichever comes first.',
+        parameters: [ws, prj], requestBody: body('AlertSettingsUpdate'), responses: { 200: json(ref('AlertSettings')), ...bad, ...owner, ...notFound },
+      },
+    },
+    '/api/w/{workspace}/p/{project}/alerts/slack/connect': {
+      post: {
+        tags: ['Alerts'], summary: 'Start "Add to Slack" (owner)', operationId: 'connectSlack',
+        description: 'Returns Slack\'s OAuth v2 authorize URL (scope `incoming-webhook`) with a signed state valid for 10 minutes, and sets a cookie that the callback checks.',
+        parameters: [ws, prj], responses: { 200: json(object({ url: { type: 'string' } })), ...owner, ...notFound, 409: error('Slack is not configured') },
+      },
+    },
+    '/api/w/{workspace}/p/{project}/alerts/slack/{id}': {
+      delete: {
+        tags: ['Alerts'], summary: 'Remove a Slack channel (owner)', operationId: 'removeSlackChannel',
+        parameters: [ws, prj, path('id', 'Channel ID (slk_…).')], responses: { 200: json(object({ removed: { type: 'boolean' } })), ...owner, ...notFound },
+      },
+    },
+    '/api/w/{workspace}/p/{project}/alerts/slack/{id}/test': {
+      post: {
+        tags: ['Alerts'], summary: 'Send a test message (owner)', operationId: 'testSlackChannel',
+        parameters: [ws, prj, path('id', 'Channel ID (slk_…).')],
+        responses: { 200: json(ref('SlackTestResult')), ...owner, ...notFound, 409: error('Slack is not configured') },
+      },
+    },
+    '/api/slack/oauth/callback': {
+      get: {
+        tags: ['Alerts'], summary: 'Slack OAuth redirect', operationId: 'slackOAuthCallback', security: PUBLIC,
+        description: 'Checks the signed state and the cookie from connect, exchanges the code (oauth.v2.access), stores the webhook encrypted and redirects to the project\'s alert settings with `?slack=connected|denied|error`.',
+        parameters: [query('code', 'From Slack.'), query('state', 'From connect.'), query('error', 'From Slack when the user cancelled.')],
+        responses: { 302: { description: 'Back to the alert settings' }, 400: { description: 'HTML page', content: { 'text/html': { schema: { type: 'string' } } } }, 409: { description: 'HTML page', content: { 'text/html': { schema: { type: 'string' } } } } },
+      },
+    },
+    '/api/w/{workspace}/digest': {
+      get: { tags: ['Alerts'], summary: 'The weekly email digest of the workspace', operationId: 'getDigest', parameters: [ws], responses: { 200: json(ref('Digest')), ...notFound } },
+      put: {
+        tags: ['Alerts'], summary: 'Switch the digest on or off (owner)', operationId: 'updateDigest', parameters: [ws],
+        requestBody: body('DigestUpdate'), responses: { 200: json(ref('DigestUpdate')), ...bad, ...owner, ...notFound },
+      },
+    },
+    '/api/w/{workspace}/digest/preview': {
+      get: {
+        tags: ['Alerts'], summary: 'Preview the digest (the last seven days)', operationId: 'previewDigest',
+        parameters: [ws], responses: { 200: json(ref('DigestPreview')), ...notFound },
+      },
+    },
+    '/api/digest/unsubscribe': {
+      get: {
+        tags: ['Alerts'], summary: 'Unsubscribe page (link in the digest)', operationId: 'getUnsubscribe', security: PUBLIC,
+        parameters: [query('token', 'Signed token from the email.')], responses: { 200: { description: 'HTML page', content: { 'text/html': { schema: { type: 'string' } } } }, 400: { description: 'HTML page', content: { 'text/html': { schema: { type: 'string' } } } } },
+      },
+      post: {
+        tags: ['Alerts'], summary: 'Unsubscribe (also RFC 8058 one-click)', operationId: 'unsubscribe', security: PUBLIC,
+        parameters: [query('token', 'Signed token from the email.')], responses: { 200: { description: 'HTML page', content: { 'text/html': { schema: { type: 'string' } } } }, 400: { description: 'HTML page', content: { 'text/html': { schema: { type: 'string' } } } } },
       },
     },
     '/api/aws/events': {

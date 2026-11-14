@@ -34,13 +34,16 @@ export const invocationsLink = (s: Scope, filters: { function?: string; status?:
 
 export const errorsLink = (s: Scope, fn?: string) => `${pageLink(s, "errors")}${fn ? `?function=${enc(fn)}` : ""}`;
 
-export type SettingsSection = "general" | "members" | "projects" | "aws" | "usage";
+export type SettingsSection = "general" | "members" | "projects" | "aws" | "usage" | "alerts" | "digest" | "notifications";
 
 export const settingsLink = (workspace: string, section: SettingsSection = "general") => `/w/${enc(workspace)}/settings/${section}`;
 
 export const awsAccountsLink = (workspace: string) => settingsLink(workspace, "aws");
 
 export const accountLink = (workspace: string, id: string) => `${awsAccountsLink(workspace)}/${enc(id)}`;
+
+/** A project's alert settings (Slack). */
+export const alertsLink = (workspace: string, project?: string) => `${settingsLink(workspace, "alerts")}${project ? `/${enc(project)}` : ""}`;
 
 /** The workspace's usage and billing page (also where ingest's 429 message points). */
 export const usageLink = (workspace: string) => settingsLink(workspace, "usage");

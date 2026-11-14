@@ -90,7 +90,8 @@ describe('ClickHouse access in the API source', () => {
     const users = files.filter((f) => /crossTenantQuery\s*[<(]/.test(readFileSync(f, 'utf8'))).map(rel).sort();
     // Each of these is reviewed: API key lookup and the tenant directory (tenancy/store), the
     // background sync and EventBridge secret lookup (aws/store), the internal API's list of every
-    // workspace's limits and monthly traces for billing (limits/store, limits/usage).
-    expect(users).toEqual(['lib/aws/store.ts', 'lib/clickhouse/scoped.ts', 'lib/limits/store.ts', 'lib/limits/usage.ts', 'lib/tenancy/store.ts']);
+    // workspace's limits and monthly traces for billing (limits/store, limits/usage), the alert
+    // evaluator's list of connected Slack channels and the job leases (alerts/store).
+    expect(users).toEqual(['lib/alerts/store.ts', 'lib/aws/store.ts', 'lib/clickhouse/scoped.ts', 'lib/limits/store.ts', 'lib/limits/usage.ts', 'lib/tenancy/store.ts']);
   });
 });

@@ -9,6 +9,8 @@ export interface MockOptions {
   usage?: MockUsage;
   /** Leave out billing.url from /api/config: no billing buttons (VITE_MOCK_NO_BILLING=1). */
   noBilling?: boolean;
+  /** Neither Slack nor email configured on the server: alerts settings explain why (VITE_MOCK_NO_ALERTS=1). */
+  noAlerts?: boolean;
 }
 
 export type MockUsage = "free" | "near" | "over" | "paid" | "unlimited";
@@ -249,7 +251,7 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
     quick_create: !options.noTemplate,
     events_url: null,
     public_url: null,
-    ingest_endpoint: "https://ingest.ivytrace.dev",
+    ingest_endpoint: "https://ingest.example.com",
     layer_sha256: "3f1c…",
     default_region: "eu-west-1",
     regions: REGIONS,

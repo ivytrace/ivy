@@ -156,6 +156,8 @@ try {
   // must show up anyway. The LLM case keeps 40 calls in full so that the 1 MB payload budget is hit.
   const importDdb = startContainer('import-ddb', 9113, 'import', 'index.handler', { IVY_DEBUG: '0' });
   const importLlm = startContainer('import-llm', 9114, 'import', 'index.handler', { IVY_DEBUG: '0', IVY_COLLAPSE_KEEP: '40' });
+  // A 7 s invocation: reported as in progress after IVY_INPROGRESS_AFTER_MS (5 s default), then replaced by the final span.
+  const long = startContainer('long', 9115, 'cjs', 'index.handler');
   const baseline = startContainer('baseline', 9106, 'cjs', 'index.handler', { AWS_LAMBDA_EXEC_WRAPPER: '', IVY_ENDPOINT: '' }, { layer: false });
 
   console.log('invoking…');
@@ -176,6 +178,9 @@ try {
   results.lateIntake = await invoke(lateIntake, apiGwV2);
   results.importDdb = await invoke(importDdb, { mode: 'dynamodb', items: 3000 });
   results.importLlm = await invoke(importLlm, { mode: 'llm', calls: 300 });
+  await invoke(long, {});
+  const longStarted = Date.now();
+  results.long = await invoke(long, { sleepMs: 7000 });
   for (const [k, r] of Object.entries(results)) console.log(`  ${k.padEnd(9)} ${String(r.ms).padStart(5)}ms  ${r.body.slice(0, 110)}`);
 
   check(JSON.parse(results.warm.body).statusCode === 200, 'handler result passed through unchanged');
@@ -215,7 +220,7 @@ try {
     console.log(`\nspans were sent to ${externalEndpoint}; check the collector / UI.`);
     await new Promise((r) => setTimeout(r, 3000));
   } else {
-    const roots = () => capture.spans().filter((s) => s.attributes.some((a) => a.key === 'ivy.invocation'));
+    const roots = () => capture.spans().filter((s) => s.attributes.some((a) => a.key === 'ivy.invocation') && !s.attributes.some((a) => a.key === 'ivy.in_progress'));
     const arrived = await capture.waitFor(() => roots().length >= 10, 20000);
     check(arrived, `received ${roots().length}/10+ invocation spans`);
     const spans = capture.spans();
@@ -313,6 +318,22 @@ try {
       const names = Object.entries(ddbChildren.reduce((m, s) => ({ ...m, [s.name + (s.status.code === 2 ? ' (error)' : '')]: (m[s.name + (s.status.code === 2 ? ' (error)' : '')] ?? 0) + 1 }), {}));
       console.log(`  import worker spans: ${names.map(([n, c]) => `${c}× ${n}`).join(', ')}`);
       console.log(`  import worker: ${ddbChildren.length} child spans for 3,002 calls; LLM import: ${llmChildren.length} child spans, ${Math.round(payloadBytes / 1024)} KB payloads`);
+    }
+    {
+      const ofLong = capture.spans().filter((s) => s.resource.attributes.some((a) => a.key === 'service.name' && a.value.stringValue === 'ivy-e2e-long'));
+      const provisional = ofLong.filter((s) => attr(s, 'ivy.in_progress') === true);
+      const finals = rootsBy('long').filter((s) => provisional[0] && attr(s, 'faas.invocation_id') === attr(provisional[0], 'faas.invocation_id'));
+      const p = provisional[0];
+      const at = p ? p.receivedAt - longStarted : -1;
+      check(provisional.length === 1 && at >= 4900 && at < 6500, `7 s invocation: one in-progress span, received ${at} ms after the invoke`);
+      check(
+        !!p && attr(p, 'ivy.invocation') === true && p.status.code === 0 && Number(attr(p, 'ivy.deadline_ms')) > longStarted && !attr(p, 'ivy.payload.request'),
+        'in-progress span: invocation marker, deadline, status unset, no payloads',
+      );
+      check(
+        finals.length === 1 && finals[0].traceId === p?.traceId && finals[0].spanId === p?.spanId && finals[0].receivedAt >= p.receivedAt && !!attr(finals[0], 'ivy.payload.response'),
+        `final span replaces it: same trace and span ID, one final invocation (${finals.length})`,
+      );
     }
     const timeoutRoot = rootsBy('timeout')[0];
     check(!!timeoutRoot && attr(timeoutRoot, 'error.type') === 'Timeout', 'timeout recorded with error.type=Timeout');
