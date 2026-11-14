@@ -1,0 +1,20 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`formatServiceGraph > folds repeated calls into one node and marks failures 1`] = `
+"Service graph of orders-processQueue (trace 6af84d4577aa88bb99cc00dd11ee22ff): 4 nodes, 3 edges
+SQS → orders-processQueue [Lambda, 96.3ms] ERROR
+orders-processQueue → checkout-orders [DynamoDB GetItem, 8 calls, 69.2ms]
+orders-processQueue → checkout-orders [DynamoDB UpdateItem, 12.9ms] ERROR
+Failed: orders-processQueue, checkout-orders"
+`;
+
+exports[`formatServiceGraph > lists the edges of a successful trace 1`] = `
+"Service graph of checkout-createOrder (trace 6af84ce61c2d3e4f5a6b7c8d9e0f1a2b): 8 nodes, 7 edges
+API Gateway → checkout-createOrder [Lambda, 269ms]
+checkout-createOrder → checkout-users [DynamoDB GetItem, 9.8ms]
+checkout-createOrder → checkout-carts [DynamoDB Query, 21.4ms]
+checkout-createOrder → api.stripe.com [HTTP POST, 141ms]
+checkout-createOrder → checkout-orders [DynamoDB PutItem, 13.1ms]
+checkout-createOrder → checkout-receipts-prod [S3 PutObject, 38.2ms]
+checkout-createOrder → order-events [SQS SendMessage, 16.4ms]"
+`;

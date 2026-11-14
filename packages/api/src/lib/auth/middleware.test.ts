@@ -199,7 +199,7 @@ describe('auth enabled', () => {
   });
 
   it('refuses tokens issued to unrelated clients', async () => {
-    const res = await get('/api/me', await sign({ client_id: 'brandwatcher' }));
+    const res = await get('/api/me', await sign({ client_id: 'other-app' }));
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: 'Access token was issued to another client' });
     expect((await get('/api/me', await sign({ client_id: undefined, azp: 'ivy-admin' }))).status).toBe(401);
@@ -218,6 +218,50 @@ describe('auth enabled', () => {
     expect((await verifyAccessToken(token, { audience: MCP })).agent?.clientId).toBe('agt_ivy_abc');
     expect((await get('/api/me', token)).status).toBe(401);
     await expect(verifyAccessToken(await sign({}), { audience: MCP })).rejects.toThrow('Invalid access token');
+  });
+
+  describe('MCP client tokens', () => {
+    const MCP = 'https://ivy.example.test/mcp';
+    const mcpToken = (claims: JWTPayload, audience = MCP) =>
+      new SignJWT(claims)
+        .setProtectedHeader({ alg: 'RS256', kid: 'k1', typ: 'at+jwt' })
+        .setIssuer(ISSUER)
+        .setAudience(audience)
+        .setSubject('idn_123')
+        .setExpirationTime('1h')
+        .sign(privateKey);
+
+    it('accepts a dynamically registered mcp_ client of this app and records it as the agent', async () => {
+      const token = await mcpToken({ client_id: 'mcp_8Hk2Lm', parent_client_id: CLIENT, client_name: 'Claude' });
+      const user = await verifyAccessToken(token, { audience: MCP, mcpClients: true });
+      expect(user).toMatchObject({ sub: 'idn_123', clientId: 'mcp_8Hk2Lm', agent: { clientId: 'mcp_8Hk2Lm', name: 'Claude' } });
+    });
+
+    it('accepts a client identified by a Client ID Metadata Document URL', async () => {
+      const url = 'https://claude.ai/oauth/mcp-oauth-client-metadata';
+      const token = await mcpToken({ client_id: url, parent_client_id: CLIENT, client_name: 'Claude' });
+      expect((await verifyAccessToken(token, { audience: MCP, mcpClients: true })).agent).toEqual({ clientId: url, name: 'Claude' });
+    });
+
+    it('refuses MCP clients of another app', async () => {
+      const token = await mcpToken({ client_id: 'mcp_8Hk2Lm', parent_client_id: 'other', client_name: 'Claude' });
+      await expect(verifyAccessToken(token, { audience: MCP, mcpClients: true })).rejects.toThrow('Access token was issued to another client');
+      const orphan = await mcpToken({ client_id: 'mcp_8Hk2Lm' });
+      await expect(verifyAccessToken(orphan, { audience: MCP, mcpClients: true })).rejects.toThrow('Access token was issued to another client');
+    });
+
+    it('refuses MCP tokens on /api', async () => {
+      const token = await mcpToken({ client_id: 'mcp_8Hk2Lm', parent_client_id: CLIENT });
+      const res = await get('/api/me', token);
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: 'Invalid access token' });
+    });
+
+    it('keeps /api strict about MCP clients even with the API audience', async () => {
+      const token = await mcpToken({ client_id: 'mcp_8Hk2Lm', parent_client_id: CLIENT }, AUDIENCE);
+      expect((await get('/api/me', token)).status).toBe(401);
+      await expect(verifyAccessToken(token)).rejects.toThrow('Access token was issued to another client');
+    });
   });
 
   it('caches discovery and keys', async () => {

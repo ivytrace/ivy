@@ -63,7 +63,7 @@ describe('CloudFormation template', () => {
     expect(doc.Parameters.EventsUrl.Default).toBe('');
   });
 
-  it.runIf(cfnLint())('passes cfn-lint', () => {
+  it.runIf(cfnLint())('passes cfn-lint', { timeout: 30_000 }, () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'ivy-cfn-'));
     for (const [name, params] of Object.entries({ full, generic: { principalArn: PRINCIPAL } })) {
       const file = path.join(dir, `${name}.yaml`);

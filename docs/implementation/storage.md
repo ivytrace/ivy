@@ -63,7 +63,7 @@ Span data lives in the `ivy` database (one per cell/shard, see `tenancy.md`); th
 
 ## Schema application
 
-The ClickHouse image runs `deploy/clickhouse/init.sh` on first start (empty volume only). The script fills in the
+The ClickHouse image runs `deploy/clickhouse/initdb/init.sh` on first start (empty volume only). The script fills in the
 retention days in `schema.sql` and applies it. Every statement is idempotent (`IF NOT EXISTS`, `OR REPLACE`, an
 `ALTER … MODIFY COLUMN` to the current definition), so re-running is safe and brings an existing volume up to date:
 `docker compose exec clickhouse /docker-entrypoint-initdb.d/init.sh`. `pnpm dev` runs it on every start.

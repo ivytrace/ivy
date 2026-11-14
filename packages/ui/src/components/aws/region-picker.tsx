@@ -60,7 +60,7 @@ export function RegionPicker({
                 )}
               >
                 <span className={cn("flex size-4 items-center justify-center rounded border", checked && "border-primary bg-primary")}>
-                  {checked && <Check className="size-3 text-white" />}
+                  {checked && <Check className="size-3 text-primary-foreground" />}
                 </span>
                 {region}
                 {region === locked && <span className="ml-auto font-sans text-xs text-muted-foreground">stack region</span>}
