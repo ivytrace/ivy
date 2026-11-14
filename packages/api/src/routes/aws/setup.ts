@@ -1,7 +1,8 @@
 import type { Context } from 'hono';
 import { principalArn } from '../../lib/aws/clients.js';
-import { cfnTemplateUrl, defaultRegion, eventsUrl, ingestConfig, publicUrl, syncIntervalMs } from '../../lib/aws/config.js';
+import { defaultRegion, eventsUrl, ingestConfig, publicUrl, syncIntervalMs } from '../../lib/aws/config.js';
 import { layerZip } from '../../lib/aws/lambda.js';
+import { quickCreateAvailable } from '../../lib/aws/publish.js';
 import { AWS_REGIONS } from '../../lib/aws/regions.js';
 import { tenantOf } from '../../lib/tenancy/context.js';
 import { serverSecret } from '../../lib/tenancy/secret-box.js';
@@ -20,7 +21,7 @@ export async function getAwsSetup(c: Context) {
 
   return c.json({
     principal_arn: principal,
-    template_url: cfnTemplateUrl(),
+    quick_create: await quickCreateAvailable(),
     events_url: eventsUrl(),
     public_url: publicUrl(),
     ingest_endpoint: ingest?.endpoint ?? null,

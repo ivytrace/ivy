@@ -3,7 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import { badRequest } from '../utils/http-error.js';
 import { membershipOf, tenantOf } from '../tenancy/context.js';
 import { listProjects } from '../tenancy/projects.js';
-import { principalArn } from './clients.js';
+import { quickCreate } from './publish.js';
 import { countFunctions, presentAccount, type Slugs } from './present.js';
 import { isRegion } from './regions.js';
 import { awsStore } from './store.js';
@@ -19,9 +19,14 @@ export async function projectSlugs(tenantId: string): Promise<Slugs> {
 /** Presents accounts with their function counts (one read of the workspace's functions). */
 export async function presentAccounts(c: Context, accounts: AwsAccount[]) {
   const tenant = tenantOf(c).id;
-  const [functions, principal, slugs] = await Promise.all([awsStore().listFunctions(tenant), principalArn(), projectSlugs(tenant)]);
+  const workspace = membershipOf(c).workspace;
+  const [functions, slugs, links] = await Promise.all([
+    awsStore().listFunctions(tenant),
+    projectSlugs(tenant),
+    Promise.all(accounts.map((a) => quickCreate(a, workspace))),
+  ]);
   const counts = countFunctions(functions, accounts);
-  return accounts.map((a) => presentAccount(a, principal, workspaceBasePath(c), slugs, counts.get(a.account_id)));
+  return accounts.map((a, i) => presentAccount(a, links[i], workspaceBasePath(c), slugs, counts.get(a.account_id)));
 }
 
 export async function loadAccount(c: Context): Promise<AwsAccount> {

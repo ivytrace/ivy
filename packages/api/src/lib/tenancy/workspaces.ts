@@ -1,6 +1,7 @@
 import { HTTPException } from 'hono/http-exception';
 import type { AuthUser } from '../auth/user.js';
 import { awsStore } from '../aws/store.js';
+import { notify } from '../hooks/run.js';
 import { forgetMemberships } from './members.js';
 import { forgetProjects } from './projects.js';
 import { DEFAULT_SHARD } from './shards.js';
@@ -31,8 +32,11 @@ export async function createWorkspace(user: AuthUser, input: { name?: unknown; s
   const workspace = await createTenant(name, DEFAULT_SHARD, undefined, slug);
   await tenancyStore().saveMember({ tenant_id: workspace.id, sub: user.sub, email: user.email ?? '', role: 'owner', created_at: Date.now() });
   forgetMemberships(user.sub);
+  notify('on-workspace-created', { workspace: workspaceRef(workspace), owner: { sub: user.sub, email: user.email ?? null } });
   return workspace;
 }
+
+export const workspaceRef = (w: TenantRecord) => ({ id: w.id, slug: w.slug, name: w.name });
 
 /** Renames a workspace or changes its slug. The default workspace keeps the slug `default`. */
 export async function updateWorkspace(workspace: TenantRecord, input: { name?: unknown; slug?: unknown }): Promise<TenantRecord> {

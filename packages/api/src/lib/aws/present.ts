@@ -1,7 +1,6 @@
-import { cfnTemplateUrl, eventsUrl } from './config.js';
+import type { QuickCreate } from './publish.js';
 import { isSyncing } from './scheduler.js';
 import { settingKey } from './sync.js';
-import { quickCreateUrl } from './template.js';
 import { TRACE_STATES, type AwsAccount, type FunctionSetting, type FunctionStatus, type ProjectRule, type TraceState } from './types.js';
 
 const isoOrNull = (ms: number) => (ms > 0 ? new Date(ms).toISOString() : null);
@@ -30,8 +29,7 @@ export function countFunctions(functions: FunctionStatus[], accounts: AwsAccount
   return out;
 }
 
-export function presentAccount(account: AwsAccount, principal: string | null, basePath: string, slugs: Slugs, counts?: AccountCounts) {
-  const templateUrl = cfnTemplateUrl();
+export function presentAccount(account: AwsAccount, quick: QuickCreate, basePath: string, slugs: Slugs, counts?: AccountCounts) {
   const allCounts = Object.fromEntries(TRACE_STATES.map((s) => [s, counts?.states[s] ?? 0])) as Record<TraceState, number>;
   return {
     id: account.id,
@@ -53,18 +51,8 @@ export function presentAccount(account: AwsAccount, principal: string | null, ba
     reviewed_at: isoOrNull(account.reviewed_at),
     syncing: isSyncing(account),
     counts: { ...allCounts, total: Object.values(allCounts).reduce((a, b) => a + b, 0), new: counts?.newAvailable ?? 0 },
-    quick_create_url: templateUrl
-      ? quickCreateUrl({
-          templateUrl,
-          region: account.stack_region,
-          stackName: account.stack_name,
-          principalArn: principal,
-          externalId: account.external_id,
-          roleName: roleNameOf(account),
-          eventsUrl: eventsUrl(),
-          eventSecret: account.event_secret,
-        })
-      : null,
+    quick_create_url: quick.url,
+    quick_create_error: quick.error,
     template_download_url: `${basePath}/aws/template.yaml?account=${encodeURIComponent(account.id)}&download=1`,
   };
 }

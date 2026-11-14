@@ -23,8 +23,6 @@ export async function ingestConfig(tenant: string, project?: string): Promise<In
   return { endpoint: endpoint.replace(/\/$/, ''), apiKey };
 }
 
-export const cfnTemplateUrl = () => env('IVY_CFN_TEMPLATE_URL') ?? null;
-
 export const publicUrl = () => env('IVY_PUBLIC_URL')?.replace(/\/$/, '') ?? null;
 
 /** EventBridge API destinations only call HTTPS endpoints, so events are only offered for an HTTPS public URL. */

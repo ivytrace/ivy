@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { parse } from 'yaml';
 import { appFor, resetTenancyForTests } from './lib/tenancy/testing.js';
 
 beforeEach(() => resetTenancyForTests());
@@ -7,7 +6,7 @@ beforeEach(() => resetTenancyForTests());
 describe('app', () => {
   it('returns config', async () => {
     const res = await (await appFor()).request('/api/config');
-    expect(await res.json()).toEqual({ version: '0.1.0', auth: { enabled: false }, workspaces: { multi: false }, email: { enabled: false } });
+    expect(await res.json()).toEqual({ version: '0.1.0', auth: { enabled: false }, workspaces: { multi: false }, email: { enabled: false }, aws: { quick_create: false } });
   });
 
   it('returns JSON 404 for unknown API paths', async () => {
@@ -40,12 +39,6 @@ describe('app with OIDC configured', () => {
     expect((await app.request('/api/w/default/p/default/functions')).status).toBe(401);
     expect((await app.request('/api/workspaces')).status).toBe(401);
     expect((await app.request('/api/w/default/aws/template.yaml')).status).toBe(401);
-    // The generic template is public and carries no per-connection values.
-    const generic = await app.request('/api/aws/template.yaml');
-    expect(generic.status).toBe(200);
-    const doc = parse(await generic.text());
-    for (const p of ['ExternalId', 'EventsUrl', 'EventSecret']) expect(doc.Parameters[p].Default ?? '').toBe('');
-    expect(doc.Parameters.EventSecret.NoEcho).toBe(true);
     expect((await app.request('/api/nope')).status).toBe(401);
     const config = await app.request('/api/config');
     expect((await config.json()).auth).toMatchObject({ enabled: true, clientId: 'ivy', audience: 'ivy' });

@@ -8,8 +8,6 @@ export const PUBLIC_ROUTES = [
   'GET /api/config',
   // EventBridge API destination, authenticated by the per-connection x-ivy-event-secret header
   'POST /api/aws/events',
-  // The generic CloudFormation template (no per-connection values), fetched by deploys to publish it to S3
-  'GET /api/aws/template.yaml',
 ];
 
 export const isPublicRoute = (method: string, path: string) =>

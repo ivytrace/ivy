@@ -15,9 +15,9 @@ const sub = (s: string) => ({ 'Fn::Sub': s });
 const ref = (name: string) => ({ Ref: name });
 
 /**
- * CloudFormation template for a connected account. Defaults are filled in from `params` so a
- * downloaded template can be uploaded in the console without typing anything; the quick-create
- * link passes the same values as `param_*` query parameters.
+ * CloudFormation template for a connected account. Defaults are filled in from `params` so the
+ * template can be uploaded in the console (or opened from a quick-create link) without typing
+ * anything. The event secret parameter is NoEcho.
  */
 export function buildTemplate(params: TemplateParams): Record<string, unknown> {
   const withDefault = (def: Record<string, unknown>, value: string | null | undefined) =>
@@ -180,27 +180,17 @@ export function templateYaml(params: TemplateParams): string {
 }
 
 export interface QuickCreateParams {
+  /** Where CloudFormation fetches the connection's pre-filled template (from the publish-cfn-template hook). */
   templateUrl: string;
   region: string;
   stackName: string;
-  principalArn: string | null;
-  externalId: string;
-  roleName: string;
-  eventsUrl: string | null;
-  eventSecret: string;
 }
 
+/**
+ * Quick-create link for a published, pre-filled template. All values are defaults inside the
+ * template, so the link carries no parameters, and in particular no secret.
+ */
 export function quickCreateUrl(p: QuickCreateParams): string {
-  const query = new URLSearchParams({
-    templateURL: p.templateUrl,
-    stackName: p.stackName,
-    param_ExternalId: p.externalId,
-    param_RoleName: p.roleName,
-  });
-  if (p.principalArn) query.set('param_TrustedPrincipalArn', p.principalArn);
-  if (p.eventsUrl) {
-    query.set('param_EventsUrl', p.eventsUrl);
-    query.set('param_EventSecret', p.eventSecret);
-  }
+  const query = new URLSearchParams({ templateURL: p.templateUrl, stackName: p.stackName });
   return `https://${p.region}.console.aws.amazon.com/cloudformation/home?region=${p.region}#/stacks/quickcreate?${query}`;
 }

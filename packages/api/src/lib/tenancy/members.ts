@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { readAuthConfig } from '../auth/config.js';
+import { notify } from '../hooks/run.js';
 import { authUser, type AuthUser } from '../auth/user.js';
 import type { Membership, WorkspaceAccess } from './context.js';
 import { DEFAULT_SHARD } from './shards.js';
@@ -84,13 +85,20 @@ async function ensurePersonalWorkspace(user: AuthUser): Promise<void> {
     run = (async () => {
       const store = tenancyStore();
       const id = personalTenantId(user.sub);
+      let created = null;
       if (!(await store.getTenant(id))) {
         const label = user.name || user.email?.split('@')[0] || 'personal';
         const slug = await uniqueSlug(slugify(label), async (s) => s === DEFAULT_TENANT || !!(await store.findTenantBySlug(s)));
-        await createTenant(user.email || user.name || user.sub, DEFAULT_SHARD, id, slug);
+        created = await createTenant(user.email || user.name || user.sub, DEFAULT_SHARD, id, slug);
       }
       await store.saveMember({ tenant_id: id, sub: user.sub, email: user.email ?? '', role: 'owner', created_at: Date.now() });
       forgetMemberships(user.sub);
+      if (created) {
+        notify('on-workspace-created', {
+          workspace: { id: created.id, slug: created.slug, name: created.name },
+          owner: { sub: user.sub, email: user.email ?? null },
+        });
+      }
     })().finally(() => creating.delete(user.sub));
     creating.set(user.sub, run);
   }

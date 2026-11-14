@@ -7,7 +7,7 @@ Errors are `{ "error": "…" }` with a 4xx/5xx status.
 ## Auth
 
 `auth.md`: with OIDC configured (`IVY_OIDC_ISSUER`), every `/api/*` route except `GET /api/health`,
-`GET /api/config`, `GET /api/aws/template.yaml` and `POST /api/aws/events` needs `Authorization: Bearer <access token>` (a JWT from the configured
+`GET /api/config` and `POST /api/aws/events` needs `Authorization: Bearer <access token>` (a JWT from the configured
 issuer, for `IVY_OIDC_AUDIENCE`, issued to the dashboard's client or one of its agents). Without it: 401
 `{ "error": "Authentication required" }`; invalid or expired: 401 with `WWW-Authenticate: Bearer error="invalid_token"`;
 provider unreachable: 503. Without OIDC configured nothing is checked.
@@ -54,17 +54,12 @@ the dashboard's (`/w/:workspace/:project/…`); and agents/MCP tools can build t
 { "version": "0.1.0",
   "auth": { "enabled": true, "issuer": "https://auth.includable.com", "clientId": "ivy", "audience": "https://ivytrace.dev/api", "scopes": "openid email profile offline_access" },
   "workspaces": { "multi": true },
-  "email": { "enabled": true } }
+  "email": { "enabled": true },
+  "aws": { "quick_create": true } }
 ```
 With auth off: `"auth": { "enabled": false }` and `"workspaces": { "multi": false }`. `email.enabled` is true when
-`IVY_SMTP_URL` and `IVY_EMAIL_FROM` are set (invitations are then also emailed).
-
-### `GET /api/aws/template.yaml`
-The generic CloudFormation template (`text/yaml`), public and free of secrets: every per-connection value is a
-parameter with no default (`ExternalId`, `EventsUrl`, `EventSecret` with `NoEcho: true`); `TrustedPrincipalArn`
-defaults to the server's principal and `RoleName` to a generic name. This is the file to publish to S3 as
-`IVY_CFN_TEMPLATE_URL`; each connection's quick-create link passes its values as `param_…`. `download=1` adds
-`content-disposition: attachment`.
+`IVY_SMTP_URL` and `IVY_EMAIL_FROM` are set (invitations are then also emailed). `aws.quick_create` is true when
+the `publish-cfn-template` hook is installed (see "Hosting hooks"); otherwise connecting AWS is download-only.
 
 ## Account-level routes
 
@@ -255,7 +250,7 @@ wrapper, or 5 layers), `error`, `pending` (waiting for server config, the layer,
 ### `GET /api/w/:workspace/aws/setup`
 Server-side configuration the connect flow needs.
 ```json
-{ "principal_arn": "arn:aws:iam::999999999999:role/ivy" | null, "template_url": "https://…/ivy-trace.yaml" | null,
+{ "principal_arn": "arn:aws:iam::999999999999:role/ivy" | null, "quick_create": true,
   "events_url": "https://ivy.example.com/api/aws/events" | null, "public_url": "…" | null,
   "ingest_endpoint": "https://ingest.example.com" | null, "layer_sha256": "…" | null,
   "default_region": "us-east-1", "regions": ["us-east-1", "…"], "sync_interval_seconds": 300,
@@ -263,15 +258,19 @@ Server-side configuration the connect flow needs.
 ```
 
 ### `GET /api/w/:workspace/aws/template.yaml`
-The template with `account=<connection id>`'s values (external ID, role name, events URL, event secret) filled in
-as parameter defaults, for the "download and upload in the console" fallback. Needs auth like every workspace
-route. Without `account` it is the generic template. `download=1` adds `content-disposition: attachment`.
+The CloudFormation template (`text/yaml`) with `account=<connection id>`'s values (trusted principal, external ID,
+role name, events URL, and the event secret as a `NoEcho` parameter) filled in as parameter defaults, so it can be
+uploaded in the CloudFormation console as is. Needs auth like every workspace route (it contains the event
+secret). Without `account` only the trusted principal is filled in. `download=1` adds
+`content-disposition: attachment`.
 
 ### `POST /api/w/:workspace/aws/accounts` (connect)
 Body: `{ "account_id": "123456789012", "name"?: "Production", "regions": ["eu-west-1"], "all_regions"?: false, "stack_region"?: "eu-west-1", "default_project"?: "checkout-prod" }`.
 The stack region is added to `regions`. `default_project` (slug or ID) is only the project the UI preselects when
-tracing this account's functions. 201 with the account (status `pending`), shaped as below; its
-`quick_create_url` opens the CloudFormation quick-create page with `external_id` and the role filled in. 409 if the
+tracing this account's functions. 201 with the account (status `pending`), shaped as below. With the
+`publish-cfn-template` hook, its `quick_create_url` opens the CloudFormation quick-create page for the connection's
+pre-filled template; without it (or when it fails) `quick_create_url` is null and the UI offers
+`template_download_url` plus upload steps. 409 if the
 AWS account is already connected to this workspace.
 
 ### `GET /api/w/:workspace/aws/accounts`, `GET /api/w/:workspace/aws/accounts/:id` (status)
@@ -285,10 +284,13 @@ AWS account is already connected to this workspace.
   "status": "pending" | "connected" | "error", "error": "…" | null,
   "created_at": "…", "verified_at": "…" | null, "last_sync_at": "…" | null, "reviewed_at": "…" | null, "syncing": false,
   "counts": { "traced": 12, "available": 30, "opted_out": 1, "unsupported": 3, "conflict": 1, "error": 0, "pending": 0, "total": 47, "new": 4 },
-  "quick_create_url": "https://eu-west-1.console.aws.amazon.com/cloudformation/home?…" | null,
+  "quick_create_url": "https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/quickcreate?templateURL=…&stackName=…" | null,
+  "quick_create_error": "Publishing the template failed: … Download the template and upload it in the CloudFormation console instead." | null,
   "template_download_url": "/api/w/acme/aws/template.yaml?account=…&download=1"
 } ] }
 ```
+`quick_create_url` never carries parameters (no external ID or secret in the link); everything is in the template
+behind `templateURL`. `quick_create_error` is set when the hook exists but failed.
 `counts.new`: available functions first seen after `reviewed_at` (the UI's "new untraced functions" badge).
 `error` on a connected account lists per-region sync errors, one per line.
 
@@ -407,7 +409,21 @@ can't be traced. Matches are against the functions found by each account's last 
 
 ### `POST /api/aws/events`
 EventBridge API destination target, authenticated with the `x-ivy-event-secret` header (per connection), not user
-auth, so it is not under a workspace (see also the public `GET /api/aws/template.yaml` above). Syncs the event's region. 202, or 401/403.
+auth, so it is not under a workspace. Syncs the event's region. 202, or 401/403.
+
+## Hosting hooks
+
+Deployment-specific behaviour is added with executable hooks in `IVY_HOOKS_DIR`, not with API calls. The normative
+contract (envelope, kinds, timeouts, environment, payload types) is `hooks.md`. Current hooks:
+
+| hook | kind | data → result | effect on the API |
+|---|---|---|---|
+| `publish-cfn-template` | provider | `{ workspace, connection, template }` → `{ url, expires_at? }` | `aws.quick_create` in `/api/config`; `quick_create_url` / `quick_create_error` on accounts |
+| `on-workspace-created` | notification | `{ workspace, owner }` | none (e.g. hosted applies plan limits) |
+| `on-member-joined` | notification | `{ workspace, member, invitation_id, invited_by }` | none |
+| `on-aws-account-connected` | notification | `{ workspace, connection }` | none |
+
+Public Ivy has no plans or limits; a workspace without a limits record is unlimited.
 
 ## Ingest (separate service, port 4318)
 

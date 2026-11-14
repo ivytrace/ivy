@@ -3,6 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import type { AuthUser } from '../auth/user.js';
 import type { VerifiedEmail } from '../auth/userinfo.js';
 import { emailEnabled, sendEmail } from '../email/send.js';
+import { notify } from '../hooks/run.js';
 import { hashKey, newInvitationId } from './ids.js';
 import { forgetMemberships } from './members.js';
 import { tenancyStore, type InvitationRecord, type MemberRole, type TenantRecord } from './store.js';
@@ -145,6 +146,14 @@ export async function acceptInvitation(token: string, user: AuthUser, email: Ver
   await store.saveInvitation({ ...invitation, accepted_at: Date.now(), accepted_by: user.sub });
   await store.saveMember({ tenant_id: workspace.id, sub: user.sub, email: email.email, role, created_at: existing?.created_at ?? Date.now() });
   forgetMemberships(user.sub);
+  if (!existing) {
+    notify('on-member-joined', {
+      workspace: { id: workspace.id, slug: workspace.slug, name: workspace.name },
+      member: { sub: user.sub, email: email.email, role },
+      invitation_id: invitation.id,
+      invited_by: invitation.invited_by ? { sub: invitation.invited_by, email: invitation.invited_by_email || null } : null,
+    });
+  }
   return { workspace, role };
 }
 

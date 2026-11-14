@@ -1,0 +1,35 @@
+#!/usr/bin/env node
+// Example provider hook for self-hosting: writes the connection's CloudFormation template into a
+// directory that a web server (e.g. nginx) serves, and returns its URL. See docs/implementation/hooks.md.
+//
+//   HOOK_CFN_DIR=/srv/cfn                       where to write templates (served by nginx)
+//   HOOK_CFN_BASE_URL=https://cfn.example.com   the public URL of that directory
+//
+// Note: CloudFormation's quick-create page only loads templates from Amazon S3 URLs, so for real
+// quick-create links publish to S3 instead, e.g. with the AWS CLI (the hook gets AWS_* variables):
+//   aws s3 cp - s3://BUCKET/KEY  and  aws s3 presign s3://BUCKET/KEY --expires-in 3600
+// The template contains the connection's event secret, so use unguessable names and short-lived URLs.
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+const event = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+if (event.version !== 1 || event.hook !== 'publish-cfn-template') {
+  console.error(`unexpected event ${event.hook} v${event.version}`);
+  process.exit(1);
+}
+
+const dir = process.env.HOOK_CFN_DIR;
+const base = process.env.HOOK_CFN_BASE_URL?.replace(/\/$/, '');
+if (!dir || !base) {
+  console.error('set HOOK_CFN_DIR and HOOK_CFN_BASE_URL');
+  process.exit(1);
+}
+mkdirSync(dir, { recursive: true });
+const name = `${event.data.connection.id}-${randomBytes(16).toString('hex')}.yaml`;
+writeFileSync(path.join(dir, name), event.data.template, { mode: 0o644 });
+const expires = new Date(Date.now() + 60 * 60_000).toISOString();
+console.error(`published ${name} for ${event.data.workspace.slug}`);
+process.stdout.write(JSON.stringify({ version: 1, result: { url: `${base}/${name}`, expires_at: expires } }));

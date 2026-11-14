@@ -8,12 +8,16 @@ import {
 import { GetResourcesCommand, ResourceGroupsTaggingAPIClient } from '@aws-sdk/client-resource-groups-tagging-api';
 import { AssumeRoleCommand, GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
 import { mockClient } from 'aws-sdk-client-mock';
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
 import type { createApp } from '../../app.js';
 import { resetAwsClientsForTests } from '../../lib/aws/clients.js';
 import { resetLayerCacheForTests, setLayerZipForTests } from '../../lib/aws/lambda.js';
 import { memoryStore } from '../../lib/aws/memory-store.js';
+import { clearQuickCreateCacheForTests } from '../../lib/aws/publish.js';
 import { syncInProgress } from '../../lib/aws/scheduler.js';
 import { setAwsStore } from '../../lib/aws/store.js';
 import { appFor, DEFAULT_PROJECT, resetTenancyForTests } from '../../lib/tenancy/testing.js';
@@ -34,6 +38,16 @@ const CREDS = {
 };
 
 let mem: ReturnType<typeof memoryStore>;
+let hooks = '';
+
+/** A publish-cfn-template hook in a fresh hooks directory. */
+function publishHook(body: string) {
+  hooks = mkdtempSync(path.join(tmpdir(), 'ivy-hooks-'));
+  const file = path.join(hooks, 'publish-cfn-template');
+  writeFileSync(file, `#!/bin/sh\n${body}\n`);
+  chmodSync(file, 0o755);
+  vi.stubEnv('IVY_HOOKS_DIR', hooks);
+}
 
 const json = (body: unknown, method = 'POST') => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const req = async (path: string, init?: RequestInit) => (await app.request(path, init)).json() as Promise<Record<string, any>>;
@@ -61,6 +75,7 @@ const stackTag = (name: string, stack: string) => ({ ResourceARN: fnArn(name), T
 beforeEach(async () => {
   await resetTenancyForTests();
   app = await appFor();
+  hooks = path.join(tmpdir(), 'ivy-no-hooks');
   lambda.reset();
   tagging.reset();
   sts.reset();
@@ -70,7 +85,8 @@ beforeEach(async () => {
   mem = memoryStore();
   setAwsStore(mem.store);
   vi.stubEnv('IVY_AWS_PRINCIPAL_ARN', 'arn:aws:iam::999999999999:role/ivy');
-  vi.stubEnv('IVY_CFN_TEMPLATE_URL', 'https://bucket.s3.amazonaws.com/ivy-trace.yaml');
+  vi.stubEnv('IVY_HOOKS_DIR', hooks);
+  clearQuickCreateCacheForTests();
   vi.stubEnv('IVY_INGEST_PUBLIC_URL', 'https://ingest.example.com');
   vi.stubEnv('IVY_INGEST_API_KEY', 'ingest-key');
   vi.stubEnv('IVY_PUBLIC_URL', 'https://ivy.example.com');
@@ -105,16 +121,15 @@ describe('AWS account routes', () => {
     expect(body.issues[0]).toContain('IVY_INGEST_PUBLIC_URL');
   });
 
-  it('creates a pending connection with a quick-create link and unique external ID', async () => {
+  it('creates a pending connection with a unique external ID, download-only without the publish hook', async () => {
     const a = await connect();
+    expect(a).toMatchObject({ quick_create_url: null, quick_create_error: null });
+    expect((await req('/api/config')).aws).toEqual({ quick_create: false });
     const b = await req(`${W}/accounts`, json({ account_id: '210987654321', all_regions: true, stack_region: 'us-east-1', default_project: 'default' }));
     expect(a).toMatchObject({ status: 'pending', account_id: ACCOUNT_ID, regions: ['eu-west-1'], stack_region: 'eu-west-1', name: 'Prod', default_project: null });
     expect(a.external_id).toMatch(/^ivy-[0-9a-f]{32}$/);
     expect(a.external_id).not.toBe(b.external_id);
     expect(a.role_arn).toMatch(new RegExp(`^arn:aws:iam::${ACCOUNT_ID}:role/IvyTrace-[0-9a-f]{8}$`));
-    const params = new URLSearchParams(a.quick_create_url.split('?').pop());
-    expect(params.get('param_ExternalId')).toBe(a.external_id);
-    expect(params.get('param_EventsUrl')).toBe('https://ivy.example.com/api/aws/events');
     expect(b).toMatchObject({ all_regions: true, regions: [], stack_region: 'us-east-1', default_project: 'default', default_project_id: DEFAULT_PROJECT });
   });
 
@@ -126,10 +141,39 @@ describe('AWS account routes', () => {
     expect((await app.request(`${W}/accounts`, json({ account_id: ACCOUNT_ID }))).status).toBe(409);
   });
 
-  it('has no quick-create link without a template URL, but a downloadable template', async () => {
-    vi.stubEnv('IVY_CFN_TEMPLATE_URL', '');
+  it('publishes the pre-filled template through the hook for a quick-create link without secrets', async () => {
+    publishHook(`cat > "${'$'}{0%/*}/event.json"; echo '{"version":1,"result":{"url":"https://ivy-cfn.s3.amazonaws.com/t.yaml?X-Amz-Signature=abc","expires_at":"2099-01-01T00:00:00Z"}}'`);
+    expect((await req('/api/config')).aws).toEqual({ quick_create: true });
+    const a = await connect();
+    const secret = (await mem.store.getAccount('default', a.id))!.event_secret;
+    expect(a.quick_create_error).toBeNull();
+    const url = new URL(a.quick_create_url);
+    const params = new URLSearchParams(url.hash.split('?')[1]);
+    expect(params.get('templateURL')).toBe('https://ivy-cfn.s3.amazonaws.com/t.yaml?X-Amz-Signature=abc');
+    expect([...params.keys()].sort()).toEqual(['stackName', 'templateURL']);
+    expect(a.quick_create_url).not.toContain(secret);
+    expect(a.quick_create_url).not.toContain(a.external_id);
+    // The hook got the connection's template with everything filled in.
+    const { readFileSync } = await import('node:fs');
+    const event = JSON.parse(readFileSync(path.join(hooks, 'event.json'), 'utf8'));
+    expect(event.data.connection).toMatchObject({ id: a.id, account_id: ACCOUNT_ID, stack_name: a.stack_name });
+    const tpl = parse(event.data.template);
+    expect(tpl.Parameters.ExternalId.Default).toBe(a.external_id);
+    expect(tpl.Parameters.EventSecret).toMatchObject({ Default: secret, NoEcho: true });
+  });
+
+  it('falls back to download-only with a message when the hook fails', async () => {
+    publishHook('echo boom >&2; exit 1');
     const a = await connect();
     expect(a.quick_create_url).toBeNull();
+    expect(a.quick_create_error).toContain('Publishing the template failed');
+    publishHook(`echo '{"version":1,"result":{"url":"http://not-https"}}'`);
+    clearQuickCreateCacheForTests();
+    expect((await req(`${W}/accounts/${a.id}`)).quick_create_error).toContain('no https URL');
+  });
+
+  it('serves the pre-filled template for download', async () => {
+    const a = await connect();
     expect(a.template_download_url).toMatch(/^\/api\/w\/default\/aws\/template\.yaml\?account=/);
     const res = await app.request(a.template_download_url);
     expect(res.headers.get('content-disposition')).toContain('attachment');
