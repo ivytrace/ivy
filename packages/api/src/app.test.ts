@@ -35,6 +35,7 @@ describe('app with OIDC configured', () => {
   it('requires a token on data routes but not on config', async () => {
     vi.stubEnv('IVY_OIDC_ISSUER', 'https://auth.example.test');
     vi.stubEnv('IVY_OIDC_CLIENT_ID', 'ivy');
+    vi.stubEnv('IVY_PUBLIC_URL', 'https://ivy.example.com');
     const app = await appFor();
     expect((await app.request('/api/w/default/p/default/functions')).status).toBe(401);
     expect((await app.request('/api/workspaces')).status).toBe(401);

@@ -1,0 +1,12 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`list formatters > renders error groups 1`] = `
+"42× checkout-createOrder · TypeError: Cannot read properties of undefined (reading 'id') · first 2026-11-14T08:12:44Z · last 2026-11-14T12:00:00Z · sample trace 6af84d409a1b2c3d4e5f60718293a4b5
+7× orders-processQueue · ConditionalCheckFailedException: The conditional request failed · first 2026-11-14T10:01:02Z · last 2026-11-14T12:00:05Z · sample trace 6af84d4577aa88bb99cc00dd11ee22ff"
+`;
+
+exports[`list formatters > renders one line per invocation 1`] = `
+"2026-11-14T12:00:00Z ERROR checkout-createOrder 212ms cold POST /orders → 500 · TypeError: Cannot read properties of undefined (reading 'id') · trace 6af84d409a1b2c3d4e5f60718293a4b5
+2026-11-14T12:00:05Z ERROR orders-processQueue 96.3ms sqs · ConditionalCheckFailedException: The conditional request failed · trace 6af84d4577aa88bb99cc00dd11ee22ff
+2026-11-14T11:58:30Z ok checkout-createOrder 269ms POST /orders → 201 · trace 6af84ce61c2d3e4f5a6b7c8d9e0f1a2b"
+`;

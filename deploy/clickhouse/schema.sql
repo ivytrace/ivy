@@ -187,7 +187,6 @@ CREATE TABLE IF NOT EXISTS ivy_control.tenants
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY id;
-ALTER TABLE ivy_control.tenants ADD COLUMN IF NOT EXISTS `slug` String DEFAULT '' AFTER `id`;
 
 -- Projects group a workspace's functions and own its ingest keys. `slug` is unique per workspace.
 -- Every workspace has a project whose ID is derived from the tenant ID (its default project):
@@ -207,8 +206,7 @@ ORDER BY (tenant_id, id);
 
 -- Keys are stored as sha256(key) plus a display prefix. `encrypted_key` is only set for keys Ivy
 -- hands out itself (the per-tenant auto-trace key), encrypted with IVY_SECRET_KEY.
--- Keys belong to a project; an empty `project_id` (keys from before projects) means the workspace's
--- default project.
+-- Keys belong to a project; an empty `project_id` means the workspace's default project.
 CREATE TABLE IF NOT EXISTS ivy_control.api_keys
 (
     `tenant_id` String,
@@ -226,7 +224,6 @@ CREATE TABLE IF NOT EXISTS ivy_control.api_keys
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, id);
-ALTER TABLE ivy_control.api_keys ADD COLUMN IF NOT EXISTS `project_id` String DEFAULT '' AFTER `tenant_id`;
 
 -- Who can use a tenant: the OIDC subject (`sub`) of a signed-in user (docs/implementation/auth.md).
 -- Looked up by `sub` on sign-in, hence the bloom filter.
@@ -278,6 +275,7 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_accounts
     `event_secret` String,
     `stack_name` String,
     `stack_region` LowCardinality(String),
+    -- The project the UI preselects; `reviewed_at`: functions first seen after it count as "new".
     `default_project_id` String DEFAULT '',
     `reviewed_at` DateTime64(3, 'UTC') DEFAULT 0,
     `regions` Array(LowCardinality(String)),
@@ -322,6 +320,8 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_function_settings
     `account_id` String,
     `region` LowCardinality(String),
     `function_name` String,
+    -- The manual choice: `mode` '' (follow the rules), 'trace' (into `project_id`) or 'exclude'.
+    -- `tracing_enabled` (false = exclude) is kept for rows written before modes existed.
     `tracing_enabled` Bool,
     `mode` LowCardinality(String) DEFAULT '',
     `project_id` String DEFAULT '',
@@ -329,23 +329,6 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_function_settings
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, account_id, region, function_name);
-
--- Columns added with workspaces/projects and opt-in auto-trace (no-ops on a fresh volume).
--- `default_project_id`: the project the UI preselects for this account. `reviewed_at`: functions
--- first seen after it count as "new" in the UI.
-ALTER TABLE ivy_control.aws_accounts ADD COLUMN IF NOT EXISTS `default_project_id` String DEFAULT '' AFTER `stack_region`;
-ALTER TABLE ivy_control.aws_accounts ADD COLUMN IF NOT EXISTS `reviewed_at` DateTime64(3, 'UTC') DEFAULT 0 AFTER `default_project_id`;
-ALTER TABLE ivy_control.aws_functions ADD COLUMN IF NOT EXISTS `project_id` String DEFAULT '' AFTER `reason`;
-ALTER TABLE ivy_control.aws_functions ADD COLUMN IF NOT EXISTS `project_source` LowCardinality(String) DEFAULT '' AFTER `project_id`;
-ALTER TABLE ivy_control.aws_functions ADD COLUMN IF NOT EXISTS `rule_id` String DEFAULT '' AFTER `project_source`;
-ALTER TABLE ivy_control.aws_functions ADD COLUMN IF NOT EXISTS `stack` String DEFAULT '' AFTER `rule_id`;
-ALTER TABLE ivy_control.aws_functions ADD COLUMN IF NOT EXISTS `tags` Map(String, String) DEFAULT map() AFTER `stack`;
-ALTER TABLE ivy_control.aws_functions ADD COLUMN IF NOT EXISTS `last_modified` String DEFAULT '' AFTER `tags`;
-ALTER TABLE ivy_control.aws_functions ADD COLUMN IF NOT EXISTS `first_seen_at` DateTime64(3, 'UTC') DEFAULT now64(3) AFTER `last_modified`;
--- The manual per-function choice: `mode` '' (follow the rules), 'trace' (into `project_id`) or
--- 'exclude'. Rows from before had only `tracing_enabled`; false there reads as 'exclude'.
-ALTER TABLE ivy_control.aws_function_settings ADD COLUMN IF NOT EXISTS `mode` LowCardinality(String) DEFAULT '' AFTER `tracing_enabled`;
-ALTER TABLE ivy_control.aws_function_settings ADD COLUMN IF NOT EXISTS `project_id` String DEFAULT '' AFTER `mode`;
 
 -- Auto-trace rules of a workspace (docs/implementation/auto-trace.md): which functions are traced,
 -- and into which project. Evaluated in `position` order, first enabled match wins. Every non-empty

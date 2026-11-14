@@ -1,7 +1,7 @@
 {
   "name": "ivy-trace",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "packageManager": "pnpm@10.12.1",
   "scripts": {
     "dev": "scripts/dev.sh",
@@ -11,7 +11,8 @@
     "typecheck": "pnpm -r typecheck",
     "up": "docker compose -f deploy/docker-compose.yml up --build",
     "down": "docker compose -f deploy/docker-compose.yml down",
-    "db:migrate": "docker compose -f deploy/docker-compose.yml exec -T clickhouse /docker-entrypoint-initdb.d/init.sh"
+    "db:migrate": "docker compose -f deploy/docker-compose.yml exec -T clickhouse /docker-entrypoint-initdb.d/init.sh",
+    "db:reset": "docker compose -f deploy/docker-compose.yml exec -T clickhouse sh -c 'clickhouse client --user \"$CLICKHOUSE_USER\" --password \"$CLICKHOUSE_PASSWORD\" --multiquery < /ivy/reset.sql && /docker-entrypoint-initdb.d/init.sh' && docker compose -f deploy/docker-compose.yml restart api ingest"
   },
   "devDependencies": {
     "concurrently": "^9.2.5",

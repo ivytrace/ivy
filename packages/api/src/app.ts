@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { authenticate } from './lib/auth/middleware.js';
+import { mountAgentSurface } from './lib/mcp/mount.js';
 import { serveUi } from './lib/static/serve-ui.js';
 import { allProjects, projectContext, workspaceContext, type WorkspaceAccess } from './lib/tenancy/context.js';
 import { userWorkspaceAccess } from './lib/tenancy/members.js';
@@ -52,6 +53,7 @@ export function createApp(options: { uiDir: string; access?: WorkspaceAccess }) 
   app.get('/api/health', getHealth);
   app.get('/api/config', getConfig);
   app.post('/api/aws/events', postAwsEvent);
+  mountAgentSurface(app, access, { uiDir: options.uiDir });
 
   // The caller's account: workspaces and invite links (no workspace context).
   app.get('/api/workspaces', getWorkspaces(access));

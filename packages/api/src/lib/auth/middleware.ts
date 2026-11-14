@@ -8,6 +8,9 @@ export const PUBLIC_ROUTES = [
   'GET /api/config',
   // EventBridge API destination, authenticated by the per-connection x-ivy-event-secret header
   'POST /api/aws/events',
+  // API description and reference page (docs/implementation/mcp.md)
+  'GET /api/openapi.json',
+  'GET /api/docs',
 ];
 
 export const isPublicRoute = (method: string, path: string) =>

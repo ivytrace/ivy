@@ -1,0 +1,84 @@
+# Product decisions (v1)
+
+Decisions made after the v1 plan (001). Where they differ from 001, this document wins. Implementation details
+live in `docs/implementation/`.
+
+## Product and brand
+- The product is called **Ivy**. "ivytrace" is only for domains (ivytrace.dev) and GitHub/npm org names.
+- Dark mode only, for the app, the MCP App views and the website. No light theme, no theme toggle.
+- One visual language across the dashboard, the MCP App views and the website's demo: zinc neutrals, the logo's
+  green (`#4ade80`) as the accent for buttons and links. A visual change to one surface is applied to all of them.
+- The website shows the product calmly: few elements, no decorative grids or glows. Its demo looks exactly like
+  the real trace page, and its agent example shows a chat with an inline trace result.
+- The website never mentions the hosted service's infrastructure, sizing or capacity.
+
+## Repositories
+- `ivytrace/ivy` (public) holds the open-source product: layer, API, dashboard, MCP server, deploy files.
+- `ivytrace/ivy-hosted` (private) holds the hosted deployment, the marketing website and hosted-only code
+  (billing, hooks). Every push to `ivy` main deploys hosted.
+- No AI-tool attribution in commits or pull requests.
+- `ivy` is MIT licensed.
+- Storage uses the OpenTelemetry Collector's ClickHouse exporter rather than a custom exporter (see
+  `docs/implementation/storage.md`).
+
+## Accounts, workspaces and projects
+- Users belong to **workspaces** (visible: create, switch, invite teammates). A workspace owns members, billing,
+  connected AWS accounts and its storage shard.
+- Workspaces contain **projects**. Every function belongs to exactly one project; ingest keys and alert rules
+  belong to a project.
+- **Environments are separate projects** (`checkout-prod`, `checkout-staging`).
+- An AWS account connects to a workspace and can feed several projects.
+- **Slugs are generated from names and hidden; URLs stay stable when renaming.** Creating a workspace or project
+  asks for a name only; collisions get `-2`, `-3`. Changing a URL is a separate "Change URL" action under Advanced.
+- URLs carry workspace and project (`/w/<workspace>/<project>/…`); old links redirect to the last-used project.
+- A workspace you're not a member of looks exactly like one that doesn't exist.
+- Owners manage the workspace, members and invitations; members can do everything else.
+- Invitations are links (also emailed when SMTP is configured), single use, valid 7 days, and only accepted by a
+  signed-in user whose email matches and is verified by the identity provider.
+- Self-hosted without sign-in, or with `IVY_SINGLE_TENANT` on, has one workspace and no member management.
+- Moving a function to another project affects only new data; data already ingested stays where it is.
+
+## Authentication
+- Dashboard, API and MCP: **either no auth or OIDC**, never passwords or basic auth, not even temporarily.
+  Without OIDC configured, the UI shows a persistent "authentication disabled" banner.
+- Hosted uses Includable Auth. Coding agents and MCP clients sign in through it on the user's behalf: agents with
+  device-flow registration (the user's email passed as `login_hint`), MCP clients with the MCP authorization spec.
+- Ingest always requires an API key, and the key alone decides which workspace and project data lands in.
+
+## Auto-tracing
+- **Opt-in.** Connecting an AWS account traces nothing by itself. Ivy lists the account's functions grouped by
+  CloudFormation stack; the user picks stacks or name/tag patterns, and that choice is saved as a rule that also
+  names the project. New functions matching a rule are traced automatically.
+- Lambda tags `ivy:trace=true|false` and `ivy:project=<slug>` override rules.
+- The CloudFormation quick-create link must not carry secrets. Hosted publishes each connection's template through
+  a hook; self-hosted without that hook offers a template download.
+
+## Agents (AI-native)
+- No CLI. Agents use the **MCP server** or the **HTTP API** (with an OpenAPI spec).
+- The MCP server covers **all of the user's workspaces** at once; every result says which workspace it is from.
+- MCP App tools `render_waterfall` and `render_graph` show the real trace views inside the chat; they are
+  shipping features, not experiments.
+- Onboarding starts from one short prompt on the website that points the agent to `llms.txt`. The agent signs the
+  user up, creates the workspace and project, connects AWS, picks what to trace and verifies the first trace.
+  At the end it offers to add the Ivy agent skill, an `AGENTS.md` pointer and the MCP server config to the repo.
+- Lambda spans are sent per invocation; no batching across invocations (it would delay traces while debugging).
+
+## Hooks
+- The backend runs optional executables from a hooks directory, git-hooks style: notification hooks
+  (`on-<noun>-<past-tense>`, async, result ignored) and provider hooks (`<verb>-<noun>`, return a result, with a
+  built-in fallback). Hosted-only behaviour goes into hooks in `ivy-hosted`, not into `ivy`.
+
+## Billing
+- Billing is per **workspace**. Free tier of **100,000 traces per month**, then **€2 per million traces**;
+  one trace is one Lambda invocation.
+- Billing and Stripe code live in `ivy-hosted`. The open-source product only knows generic per-workspace limits:
+  no limits set means unlimited, so self-hosted is unlimited. Hosted sets the free tier through the
+  `on-workspace-created` hook, with a scheduled reconcile as a safety net.
+
+## Dashboard
+- First visit: a quick-start wizard (workspace, project, connect AWS and pick functions, wait for the first trace).
+- Keyboard shortcuts and a ⌘K command menu across the app.
+
+## Performance
+- Cold-start overhead of the layer must be minimal: the Lambda extension is a small Rust binary (the one exception
+  to TypeScript everywhere).

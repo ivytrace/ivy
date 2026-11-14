@@ -35,6 +35,7 @@ Environment variables (set in your shell or a `deploy/.env` file):
 | `IVY_AWS_PRINCIPAL_ARN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION` | | Ivy's AWS identity for assuming the roles in connected accounts |
 | `IVY_PUBLIC_URL`, `IVY_AWS_DEFAULT_REGION`, `IVY_AWS_SYNC_INTERVAL_SECONDS` | | optional auto-trace settings |
 | `IVY_HOOKS_DIR` | `/etc/ivy/hooks` | executable hooks, e.g. `publish-cfn-template` for one-click CloudFormation links (`docs/implementation/hooks.md`; examples in `deploy/hooks.example/`) |
+| `IVY_MCP_RESOURCE` | `$IVY_PUBLIC_URL/mcp` | canonical URL of the MCP endpoint, the `aud` of MCP tokens when OIDC is on (`docs/implementation/mcp.md`) |
 | `IVY_BUILD_UI` | `auto` | `false` builds an API-only image |
 | `IVY_API_PORT`, `IVY_OTLP_HTTP_PORT`, `IVY_CLICKHOUSE_HTTP_PORT` | 3000, 4318, 8123 | host ports |
 
@@ -90,9 +91,15 @@ The schema is idempotent; apply it again after pulling changes (`pnpm dev` does 
 pnpm db:migrate   # = docker compose -f deploy/docker-compose.yml exec -T clickhouse /docker-entrypoint-initdb.d/init.sh
 ```
 
-The projects change rebuilds the span tables once (their sort key changed): existing spans are copied into the new
-layout under each workspace's default project, and `invocations`/rollups are rebuilt from them. Stop the
-collector (or `ingest`) while it runs on a large volume. See `docs/implementation/storage.md`.
+**Volumes from before workspaces and projects** can't be updated in place (pre-release): `init.sh` stops with an
+error, and a one-off reset is needed. It **deletes all data**, then recreates the schema and restarts the API and
+ingest router, which recreate the `default` workspace, its project and the `IVY_INGEST_API_KEY` key:
+
+```sh
+pnpm db:reset
+```
+
+See `docs/implementation/storage.md`.
 
 ## Query ClickHouse
 

@@ -4,10 +4,14 @@ Served by `packages/api` (Hono) on port `3000`. All JSON. Timestamps in response
 ISO 8601 strings with millisecond precision (UTC). Durations are milliseconds (float).
 Errors are `{ "error": "…" }` with a 4xx/5xx status.
 
+The OpenAPI 3.1 version of this contract is served at `GET /api/openapi.json`, with a reference page at
+`GET /api/docs` (both public). Agents can also use the MCP server at `/mcp` (see below and `mcp.md`).
+
 ## Auth
 
 `auth.md`: with OIDC configured (`IVY_OIDC_ISSUER`), every `/api/*` route except `GET /api/health`,
-`GET /api/config` and `POST /api/aws/events` needs `Authorization: Bearer <access token>` (a JWT from the configured
+`GET /api/config`, `POST /api/aws/events`, `GET /api/openapi.json` and `GET /api/docs` needs
+`Authorization: Bearer <access token>` (a JWT from the configured
 issuer, for `IVY_OIDC_AUDIENCE`, issued to the dashboard's client or one of its agents). Without it: 401
 `{ "error": "Authentication required" }`; invalid or expired: 401 with `WWW-Authenticate: Bearer error="invalid_token"`;
 provider unreachable: 503. Without OIDC configured nothing is checked.
@@ -226,6 +230,9 @@ Attribute values are strings in storage; the API returns them as stored (strings
 JSON-valued attributes (`ivy.payload.*`, headers, arrays) are JSON strings for the UI to parse.
 404 if not found.
 
+`?format=text` returns `text/plain` instead: the trace as a compact text tree for LLMs (`@ivy/format`, see `mcp.md`).
+`detail=summary|normal|full` (default `normal`), `max_tokens` (default 4000, `0` = no limit). 400 for other values.
+
 ### `GET …/errors`
 Error groups, grouped by fingerprint (function + error type + normalized message).
 Query: `function`.
@@ -430,6 +437,30 @@ contract (envelope, kinds, timeouts, environment, payload types) is `hooks.md`. 
 | `on-aws-account-connected` | notification | `{ workspace, connection }` | none |
 
 Public Ivy has no plans or limits; a workspace without a limits record is unlimited.
+
+## OpenAPI
+
+### `GET /api/openapi.json`
+This contract as an OpenAPI 3.1 document (hand-maintained in `src/lib/openapi/`; a test checks it lists exactly the
+routes the app serves). Security scheme: OIDC bearer token, off on self-hosted setups without OIDC.
+
+### `GET /api/docs`
+API reference page (Scalar, loaded from its CDN).
+
+## MCP
+
+### `POST /mcp`
+Remote MCP server (Streamable HTTP, stateless, JSON responses) with the tools `list_workspaces`,
+`find_failing_invocations`, `search_invocations`, `list_error_groups`, `get_trace_summary`, `compare_invocations`,
+and the MCP Apps tools `render_waterfall` and `render_graph` (views served as `ui://ivy/*.html` resources). Tools
+cover every workspace the caller is a member of, one tenant-scoped read per workspace, unless given `workspace`;
+an optional `project` (slug or ID) narrows them to that project.
+With OIDC configured it needs a bearer token whose audience is `IVY_MCP_RESOURCE` (MCP clients registered under
+`IVY_OIDC_CLIENT_ID` are accepted there), and answers 401 with `WWW-Authenticate: Bearer resource_metadata="…"`
+otherwise. Details: `mcp.md`.
+
+### `GET /.well-known/oauth-protected-resource`, `GET /.well-known/oauth-protected-resource/mcp`
+RFC 9728 protected resource metadata of the MCP endpoint (only when OIDC is configured; 404 otherwise).
 
 ## Ingest (separate service, port 4318)
 

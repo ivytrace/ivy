@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildServiceGraph } from "./graph";
-import type { Span } from "./types";
+import { buildServiceGraph } from "./graph.js";
+import type { Span } from "./types.js";
 
 const span = (id: string, parent: string, attributes: Record<string, string>, name = id): Span => ({
   span_id: id,

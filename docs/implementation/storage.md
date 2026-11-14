@@ -73,7 +73,7 @@ overview and errors across all projects) read the tenant's range and group by `p
 
 ## Schema application
 
-The ClickHouse image runs `deploy/clickhouse/init.sh` on first start (empty volume only). The script fills in the
+The ClickHouse image runs `deploy/clickhouse/initdb/init.sh` on first start (empty volume only). The script fills in the
 retention days in `schema.sql` and applies it. Every statement is idempotent (`IF NOT EXISTS`, `OR REPLACE`, an
 `ALTER … MODIFY COLUMN` to the current definition), so re-running is safe and brings an existing volume up to date:
 `docker compose exec clickhouse /docker-entrypoint-initdb.d/init.sh`. `pnpm dev` runs it on every start.
@@ -81,22 +81,19 @@ Changing retention on an existing volume needs `ALTER TABLE … MODIFY TTL`. A r
 
 `pnpm db:migrate` runs it against the compose stack.
 
-Pre-release schema changes are applied this way, without migrations. New control-plane columns use
-`ALTER TABLE … ADD COLUMN IF NOT EXISTS` (ClickHouse allows that in place). Two steps aren't plain DDL:
+Pre-release schema changes are applied this way, without migrations.
+
+**Pre-release reset for workspaces and projects.** Projects put `ProjectId`/`project_id` second in the sort key of
+all three span tables, which ClickHouse can't change in place (`MODIFY ORDER BY` only appends new columns), and the
+control plane gained tables and columns. Since there was no production data yet, volumes from before this change
+are **reset, not migrated**: `deploy/clickhouse/reset.sql` drops the `ivy` and `ivy_control` databases, `init.sh`
+recreates everything, and on restart the API and router recreate the `default` workspace, its `default` project and
+the `IVY_INGEST_API_KEY` key, so an existing ingest key set through that variable keeps working; users get fresh
+workspaces when they sign in again. `pnpm db:reset` does all three for compose. `init.sh` refuses to run on an old
+volume and says to reset. This is not a migration path and won't be one: the first real migration needs a migration
+runner.
+
+Earlier pre-release steps (no longer in `init.sh`, since a reset covers them):
 
 - The move of the auto-trace tables from `ivy` to `ivy_control`: `init.sh` renames `ivy.aws_*` to
   `ivy_control.aws_*` when the old table exists and the new one doesn't.
-- **Projects** put `ProjectId`/`project_id` second in the sort key of all three span tables. ClickHouse can only
-  append newly added columns to the end of an `ORDER BY` (`MODIFY ORDER BY`), not insert one in the middle, so
-  `init.sh` rebuilds instead of altering: when `ivy.otel_traces` has no `ProjectId` column, it drops the two MVs and
-  the derived `invocations`/`invocations_hourly`, renames `otel_traces` to `otel_traces_pre_projects`, applies the
-  schema (new tables + MVs), then `INSERT … SELECT`s the old spans back with `ProjectId` = the workspace's default
-  project. That ID is derived from the tenant ID (`prj_` + first 21 hex chars of
-  `sha256('ivy-default-project:' || tenant)`), computed the same way in SQL and in the API, so no lookup is
-  needed. The insert fires the MVs, which rebuild `invocations` and the rollups. Then the old table is dropped.
-  If a run is interrupted after the rename, the next run stops with an error naming `otel_traces_pre_projects`
-  rather than copying twice. Spans that arrive during the rebuild go to the new table, so on a large volume stop
-  `collector` first. Verified on a volume made with the previous schema (300 spans over two tenants): counts per
-  tenant were identical in all three tables afterwards, all under the right default project, and a second run was a
-  no-op. Existing API keys (`project_id = ''`) belong to the default project; the API creates default projects and
-  workspace slugs for existing tenants on startup (`ensureWorkspaceDefaults`).

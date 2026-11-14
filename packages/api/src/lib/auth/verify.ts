@@ -7,6 +7,12 @@ const CLOCK_TOLERANCE_S = 30;
 export interface VerifyOptions {
   /** Expected `aud`; `IVY_OIDC_AUDIENCE` by default. The MCP endpoint passes its own resource. */
   audience?: string;
+  /**
+   * Also accept MCP clients registered under this app: any `client_id` (an `mcp_…` ID or a Client ID
+   * Metadata Document URL) with `parent_client_id` = the configured client. Only for the MCP audience;
+   * `/api` keeps accepting just the dashboard's client and its `agt_` agents.
+   */
+  mcpClients?: boolean;
 }
 
 export class AuthError extends Error {
@@ -41,14 +47,17 @@ const str = (value: unknown) => (typeof value === 'string' && value ? value : un
 const clientOf = (claims: JWTPayload) => str(claims.client_id) ?? str(claims.azp) ?? str(claims.cid) ?? str(claims.appid);
 
 /** Checks that the token belongs to the dashboard's client or, when allowed, to one of its agents. */
-export function identify(claims: JWTPayload, config: AuthConfig, issuer: string): AuthUser {
+export function identify(claims: JWTPayload, config: AuthConfig, issuer: string, options: VerifyOptions = {}): AuthUser {
   const sub = str(claims.sub);
   if (!sub) throw new AuthError('Access token has no subject', 401);
   const client = clientOf(claims);
+  const isMcpClient =
+    !!options.mcpClients && config.allowAgents && !!client && client !== config.clientId && claims.parent_client_id === config.clientId;
   const isAgent =
-    config.allowAgents &&
-    !!client?.startsWith(`agt_${config.clientId}_`) &&
-    (claims.parent_client_id === undefined || claims.parent_client_id === config.clientId);
+    isMcpClient ||
+    (config.allowAgents &&
+      !!client?.startsWith(`agt_${config.clientId}_`) &&
+      (claims.parent_client_id === undefined || claims.parent_client_id === config.clientId));
   if (client !== config.clientId && !isAgent) throw new AuthError('Access token was issued to another client', 401);
   return {
     sub,
@@ -94,7 +103,7 @@ export function createVerifier(config: AuthConfig) {
       }
       throw new AuthError(error instanceof errors.JWTExpired ? 'Access token expired' : 'Invalid access token', 401);
     }
-    return identify(claims, config, issuer);
+    return identify(claims, config, issuer, options);
   };
 }
 
@@ -110,5 +119,5 @@ export function verifyAccessToken(token: string, options: VerifyOptions & { conf
   if (!config) return Promise.reject(new AuthError('Authentication is not configured', 401));
   const key = JSON.stringify(config);
   if (cached?.key !== key) cached = { key, verify: createVerifier(config) };
-  return cached.verify(token, { audience: options.audience });
+  return cached.verify(token, { audience: options.audience, mcpClients: options.mcpClients });
 }

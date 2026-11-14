@@ -13,6 +13,7 @@ import {
 } from "@xyflow/react";
 
 import { buildServiceGraph, type GraphNode } from "@/lib/spans/graph";
+import { serviceIconUrl } from "@/lib/spans/icon-url";
 import type { Span } from "@/lib/spans/types";
 import { cn } from "@/lib/utils/cn";
 
@@ -27,13 +28,13 @@ function ServiceNode({ data }: NodeProps<FlowNode>) {
         "relative size-10 cursor-pointer rounded-full bg-zinc-500 bg-cover bg-center ring-offset-2 ring-offset-background",
         data.isError && "ring-2 ring-red-400",
       )}
-      style={{ backgroundImage: `url(/images/service-icons/${data.icon}.svg)` }}
+      style={{ backgroundImage: `url("${serviceIconUrl(data.icon, "large")}")` }}
       title={data.label}
     >
       <Handle type="target" position={Position.Left} isConnectable={false} />
       <Handle type="source" position={Position.Right} isConnectable={false} />
       {data.instances > 1 && (
-        <div className="absolute -right-2 -top-2 min-w-5 rounded-full bg-primary px-1 text-center text-[10px] leading-5 text-white">
+        <div className="absolute -right-2 -top-2 min-w-5 rounded-full bg-primary px-1 text-center text-[10px] leading-5 text-primary-foreground">
           {data.instances}
         </div>
       )}

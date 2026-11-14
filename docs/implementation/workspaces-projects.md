@@ -23,8 +23,8 @@ User (OIDC subject) ──member of──▶ Workspace ──has──▶ Projec
   app in one environment, which is also what one CloudFormation stack usually is, so auto-trace's stack rules map
   stacks onto projects.
 - Every workspace has a **default project** from creation (slug `default`, renamable, not archivable). Its ID is
-  derived from the tenant ID (`prj_` + 21 hex chars of `sha256('ivy-default-project:' + tenant)`), so processes and
-  the SQL migration agree on it without a lookup, and creating it is idempotent.
+  derived from the tenant ID (`prj_` + 21 hex chars of `sha256('ivy-default-project:' + tenant)`), so every process
+  agrees on it without a lookup, and creating it is idempotent.
 - **Members** (`tenant_members`): `owner` or `member`. A workspace always keeps one owner.
 - **Invitations** (`invitations`): ID `inv_…`, email, role, `sha256(token)`, inviter, `expires_at` (7 days),
   `accepted_at`/`accepted_by`, `revoked_at`.
@@ -153,10 +153,9 @@ The app's own paths that CloudFront must send to the app (in addition to those i
   `lib/tenancy/members.test.ts`, `tenants.test.ts` (default projects, slugs, old keys → default project, per-project
   keys and auto-trace keys), `routes/tenant-scope.test.ts` and `lib/clickhouse/scoped.test.ts` (project guard),
   `lib/ingest/router.test.ts` (`x-ivy-project`, old keys, archived/missing projects).
-- Schema migration: a ClickHouse volume created with the previous schema (300 spans in two tenants, an old key) was
-  upgraded with the new `init.sh`: counts per tenant matched in all three span tables, all under each tenant's default
-  project (same ID as the API computes), the sort keys were the new ones, the old key had `project_id = ''`, and a
-  second run changed nothing.
+- Schema: a ClickHouse volume created with the previous schema was refused by the new `init.sh` with the reset
+  instructions; after `reset.sql` the new `init.sh` created all 14 tables and ran again as a no-op. (A data-preserving
+  in-place rebuild was also built and verified first, then dropped in favour of the reset; see `storage.md`.)
 - End to end on a compose stack with alternate ports (`ivy-e2e`: API :13000, ingest :14318, ClickHouse :18123), OIDC
   on in multi-workspace mode against a throwaway provider (`pnpm --filter @ivy/api e2e:workspaces`): two users, two
   workspaces, two projects each, a key per project, one invocation per project sent through the ingest router with
