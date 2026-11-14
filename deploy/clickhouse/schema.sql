@@ -135,3 +135,58 @@ SELECT
     quantilesTDigestState(0.5, 0.95, 0.99)(duration_ms) AS duration_q
 FROM ivy.invocations
 GROUP BY tenant_id, hour, function, region;
+
+-- Auto-trace configuration (docs/implementation/auto-trace.md). Small, mutable tables: every
+-- update inserts a full row, ReplacingMergeTree keeps the newest version, reads use FINAL.
+
+CREATE TABLE IF NOT EXISTS ivy.aws_accounts
+(
+    `tenant_id` LowCardinality(String),
+    `id` String,
+    `name` String,
+    `account_id` String,
+    `role_arn` String,
+    `external_id` String,
+    `event_secret` String,
+    `stack_name` String,
+    `stack_region` LowCardinality(String),
+    `regions` Array(LowCardinality(String)),
+    `all_regions` Bool,
+    `status` LowCardinality(String),
+    `error` String,
+    `created_at` DateTime64(3, 'UTC'),
+    `verified_at` DateTime64(3, 'UTC'),
+    `last_sync_at` DateTime64(3, 'UTC'),
+    `updated_at` DateTime64(3, 'UTC'),
+    `deleted` UInt8
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, id);
+
+CREATE TABLE IF NOT EXISTS ivy.aws_functions
+(
+    `tenant_id` LowCardinality(String),
+    `account_id` String,
+    `region` LowCardinality(String),
+    `function_name` String,
+    `function_arn` String,
+    `runtime` LowCardinality(String),
+    `state` LowCardinality(String),
+    `reason` String,
+    `updated_at` DateTime64(3, 'UTC'),
+    `deleted` UInt8
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, account_id, region, function_name);
+
+CREATE TABLE IF NOT EXISTS ivy.aws_function_settings
+(
+    `tenant_id` LowCardinality(String),
+    `account_id` String,
+    `region` LowCardinality(String),
+    `function_name` String,
+    `tracing_enabled` Bool,
+    `updated_at` DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, account_id, region, function_name);
