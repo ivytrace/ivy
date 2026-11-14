@@ -12,9 +12,9 @@ describe("usageState", () => {
 
   it("free at 80% or more: warning banner", () => {
     expect(usageState(mockUsage("near"))).toMatchObject({ level: "warning", banner: "warning" });
-    const exactly80 = { ...mockUsage("free"), traces: 80_000 };
+    const exactly80 = { ...mockUsage("free"), traces: 40_000 };
     expect(usageState(exactly80).banner).toBe("warning");
-    expect(usageState({ ...exactly80, traces: 79_999 }).banner).toBeNull();
+    expect(usageState({ ...exactly80, traces: 39_999 }).banner).toBeNull();
   });
 
   it("free over quota: blocked banner, bar full", () => {

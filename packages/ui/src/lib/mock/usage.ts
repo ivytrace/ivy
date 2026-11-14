@@ -2,17 +2,17 @@ import type { Usage, WorkspaceLimits } from "../api/types.ts";
 import type { MockUsage } from "./aws.ts";
 import { NOW } from "./fixtures.ts";
 
-/** The mock billing service (served by the mock API, as hosted's /billing would be). */
+/** The mock billing service (served by the mock API in place of `IVY_BILLING_URL`). */
 export const MOCK_BILLING_URL = "/api/mock-billing";
 
-const FREE: WorkspaceLimits = { plan: "Free", monthly_trace_quota: 100_000, over_quota: "block", source: "workspace" };
-const PRO: WorkspaceLimits = { plan: "Pro", monthly_trace_quota: 100_000, over_quota: "allow", source: "workspace" };
+const FREE: WorkspaceLimits = { plan: "Free", monthly_trace_quota: 50_000, over_quota: "block", source: "workspace" };
+const PRO: WorkspaceLimits = { plan: "Pro", monthly_trace_quota: 50_000, over_quota: "allow", source: "workspace" };
 const UNLIMITED: WorkspaceLimits = { plan: "", monthly_trace_quota: null, over_quota: "allow", source: "unset" };
 
 const FIXTURES: Record<MockUsage, { traces: number; limits: WorkspaceLimits }> = {
-  free: { traces: 62_418, limits: FREE },
-  near: { traces: 86_250, limits: FREE },
-  over: { traces: 100_000, limits: FREE },
+  free: { traces: 31_209, limits: FREE },
+  near: { traces: 43_125, limits: FREE },
+  over: { traces: 50_000, limits: FREE },
   paid: { traces: 2_481_904, limits: PRO },
   unlimited: { traces: 1_204_331, limits: UNLIMITED },
 };

@@ -10,7 +10,7 @@ export interface Email {
 const env = (name: string) => process.env[name]?.trim() || undefined;
 
 /**
- * Outgoing mail over SMTP: `IVY_SMTP_URL` (e.g. `smtps://user:pass@email-smtp.eu-west-1.amazonaws.com:465`,
+ * Outgoing mail over SMTP: `IVY_SMTP_URL` (e.g. `smtps://user:pass@smtp.example.com:465`,
  * or `smtp://…:587` for STARTTLS) and `IVY_EMAIL_FROM` (`Ivy <noreply@example.com>`). Both are
  * needed; without them Ivy sends nothing and the UI shows links to copy instead.
  */

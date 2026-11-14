@@ -5,7 +5,7 @@
 | workflow | trigger | does |
 |---|---|---|
 | `ci.yml` | pull requests, pushes to branches other than `main`, and called by `release.yml` | `pnpm install --frozen-lockfile`, `pnpm -r typecheck`, `pnpm -r test` |
-| `release.yml` | push to `main` in `ivytrace/ivy` only | CI, then builds `packages/api/Dockerfile` for `linux/amd64` + `linux/arm64` and pushes `ghcr.io/ivytrace/ivy-api:<sha>` and `:main`, then sends a `repository_dispatch` (`ivy-main-updated`, payload `{"sha": "<sha>"}`) to `ivytrace/ivy-hosted` |
+| `release.yml` | push to `main` in `ivytrace/ivy` only | CI, then builds `packages/api/Dockerfile` for `linux/amd64` + `linux/arm64` and pushes `ghcr.io/ivytrace/ivy-api:<sha>` and `:main`, then, optionally, triggers a downstream deploy (see below) |
 
 - The image is the same one self-hosters can run (`image: ghcr.io/ivytrace/ivy-api:main` instead of `build:` in
   `deploy/docker-compose.yml`). It contains the API and the dashboard build.
@@ -13,8 +13,11 @@
 - Forks and pull requests can't publish or deploy: `release.yml` runs only on `push` to `main`, every job is
   guarded by `github.repository == 'ivytrace/ivy'`, and pull request workflows from forks don't receive secrets.
   `HOSTED_DISPATCH_TOKEN` is only referenced in the `dispatch-hosted` job of `release.yml`.
-- If `HOSTED_DISPATCH_TOKEN` is missing, the dispatch step logs a warning and succeeds, so the image still
-  publishes.
+- Downstream deploy trigger: with the `HOSTED_DISPATCH_TOKEN` repository secret set, the `dispatch-hosted` job sends a
+  `repository_dispatch` (`ivy-main-updated`, payload `{"sha": "<sha>"}`) so a deployment repository can roll out the
+  new image. Without the secret the job logs a warning and succeeds, so the image still publishes. The token only
+  needs permission to trigger workflows in the receiving repository (fine-grained, **Contents: Read and write** on
+  that one repository).
 - Each architecture builds on its own native runner (`ubuntu-24.04` and `ubuntu-24.04-arm`, free for public
   repos) and is pushed by digest; the `image` job then joins both digests into the multi-arch `:<sha>` and `:main`
   tags. This replaced a QEMU build whose emulated arm64 half took over 10 minutes. Each architecture keeps its own
@@ -35,22 +38,3 @@ it). After the first successful `release.yml` run:
    **Write** role (it is added automatically when the workflow creates the package).
 
 Check: `docker manifest inspect ghcr.io/ivytrace/ivy-api:main` works without `docker login`.
-
-### `HOSTED_DISPATCH_TOKEN`
-
-A fine-grained personal access token that can only trigger workflows in `ivytrace/ivy-hosted`:
-
-1. GitHub → your avatar → **Settings** → **Developer settings** → **Personal access tokens** →
-   **Fine-grained tokens** → **Generate new token**.
-2. **Token name**: `ivy hosted dispatch`. **Resource owner**: `ivytrace`. **Expiration**: the longest the
-   organization allows (set a reminder to rotate it).
-3. **Repository access**: **Only select repositories** → `ivytrace/ivy-hosted`.
-4. **Permissions** → **Repository permissions** → **Contents**: **Read and write** (`Metadata: Read` is added
-   automatically). Nothing else.
-5. **Generate token** and copy it. If the organization requires approval for fine-grained tokens, approve it
-   under organization **Settings** → **Personal access tokens** → **Pending requests**.
-6. In `ivytrace/ivy` → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
-   name `HOSTED_DISPATCH_TOKEN`, value the token.
-
-A GitHub App installation token with the same single permission on the same single repository works too, and
-does not expire with a person's account.

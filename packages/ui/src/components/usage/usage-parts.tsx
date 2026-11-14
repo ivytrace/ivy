@@ -66,7 +66,7 @@ export function QuotaNotice({ usage, link }: { usage: Usage; link?: string }) {
   );
 }
 
-/** "Upgrade" (Stripe Checkout) or "Manage billing" (Customer Portal) through the hosted billing service. */
+/** "Upgrade" (checkout) or "Manage billing" (portal) through the configured billing service. */
 export function BillingButton({ billingUrl, usage, action }: { billingUrl: string; usage: Usage; action: BillingAction }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

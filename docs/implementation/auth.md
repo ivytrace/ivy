@@ -1,7 +1,6 @@
 # Authentication
 
-Spec M3: hosted uses Includable Auth, self-hosted can use any OIDC provider, and without OIDC the dashboard, API
-and MCP run without auth (for setups behind an authenticating proxy). Ivy has exactly two modes: **no auth** or
+Spec M3: Ivy works with any OIDC provider, and without OIDC the dashboard, API and MCP run without auth (for setups behind an authenticating proxy). Ivy has exactly two modes: **no auth** or
 **OIDC**. There are no passwords and no basic auth. Ingest is separate and always uses API keys (`tenancy.md`).
 
 ## Configuration
@@ -19,33 +18,28 @@ and MCP run without auth (for setups behind an authenticating proxy). Ivy has ex
 deployment:
 
 ```json
-{ "version": "0.1.0", "auth": { "enabled": true, "issuer": "https://auth.includable.com", "clientId": "ivy",
-  "audience": "https://ivytrace.dev/api", "scopes": "openid email profile offline_access" } }
+{ "version": "0.1.0", "auth": { "enabled": true, "issuer": "https://auth.example.com", "clientId": "ivy",
+  "audience": "https://ivy.example.com/api", "scopes": "openid email profile offline_access" } }
 ```
 
 With auth off it is `{ "enabled": false }`, and the UI shows the persistent "Authentication disabled" banner.
 
-### Hosted (Includable Auth)
+### Setting up a provider
 
 ```sh
-IVY_OIDC_ISSUER=https://auth.includable.com
+IVY_OIDC_ISSUER=https://auth.example.com
 IVY_OIDC_CLIENT_ID=ivy
-IVY_OIDC_AUDIENCE=https://ivytrace.dev/api
-IVY_SINGLE_TENANT=0
+IVY_OIDC_AUDIENCE=https://ivy.example.com/api
+IVY_SINGLE_TENANT=0   # optional: multiple workspaces, members and invitations
 ```
 
-The `ivy` client in Includable Auth has redirect URIs `https://ivytrace.dev/auth/callback`,
-`http://localhost:3000/auth/callback` and `http://localhost:5173/auth/callback`, post-logout redirects to `/` on the same
-origins, resource `https://ivytrace.dev/api`, sign-up on and agent registration on. Local development against it
-therefore only works on ports 3000 (built UI) and 5173 (Vite).
-
-### Self-hosted
-
 Register a public SPA client with your provider (Keycloak, Auth0, Okta, Entra ID, Authentik, Zitadel, Google
-Workspace through one of those, …), with the redirect URIs above, and an API/resource whose access tokens are JWTs with
-that audience. Notes per provider:
+Workspace through one of those, …) with redirect URI `https://ivy.example.com/auth/callback` and post-logout redirect
+`https://ivy.example.com/`, plus `http://localhost:3000/auth/callback` (built UI) and
+`http://localhost:5173/auth/callback` (Vite) if you develop against it. Register an API/resource whose access tokens
+are JWTs with the audience above. Notes per provider:
 
-- The UI sends the audience both as `resource` (RFC 8707: Includable Auth, Keycloak, Okta, …) and as `audience`
+- The UI sends the audience both as `resource` (RFC 8707: Keycloak, Okta, …) and as `audience`
   (Auth0). Providers ignore parameters they don't know.
 - The API needs JWT access tokens. Providers that only issue opaque access tokens (plain Google OAuth) don't work
   directly; put Keycloak, Dex or Authentik in front.
@@ -57,8 +51,8 @@ that audience. Notes per provider:
 `packages/api/src/lib/auth/`:
 
 - `config.ts`: reads the variables above (`readAuthConfig()`, null when auth is off).
-- `verify.ts`: `verifyAccessToken(token, { audience? })`, a jose-based verifier. It is generic, not tied to
-  Includable Auth.
+- `verify.ts`: `verifyAccessToken(token, { audience? })`, a jose-based verifier, not tied to any one
+  provider.
 - `middleware.ts`: `authenticate()`, mounted on `/api/*` only.
 - `user.ts`: the `AuthUser` type and `authUser(c)`.
 
@@ -70,7 +64,7 @@ that audience. Notes per provider:
 2. Signature against that JWKS. jose's defaults apply: asymmetric algorithms from the JWK, never `none` or HMAC.
 3. `iss` equals the discovered issuer. `aud` contains `IVY_OIDC_AUDIENCE`, or the `audience` the caller passes.
    `exp` is required and checked with 30 s of clock tolerance (also for `nbf`/`iat`). `sub` is required.
-4. Client: the token's client (`client_id`, RFC 9068 and Includable Auth; else `azp`, used by Auth0, Keycloak and
+4. Client: the token's client (`client_id`, RFC 9068; else `azp`, used by Auth0, Keycloak and
    Entra v2; else `cid` for Okta, `appid` for Entra v1) must be the configured client ID, or, with agents allowed,
    start with `agt_<clientId>_` and not name another parent in `parent_client_id`. A token without any client claim is
    refused. This keeps tokens that other clients obtained for the same API (machine-to-machine clients, other apps)
@@ -102,36 +96,31 @@ link. `/mcp` and `/.well-known/*` are not under the middleware: the MCP server c
 import { authUser } from './lib/auth/user.js';
 
 const user = authUser(c); // AuthUser | null (null: auth off, or a public route)
-user.sub;                 // the provider's subject, e.g. "idn_…"; the key for mapping users to tenants
-user.email; user.name;    // when the access token has them (Includable access tokens may not)
+user.sub;                 // the provider's subject; the key for mapping users to tenants
+user.email; user.name;    // when the access token has them (some providers' access tokens don't)
 user.clientId;            // "ivy" or "agt_ivy_…"
 user.agent;               // { clientId, name } for a coding agent, null for the person
 ```
 
 ## Coding agents
 
-Includable Auth lets AI coding agents register themselves under the `ivy` client (RFC 7591 registration plus the
-device flow; see Includable Auth's `agent-auth.md`). Their client IDs look like `agt_ivy_<nanoid>`, and their access
-tokens have the same issuer and audience as the dashboard's, with `parent_client_id: "ivy"` and the agent's
-self-chosen `client_name`. Ivy accepts them (unless `IVY_OIDC_ALLOW_AGENTS=false`), acting as the person who approved
-the agent (same `sub`, so the same tenant), and records `agent: { clientId, name }` on the context. The name is the
-agent's own claim and isn't verified, so it's only good for display and audit. Signing out of the dashboard doesn't end
-an agent's access; removing the agent at Includable Auth does (its refresh token stops working, and the access token it
-holds expires within the hour).
-
-The rule is the same one `@includable/auth`'s `createAuthServer({ allowAgents: true })` applies, extended to
-`azp`. The SDK itself isn't used on the API: it is fixed to Includable's JWKS path and `typ: at+jwt`/RS256 tokens,
-while Ivy must work with any provider.
+Providers that support agent registration (RFC 7591 dynamic registration plus the device flow) can let AI coding
+agents register themselves under the dashboard's client. Ivy expects their client IDs to look like
+`agt_<clientId>_<id>`, and their access tokens to have the same issuer and audience as the dashboard's, with
+`parent_client_id: "<clientId>"` and the agent's self-chosen `client_name`. Ivy accepts them (unless
+`IVY_OIDC_ALLOW_AGENTS=false`), acting as the person who approved the agent (same `sub`, so the same tenant), and
+records `agent: { clientId, name }` on the context. The name is the agent's own claim and isn't verified, so it's only
+good for display and audit. Signing out of the dashboard doesn't end an agent's access; removing the agent at the
+provider does (its refresh token stops working, and its current access token expires).
 
 ## UI
 
 `packages/ui/src/lib/auth/`, using **oidc-client-ts** (authorization code + PKCE).
 
-Why oidc-client-ts and not the `@includable/auth` browser client: Ivy has to work with any provider. oidc-client-ts is
-the standard certified OIDC client for SPAs, works from discovery for any issuer, and has refresh-token renewal,
-`end_session` sign-out, `resource` and arbitrary extra parameters. The Includable client takes an `issuer` too, but it
-is built around Includable Auth: its identity API, its storage keys and its screens. The few Includable-specific bits
-Ivy needs (`screen=signup`, `login_hint`) are plain authorization parameters.
+Why oidc-client-ts: Ivy has to work with any provider. oidc-client-ts is the standard certified OIDC client for SPAs,
+works from discovery for any issuer, and has refresh-token renewal, `end_session` sign-out, `resource` and arbitrary
+extra parameters. Provider-specific extras Ivy passes (`screen=signup`, `login_hint`) are plain authorization
+parameters.
 
 - `provider.tsx`: `AuthProvider` reads `/api/config`. With auth on, it creates the client, attaches tokens to every API
   call (`setAuthHooks` in `lib/api/client.ts`), and tracks the session. `useAuth()` returns
@@ -146,7 +135,7 @@ Routes (outside the app layout, so no menu or banner):
 
 | route | |
 |---|---|
-| `/login?returnTo=&login_hint=&screen=signup` | Starts sign-in at the provider. `login_hint` fills in the email. `screen=signup` opens Includable Auth's sign-up screen; other providers ignore it. Already signed in, or auth off: goes straight to `returnTo`. |
+| `/login?returnTo=&login_hint=&screen=signup` | Starts sign-in at the provider. `login_hint` fills in the email. `screen=signup` asks for the provider's sign-up screen where it has one; other providers ignore it. Already signed in, or auth off: goes straight to `returnTo`. |
 | `/auth/callback` | Exchanges the code, sets the marker cookie and continues on the stored `returnTo` (carried in the OIDC `state`). On failure: an error with "Sign in again". |
 | `/logout` | Clears the marker cookie and the local session, then signs out at the provider (`end_session_endpoint` with `id_token_hint`), which returns to `/`. Without an end-session endpoint it just goes to `/`. |
 
@@ -158,9 +147,9 @@ The banner shows only with auth off. The user menu shows only when signed in. Bo
 
 ## Marker cookie: `ivy_session`
 
-On ivytrace.dev, the website and the app share one domain. CloudFront will route signed-in visitors at `/` to the app
-and everyone else to the website, which needs a signal at the edge. The session itself lives in localStorage, which
-CloudFront can't see. So the UI sets:
+When a website and the app share one domain, the edge (a CDN or reverse proxy) can route signed-in visitors at `/`
+to the app and everyone else to the website, but it needs a signal. The session itself lives in localStorage, which
+the edge can't see. So the UI sets:
 
 ```
 ivy_session=1; Path=/; SameSite=Lax; Max-Age=2592000; Secure   (Secure only on https)
@@ -168,25 +157,27 @@ ivy_session=1; Path=/; SameSite=Lax; Max-Age=2592000; Secure   (Secure only on h
 
 - It is set at `/auth/callback` after a successful sign-in. It is cleared (`Max-Age=0`) on sign-out, when a 401 drops
   the session, and when the session is removed after a failed renewal.
-- Max-Age is 30 days, the lifetime of an Includable Auth refresh token. Refresh tokens rotate but keep their original
-  expiry, so the cookie lapses about when the session can no longer be renewed.
+- Max-Age is 30 days, a common refresh-token lifetime. Where refresh tokens rotate but keep their original expiry, the
+  cookie lapses about when the session can no longer be renewed.
 - **It carries no token and grants nothing.** It's not HttpOnly because the SPA writes it. A forged or stale cookie
   only means the visitor lands on the app, which sends them to sign in. The API never reads it.
 
-### What hosted CloudFront needs
+### Sharing a domain with a website
 
-- `/` (exact path): with cookie `ivy_session=1`, forward to the app (the API origin serving the UI's `index.html`).
-  Without it, serve the website. This needs a CloudFront Function on viewer-request, and the cookie must be in the
-  cache key (or the response marked uncacheable) for `/`.
-- Always to the app (API origin): `/api/*`, `/mcp*`, `/.well-known/oauth-protected-resource*` (MCP), `/assets/*`
-  (UI bundles), and the SPA routes:
+An edge that splits one domain between a website and the app needs:
+
+- `/` (exact path): with cookie `ivy_session=1`, the app (or a redirect into it); without it, the website. Decide this
+  before any cache, or keep the cookie in the cache key for `/`.
+- Always the app: `/api/*`, `/mcp*`, `/.well-known/oauth-protected-resource*` (MCP), `/assets/*` and `/images/*`
+  (UI bundles and icons), and the SPA routes:
   - `/login`, `/auth/callback`, `/logout`;
   - **`/w/*`** (every workspace and project page: `/w/:workspace/:project/functions`, `…/traces/:id`,
     `/w/:workspace/settings/…`), **`/invite/*`** (invitation links, `workspaces-projects.md`) and **`/welcome*`**
     (the first-run wizard);
   - the pre-workspace paths `/functions*`, `/invocations*`, `/traces/*`, `/errors*`, `/settings*`, which the app
     redirects to the last-used workspace and project so old links keep working.
-- Everything else goes to the website.
+- Never `/internal/*` (`limits.md`).
+- Everything else: the website.
 
 ## Users and tenants
 
@@ -197,7 +188,7 @@ ivy_session=1; Path=/; SameSite=Lax; Max-Age=2592000; Secure   (Secure only on h
 - Auth on, `IVY_SINGLE_TENANT` unset or `1` (the default, meant for self-hosting): every signed-in user owns `default`.
   One install is one team, and access is decided by who can sign in at the provider. Member management and
   invitations are off.
-- Auth on, `IVY_SINGLE_TENANT=0` (hosted): a user's workspaces are their rows in `ivy_control.tenant_members`
+- Auth on, `IVY_SINGLE_TENANT=0` (multi-tenant): a user's workspaces are their rows in `ivy_control.tenant_members`
   (`tenant_id, sub, email, role, created_at`), and every `/api/w/:workspace/…` request checks membership (404 for
   non-members). A user with no memberships gets a personal workspace on `GET /api/workspaces` (name: the email, else the
   name, else the `sub`; slug from the email's local part or the name) and owns it. Others join by invitation.
@@ -222,12 +213,3 @@ has both, otherwise the provider's `userinfo_endpoint` (from discovery) called w
 - `lib/tenancy/members.test.ts`: tenant creation and ownership, existing memberships, agents, concurrent first requests,
   two "processes", single-tenant mode, and the resolver with auth on and off.
 - UI `lib/auth/return-to.test.ts`: `returnTo` sanitising, `/login` URLs and the marker cookie string.
-- Against the real Includable Auth (API on :3100 and Vite on :5180, because :3000 and :5173 were taken):
-  `/api/config` shows the settings, `/api/functions` answers 401 without a token, and a forged token gets
-  `Invalid access token` (so discovery and JWKS from auth.includable.com worked). Opening `/invocations?status=error`
-  redirected to `https://auth.includable.com/auth` with `client_id=ivy`, PKCE S256, `resource` and `audience`, and
-  Includable showed its Ivy-branded page. On :5180 that page was `invalid_redirect_uri`, as expected for an
-  unregistered port. The same request with the registered `http://localhost:5173/auth/callback` (plus `login_hint` and
-  `screen=signup`) was accepted. The browser already had an Includable session, so it went straight back to :5173 with
-  a code, where another dev server without this branch was running. The code exchange and token use in the browser
-  were not tested end to end.

@@ -249,7 +249,7 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
     quick_create: !options.noTemplate,
     events_url: null,
     public_url: null,
-    ingest_endpoint: "https://ingest.ivytrace.dev",
+    ingest_endpoint: "https://ingest.example.com",
     layer_sha256: "3f1c…",
     default_region: "eu-west-1",
     regions: REGIONS,

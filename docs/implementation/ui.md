@@ -1,7 +1,7 @@
 # UI (`packages/ui`)
 
-React dashboard, started from `includable/trace-stack`'s `packages/dashboard`. Trace-stack served as a
-visual reference. Most of the code was rewritten.
+React dashboard, started from an earlier Lambda tracing dashboard, which served as a visual reference. Most of the
+code was rewritten.
 
 ## Stack
 
@@ -76,7 +76,7 @@ Everything lives under a workspace and, for data, a project (`workspaces-project
 - Old links keep working: `/`, `/functions`, `/invocations`, `/errors`, `/traces/:id`, `/settings`, `/settings/aws` and
   `/settings/aws/:id` redirect to the same page in the last-used workspace and project (else the first workspace from
   `GET /api/workspaces` and its default project), keeping the query string and hash (`legacyTarget`, unit-tested).
-- Hosted routing: `/w/*`, `/invite/*` and `/welcome/*` are app paths.
+- Routing behind a shared domain: `/w/*`, `/invite/*` and `/welcome/*` are app paths (`auth.md`).
 
 **Header.** A `Workspace / Project ▾` breadcrumb next to the logo with a popover on each part: the workspaces (plus
 "Create workspace" in multi-workspace mode, and "Workspace settings"), and the projects: "All projects" first with a divider after it, then the active projects, then

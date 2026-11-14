@@ -324,7 +324,7 @@ export function createMockHandler(options: MockOptions = {}) {
       ws.keys.push(record);
       scheduleFirstTrace(ws, p.slug);
       const { project: _p, ...k } = record;
-      return json(201, { ...k, key, endpoint: "https://ingest.ivytrace.dev" });
+      return json(201, { ...k, key, endpoint: "https://ingest.example.com" });
     }
     const key = rest.match(/^\/keys\/([^/]+)$/);
     if (key && method === "DELETE") {
@@ -456,7 +456,7 @@ export function createMockHandler(options: MockOptions = {}) {
       });
     }
     if (path.startsWith(`${MOCK_BILLING_URL}/`) && method === "POST") {
-      // Stands in for the hosted billing service and Stripe: Checkout returns to the usage page like its success_url.
+      // Stands in for a billing service: checkout returns to the usage page with ?checkout=success.
       const ws = workspaces.find((w) => w.id === body.workspace || w.slug === body.workspace);
       if (!ws) return json(403, { error: "You are not a member of this workspace" });
       if (ws.role !== "owner") return json(403, { error: "Only workspace owners can change billing" });

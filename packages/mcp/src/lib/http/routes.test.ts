@@ -198,11 +198,11 @@ describe("MCP server", () => {
 
 describe("MCP auth", () => {
   const auth = {
-    resource: "https://ivytrace.dev/mcp",
+    resource: "https://ivy.example.com/mcp",
     authorizationServers: ["https://auth.example.com"],
     verifier: {
       verify: async (token: string, { audience }: { audience: string }) =>
-        token === "good" && audience === "https://ivytrace.dev/mcp" ? { sub: "user-1" } : null,
+        token === "good" && audience === "https://ivy.example.com/mcp" ? { sub: "user-1" } : null,
     },
   };
 
@@ -211,11 +211,11 @@ describe("MCP auth", () => {
     for (const path of ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"]) {
       const res = await app.request(path);
       expect(await res.json()).toEqual({
-        resource: "https://ivytrace.dev/mcp",
+        resource: "https://ivy.example.com/mcp",
         authorization_servers: ["https://auth.example.com"],
         bearer_methods_supported: ["header"],
         resource_name: "Ivy",
-        resource_documentation: "https://ivytrace.dev/api/docs",
+        resource_documentation: "https://ivy.example.com/api/docs",
       });
     }
   });
@@ -225,7 +225,7 @@ describe("MCP auth", () => {
     const missing = await app.request("/mcp", { method: "POST" });
     expect(missing.status).toBe(401);
     expect(missing.headers.get("www-authenticate")).toBe(
-      'Bearer resource_metadata="https://ivytrace.dev/.well-known/oauth-protected-resource/mcp"',
+      'Bearer resource_metadata="https://ivy.example.com/.well-known/oauth-protected-resource/mcp"',
     );
     const invalid = await app.request("/mcp", { method: "POST", headers: { authorization: "Bearer bad" } });
     expect(invalid.status).toBe(401);

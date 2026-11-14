@@ -6,7 +6,7 @@ projects**, and per calendar month in UTC. There is no per-project quota or usag
 
 Public Ivy only has the generic part: a limits table, a usage count, enforcement in the ingest router, an internal
 admin API, and a usage page that can show billing buttons. Plans, prices and payments live with whoever operates
-the install (for ivytrace.dev: the private `ivy-hosted` repo's billing service). **Self-hosted installs are unlimited
+the install, in a separate billing service. **Self-hosted installs are unlimited
 and have no payment code**: without a limits row a workspace is unlimited, and nothing creates rows by default.
 
 ## Model
@@ -22,8 +22,8 @@ and have no payment code**: without a limits row a workspace is unlimited, and n
 | `updated_at`, `deleted` | |
 
 No row means unlimited (`source: "unset"` in API answers). There are no install-wide defaults: an operator that wants
-a free tier for new workspaces sets a row when the workspace is created (hosted does this with a workspace hook plus a
-reconcile sweep, see ivy-hosted's `billing.md`).
+default limits for new workspaces sets a row when the workspace is created, for example with the
+`on-workspace-created` hook (`hooks.md`) plus a reconcile sweep over `GET /internal/workspaces?limits=unset`.
 
 Code: `packages/api/src/lib/limits/` (`limits.ts` types and validation, `store.ts` the table, `usage.ts` the count,
 `quota-gate.ts` the router check, `present.ts` the response shape).
@@ -66,8 +66,8 @@ Answer when blocked (OTLP/HTTP, a `google.rpc.Status` in the request's encoding,
 ```
 HTTP/1.1 429 Too Many Requests
 Retry-After: 300
-{"code":8,"message":"Monthly trace quota reached (100,000 traces on the Free plan). Traces are rejected until the
-next month (UTC). Upgrade at https://ivytrace.dev/w/acme/settings/usage."}
+{"code":8,"message":"Monthly trace quota reached (50,000 traces on the Free plan). Traces are rejected until the
+next month (UTC). Upgrade at https://ivy.example.com/w/acme/settings/usage."}
 ```
 
 `Retry-After` is `IVY_QUOTA_RETRY_AFTER_SECONDS` (300), or the seconds until the month ends if sooner. Not "until the
@@ -108,7 +108,7 @@ A 429 is drop-and-count, without hammering (`layer.md`, Delivery):
 ## Internal admin API
 
 For an operator's billing service. Documented in `api.md`, "Internal admin API". Mounted at `/internal/*`, outside
-`/api`, so a proxy that only routes `/api/*` (CloudFront on ivytrace.dev) never exposes it. It exists only when
+`/api`, so a proxy that only routes `/api/*` and the app's paths never exposes it. It exists only when
 `IVY_INTERNAL_API_TOKEN` is set (at least 32 characters; otherwise every `/internal/*` path is 404) and every call needs
 `Authorization: Bearer <that token>` (401 otherwise, compared in constant time). OIDC and the tenant middleware don't
 run there.
@@ -145,7 +145,7 @@ Only the dashboard has this page: the MCP views and the website demo show traces
 | variable | used by | default | |
 |---|---|---|---|
 | `IVY_INTERNAL_API_TOKEN` | API | | enables `/internal/*`; ≥ 32 characters |
-| `IVY_BILLING_URL` | API (→ UI) | | billing service base URL, e.g. `https://ivytrace.dev/billing` |
+| `IVY_BILLING_URL` | API (→ UI) | | billing service base URL, e.g. `https://ivy.example.com/billing` |
 | `IVY_QUOTA_REFRESH_SECONDS` | router | `60` | snapshot refresh |
 | `IVY_QUOTA_RETRY_AFTER_SECONDS` | router | `300` | `Retry-After` while over quota |
 | `IVY_UPGRADE_URL` | router | `$IVY_PUBLIC_URL/w/<slug>/settings/usage` | link in the 429 message; `{workspace}` → the slug |

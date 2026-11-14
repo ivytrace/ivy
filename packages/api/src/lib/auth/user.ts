@@ -9,7 +9,7 @@ export interface AuthAgent {
 
 /** The caller behind a verified access token. */
 export interface AuthUser {
-  /** Subject at the OIDC provider (`idn_…` for Includable Auth). Stable; use it to map users to tenants. */
+  /** Subject at the OIDC provider. Stable; use it to map users to tenants. */
   sub: string;
   issuer: string;
   email?: string;

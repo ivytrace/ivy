@@ -15,7 +15,7 @@ export interface Config {
   workspaces?: { multi: boolean };
   email?: { enabled: boolean };
   aws?: { quick_create: boolean };
-  /** Hosted billing service; no billing buttons without it. */
+  /** Billing service (`IVY_BILLING_URL`); no billing buttons without it. */
   billing?: { url: string };
 }
 

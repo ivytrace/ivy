@@ -18,7 +18,7 @@ export default function UsagePage() {
   const [params] = useSearchParams();
   const checkout = params.get("checkout");
 
-  // Back from Stripe Checkout: the plan changes once the webhook has run, usually within seconds.
+  // Back from checkout: the plan changes once the billing service has updated the limits, usually within seconds.
   useEffect(() => {
     if (checkout !== "success") return;
     const timers = [3_000, 8_000, 20_000].map((ms) => setTimeout(() => void usage.mutate(), ms));

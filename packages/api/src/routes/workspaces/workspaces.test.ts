@@ -119,7 +119,7 @@ describe('invitations', () => {
     const sent: Email[] = [];
     setEmailSenderForTests(async (e) => void sent.push(e));
     vi.stubEnv('IVY_SMTP_URL', 'smtp://localhost:2525');
-    vi.stubEnv('IVY_EMAIL_FROM', 'Ivy <noreply@ivytrace.dev>');
+    vi.stubEnv('IVY_EMAIL_FROM', 'Ivy <noreply@example.com>');
     await call(owner, 'POST', '/api/workspaces', { name: 'Acme', slug: 'acme' });
     const created = await call(owner, 'POST', '/api/w/acme/invitations', { email: ' Erin@example.com ' });
     expect(created.status).toBe(201);

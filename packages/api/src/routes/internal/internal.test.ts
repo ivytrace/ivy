@@ -74,13 +74,13 @@ describe('internal API', () => {
     const before = await (await call('GET', `/internal/workspaces/${acme.id}`)).json();
     expect(before).toMatchObject({ workspace: acme.id, name: 'Acme', slug: 'acme', traces: 0, blocked: false, limits: { source: 'unset', monthly_trace_quota: null } });
 
-    const put = await call('PUT', `/internal/workspaces/${acme.id}/limits`, { plan: 'Free', monthly_trace_quota: 100_000, over_quota: 'block' });
+    const put = await call('PUT', `/internal/workspaces/${acme.id}/limits`, { plan: 'Free', monthly_trace_quota: 50_000, over_quota: 'block' });
     expect(put.status).toBe(200);
-    expect(await put.json()).toMatchObject({ workspace: acme.id, limits: { plan: 'Free', monthly_trace_quota: 100_000, over_quota: 'block', source: 'workspace' } });
+    expect(await put.json()).toMatchObject({ workspace: acme.id, limits: { plan: 'Free', monthly_trace_quota: 50_000, over_quota: 'block', source: 'workspace' } });
 
-    trafficRows = [{ traces: 100_000 }];
+    trafficRows = [{ traces: 50_000 }];
     const after = await (await call('GET', `/internal/workspaces/${acme.id}`)).json();
-    expect(after).toMatchObject({ traces: 100_000, blocked: true, limits: { plan: 'Free' } });
+    expect(after).toMatchObject({ traces: 50_000, blocked: true, limits: { plan: 'Free' } });
 
     const del = await call('DELETE', `/internal/workspaces/${acme.id}/limits`);
     expect(await del.json()).toMatchObject({ limits: { source: 'unset' } });
@@ -95,7 +95,7 @@ describe('internal API', () => {
   });
 
   it('lists every workspace with its month usage, or only those without limits', async () => {
-    await call('PUT', `/internal/workspaces/${beta.id}/limits`, { plan: 'Pro', monthly_trace_quota: 100_000, over_quota: 'allow' });
+    await call('PUT', `/internal/workspaces/${beta.id}/limits`, { plan: 'Pro', monthly_trace_quota: 50_000, over_quota: 'allow' });
     trafficRows = [{ tenant_id: beta.id, traces: 250_000 }];
     const list = await (await call('GET', '/internal/workspaces?month=2026-10')).json();
     expect(list.month).toBe('2026-10');
@@ -133,7 +133,7 @@ describe('workspace usage and /api/config', () => {
 
   it('exposes the billing URL only when IVY_BILLING_URL is set', async () => {
     expect((await (await app.request('/api/config')).json()).billing).toBeUndefined();
-    vi.stubEnv('IVY_BILLING_URL', 'https://ivytrace.dev/billing/');
-    expect((await (await app.request('/api/config')).json()).billing).toEqual({ url: 'https://ivytrace.dev/billing' });
+    vi.stubEnv('IVY_BILLING_URL', 'https://ivy.example.com/billing/');
+    expect((await (await app.request('/api/config')).json()).billing).toEqual({ url: 'https://ivy.example.com/billing' });
   });
 });

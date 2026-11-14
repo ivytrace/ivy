@@ -6,7 +6,7 @@ import { monthBounds, monthOf, monthRange } from './usage.js';
 describe('limits', () => {
   it('is unlimited without a row', () => {
     expect(effectiveLimits(null)).toEqual({ plan: '', monthly_trace_quota: null, over_quota: 'allow', source: 'unset' });
-    const row = { plan: 'Free', monthly_trace_quota: 100_000, over_quota: 'block' as const };
+    const row = { plan: 'Free', monthly_trace_quota: 50_000, over_quota: 'block' as const };
     expect(effectiveLimits(row)).toEqual({ ...row, source: 'workspace' });
   });
 
@@ -20,9 +20,9 @@ describe('limits', () => {
   });
 
   it('validates limit bodies', () => {
-    expect(parseLimits({ plan: 'Pro', monthly_trace_quota: 100_000, over_quota: 'allow' })).toEqual({
+    expect(parseLimits({ plan: 'Pro', monthly_trace_quota: 50_000, over_quota: 'allow' })).toEqual({
       plan: 'Pro',
-      monthly_trace_quota: 100_000,
+      monthly_trace_quota: 50_000,
       over_quota: 'allow',
     });
     expect(parseLimits({})).toEqual({ plan: '', monthly_trace_quota: null, over_quota: 'allow' });

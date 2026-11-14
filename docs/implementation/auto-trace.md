@@ -105,7 +105,7 @@ No new datastore. `deploy/clickhouse/schema.sql` adds, in the control-plane data
 Ivy only uses the AWS SDK as a client; nothing of Ivy runs in AWS.
 
 - Ivy's own credentials come from the standard SDK chain (env vars, shared config/`AWS_PROFILE`, container/instance role).
-  Hosted uses Ivy's own principal; self-hosters bring an IAM user or role.
+  Each install brings its own IAM user or role.
 - The **trusted principal** in the template comes from `IVY_AWS_PRINCIPAL_ARN`. If unset, Ivy derives it from
   `sts:GetCallerIdentity` (an assumed-role session ARN maps back to `arn:aws:iam::<acct>:role/<name>`). If neither works,
   `GET /api/w/:ws/aws/setup` reports it as an issue and the template has no default for the parameter.
@@ -129,7 +129,7 @@ Ivy only uses the AWS SDK as a client; nothing of Ivy runs in AWS.
   parameter whose default is this connection's value; the event secret is `NoEcho`. So the file can be uploaded as is,
   and a quick-create link needs no `param_…` values, which keeps the external ID and the secret out of URLs.
 - **Quick-create needs the template at an S3 URL.** Ivy doesn't host it: the `publish-cfn-template` provider hook
-  (`hooks.md`) receives the rendered template and returns a URL CloudFormation can fetch (hosted: a short-lived
+  (`hooks.md`) receives the rendered template and returns a URL CloudFormation can fetch (e.g. a short-lived
   pre-signed S3 URL). The API builds `https://<region>.console.aws.amazon.com/cloudformation/home?region=…#/stacks/quickcreate?templateURL=…&stackName=…`
   and caches it per connection until shortly before the URL expires. Without the hook, or when it fails, there is no
   link (`quick_create_url: null`, plus `quick_create_error` on failure) and the UI offers the download, which needs the
@@ -143,8 +143,7 @@ Ivy only uses the AWS SDK as a client; nothing of Ivy runs in AWS.
 
 `PublishLayerVersion` of the zip that ships in the API image (`/app/layer.zip`, built by `packages/api/Dockerfile`; in
 development `packages/layer/dist/layer.zip`; override with `IVY_LAYER_ZIP`) into each account and region, as
-`ivy-trace-nodejs`, through the assumed role. No public or cross-account layers needed, the same for hosted and
-self-hosted. The description carries `sha256:<zip hash>`; before publishing Ivy looks for a version with the same hash,
+`ivy-trace-nodejs`, through the assumed role. No public or cross-account layers needed, for any install. The description carries `sha256:<zip hash>`; before publishing Ivy looks for a version with the same hash,
 so restarts and other Ivy processes reuse it. A new Ivy build with a different zip publishes a new version and the next
 sync moves every traced function to it. A region only gets the layer when some function there needs it.
 
