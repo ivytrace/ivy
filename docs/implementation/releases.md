@@ -15,9 +15,10 @@
   `HOSTED_DISPATCH_TOKEN` is only referenced in the `dispatch-hosted` job of `release.yml`.
 - If `HOSTED_DISPATCH_TOKEN` is missing, the dispatch step logs a warning and succeeds, so the image still
   publishes.
-- Multi-arch builds run under QEMU, so the arm64 half is slow. Everything in the build stage is
-  platform-independent (an esbuild bundle and a static UI), so `FROM --platform=$BUILDPLATFORM node:22-alpine AS build`
-  in `packages/api/Dockerfile` would make the arm64 build as fast as the amd64 one. Not done yet.
+- Each architecture builds on its own native runner (`ubuntu-24.04` and `ubuntu-24.04-arm`, free for public
+  repos) and is pushed by digest; the `image` job then joins both digests into the multi-arch `:<sha>` and `:main`
+  tags. This replaced a QEMU build whose emulated arm64 half took over 10 minutes. Each architecture keeps its own
+  GitHub Actions build cache.
 
 ## One-time setup
 
