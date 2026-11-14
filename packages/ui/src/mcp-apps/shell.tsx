@@ -4,6 +4,7 @@ import { useApp } from "@modelcontextprotocol/ext-apps/react";
 import { Maximize2, Minimize2 } from "lucide-react";
 
 import { ColdStart, InvocationStatus } from "@/components/common/status";
+import { ErrorBlock } from "@/components/trace/error-block";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { getException } from "@/lib/spans/services";
@@ -101,6 +102,17 @@ function Header({ data, invocation, actions }: { data: ViewData; invocation: Spa
   );
 }
 
+/** The invocation's error with its stack (the dashboard shows it on the Overview tab, which views don't have). */
+function InvocationError({ invocation }: { invocation: Span }) {
+  const exception = invocation.status_code === "ERROR" ? getException(invocation) : undefined;
+  if (!exception) return null;
+  return (
+    <div className="border-b px-4 py-3 [&>div]:max-h-40">
+      <ErrorBlock exception={exception} />
+    </div>
+  );
+}
+
 function FullscreenToggle({ app, context }: { app: App; context?: McpUiHostContext }) {
   const modes = context?.availableDisplayModes ?? [];
   if (!modes.includes("fullscreen")) return null;
@@ -152,6 +164,7 @@ export function ViewShell({
     body = invocation ? (
       <>
         <Header data={data} invocation={invocation} actions={app && <FullscreenToggle app={app} context={context} />} />
+        <InvocationError invocation={invocation} />
         {children(data, { fullscreen })}
         {!!data.trace.omitted_spans && (
           <div className="border-t px-4 py-2 text-xs text-muted-foreground">

@@ -62,12 +62,13 @@ async function run() {
     source = { srcdoc: html };
   } else {
     result = fixtureResult(tool);
-    source = { src: `/${tool === "render_graph" ? "graph" : "waterfall"}.html` };
+    source = { src: `/mcp-apps/${tool === "render_graph" ? "graph" : "waterfall"}.html` };
     status("fixture trace, view from the dev server");
   }
   $("#text").textContent = (result.content[0] as { text: string }).text;
   const iframe = document.createElement("iframe");
-  iframe.setAttribute("sandbox", "allow-scripts");
+  // Real hosts give views an opaque origin; the dev server's module scripts need a same-origin frame.
+  iframe.setAttribute("sandbox", source.srcdoc !== undefined ? "allow-scripts" : "allow-scripts allow-same-origin");
   $("#frame").replaceChildren(iframe);
 
   const bridge = new AppBridge(c, { name: "ivy-test-host", version: "1.0.0" }, { openLinks: {}, serverTools: {}, logging: {} });

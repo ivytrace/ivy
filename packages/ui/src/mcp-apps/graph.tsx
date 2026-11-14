@@ -87,7 +87,11 @@ function ServiceGraph({ data, fullscreen }: { data: ViewData; fullscreen: boolea
   return (
     <>
       <div className={cn("relative", fullscreen ? "min-h-[480px] flex-1" : "h-[380px]")}>
-        <TraceGraph spans={spans} onSelect={setSelected} />
+        {/* React Flow needs a definite height (flex-grown boxes have none), and a remount on display
+            mode changes to fit the graph to the new size. */}
+        <div className="absolute inset-0">
+          <TraceGraph key={fullscreen ? "fullscreen" : "inline"} spans={spans} onSelect={setSelected} />
+        </div>
         {!selected && (
           <div className="pointer-events-none absolute bottom-2 left-0 right-0 text-center text-xs text-muted-foreground">
             Click a service for its spans
