@@ -190,6 +190,22 @@ CREATE TABLE IF NOT EXISTS ivy_control.api_keys
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, id);
 
+-- Who can use a tenant: the OIDC subject (`sub`) of a signed-in user (docs/implementation/auth.md).
+-- Looked up by `sub` on sign-in, hence the bloom filter.
+CREATE TABLE IF NOT EXISTS ivy_control.tenant_members
+(
+    `tenant_id` String,
+    `sub` String,
+    `email` String DEFAULT '',
+    `role` LowCardinality(String) DEFAULT 'member',
+    `created_at` DateTime64(3, 'UTC'),
+    `updated_at` DateTime64(3, 'UTC'),
+    `deleted` UInt8 DEFAULT 0,
+    INDEX idx_sub sub TYPE bloom_filter(0.001) GRANULARITY 1
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, sub);
+
 -- Auto-trace configuration (docs/implementation/auto-trace.md).
 
 CREATE TABLE IF NOT EXISTS ivy_control.aws_accounts
