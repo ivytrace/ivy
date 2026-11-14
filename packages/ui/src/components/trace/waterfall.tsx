@@ -84,7 +84,7 @@ export function Waterfall({
                     <span
                       className={cn(
                         "absolute top-1/2 h-2.5 -translate-y-1/2 rounded-sm",
-                        d.isError ? "bg-red-400" : (BAR_COLORS[d.icon] ?? "bg-slate-400"),
+                        d.isError ? "bg-red-400" : (BAR_COLORS[d.icon] ?? "bg-zinc-400"),
                       )}
                       style={{ left: `${row.offsetPct}%`, width: `${row.widthPct}%` }}
                     />

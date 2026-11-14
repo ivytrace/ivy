@@ -20,7 +20,7 @@ export function ServiceIcon({
         role="img"
         aria-label={label}
         className={cn(
-          "inline-block shrink-0 bg-slate-500 bg-cover bg-center",
+          "inline-block shrink-0 bg-zinc-500 bg-cover bg-center",
           size === "mini" ? "size-4 rounded-sm" : "size-10 rounded-full",
           className,
         )}

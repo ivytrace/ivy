@@ -24,7 +24,7 @@ function ServiceNode({ data }: NodeProps<FlowNode>) {
   return (
     <div
       className={cn(
-        "relative size-10 cursor-pointer rounded-full bg-slate-500 bg-cover bg-center ring-offset-2 ring-offset-background",
+        "relative size-10 cursor-pointer rounded-full bg-zinc-500 bg-cover bg-center ring-offset-2 ring-offset-background",
         data.isError && "ring-2 ring-red-400",
       )}
       style={{ backgroundImage: `url(/images/service-icons/${data.icon}.svg)` }}
