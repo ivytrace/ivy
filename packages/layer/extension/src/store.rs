@@ -22,6 +22,7 @@ struct Entry {
 struct Inner {
     entries: HashMap<String, Entry>,
     order: Vec<String>,
+    attached: bool,
 }
 
 impl Inner {
@@ -54,8 +55,36 @@ impl SpanStore {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Records that the in-process tracer said hello (or sent spans).
+    pub fn attach(&self) {
+        self.lock().attached = true;
+        self.changed.notify_all();
+    }
+
+    pub fn is_attached(&self) -> bool {
+        self.lock().attached
+    }
+
+    /// True once the tracer is attached, false after `timeout`.
+    pub fn wait_attached(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut inner = self.lock();
+        while !inner.attached {
+            let now = Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            inner = match self.changed.wait_timeout(inner, deadline - now) {
+                Ok((guard, _)) => guard,
+                Err(e) => e.into_inner().0,
+            };
+        }
+        true
+    }
+
     pub fn add(&self, request_id: &str, is_final: bool, resource: Value, spans: Vec<Value>) {
         let mut inner = self.lock();
+        inner.attached = true;
         let entry = inner.entry(request_id);
         entry.resource = resource;
         for span in spans {
@@ -70,8 +99,8 @@ impl SpanStore {
         }
         if is_final {
             entry.is_final = true;
-            self.changed.notify_all();
         }
+        self.changed.notify_all();
     }
 
     /// True once the final batch for `request_id` arrived, false after `timeout`.
@@ -153,6 +182,23 @@ mod tests {
         assert_eq!(names, ["final", "x"]);
         assert_eq!(batches[0].resource, json!([{"key": "service.name"}]));
         assert!(s.drain().is_empty());
+    }
+
+    #[test]
+    fn attaches_on_hello_or_on_the_first_spans() {
+        let s = Arc::new(SpanStore::default());
+        assert!(!s.wait_attached(Duration::from_millis(10)));
+        let s2 = s.clone();
+        let t = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+            s2.attach();
+        });
+        assert!(s.wait_attached(Duration::from_secs(1)));
+        t.join().unwrap();
+
+        let s = SpanStore::default();
+        s.add("r1", false, json!([]), vec![span("a", "x")]);
+        assert!(s.is_attached());
     }
 
     #[test]

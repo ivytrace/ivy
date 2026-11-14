@@ -23,45 +23,46 @@ async function setup(): Promise<Function> {
   let tracer: Tracer | undefined;
   if (config.enabled) {
     try {
-      tracer = await createTracer();
+      tracer = createTracer();
     } catch (e) {
       originalWarn(`[ivy] tracing disabled, setup failed: ${(e as Error).message}`);
-      tracer = undefined;
     }
   }
 
   const user = await loadUserHandler(appRoot, handlerString);
   if (!tracer || (user as any)[STREAMING]) return user;
+  tracer.onInvocationStart?.();
   return wrapHandler(tracer, user as any);
 }
 
-async function createTracer(): Promise<Tracer> {
-  const viaExtension = await helloExtension(config.extensionPort);
-  log(viaExtension ? 'connected to ivy extension' : 'extension not reachable, exporting directly');
-
-  let sink: (batch: SpanBatch) => void;
-  if (viaExtension) {
-    sink = (batch) => {
-      sendToExtension(config.extensionPort, batch).then((ok) => {
-        if (!ok) log(`could not hand spans for ${batch.requestId} to the extension`);
-      });
-    };
-  } else {
-    const queue = new ExportQueue({
+function createTracer(): Tracer {
+  const viaExtension = helloExtension(config.extensionPort).then((ok) => {
+    log(ok ? 'connected to ivy extension' : 'extension not reachable, exporting directly');
+    return ok;
+  });
+  let queue: ExportQueue | undefined;
+  const exportDirectly = (batch: SpanBatch) => {
+    queue ??= new ExportQueue({
       url: config.tracesUrl!,
       apiKey: config.apiKey,
       maxQueueSpans: config.maxQueueSpans,
       exportTimeoutMs: config.exportTimeoutMs,
       log,
     });
-    sink = (batch) => {
-      queue.add(batch);
-      if (batch.final) queue.flush(config.flushBudgetMs).catch(() => {});
-    };
-  }
+    queue.add(batch);
+    if (batch.final) queue.flush(config.flushBudgetMs).catch(() => {});
+  };
+  const sink = (batch: SpanBatch) => {
+    viaExtension.then((ok) => {
+      if (!ok) return exportDirectly(batch);
+      sendToExtension(config.extensionPort, batch).then((sent) => {
+        if (!sent) log(`could not hand spans for ${batch.requestId} to the extension`);
+      });
+    });
+  };
 
   const tracer = new Tracer(config, sink, log);
-  instrumentHttp(tracer);
+  tracer.onInvocationStart = instrumentHttp(tracer);
   instrumentFetch(tracer);
   instrumentAwsSdk(tracer);
   if (config.captureLogs) instrumentConsole(tracer);

@@ -13,13 +13,13 @@ use queue::ExportQueue;
 use serde_json::Value;
 use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use store::SpanStore;
 
 const WAIT_GRACE_MS: i64 = 200;
+const HELLO_WAIT_MS: i64 = 500;
 const SHUTDOWN_BUDGET_MS: i64 = 1500;
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -82,7 +82,7 @@ fn is_truthy(v: Option<&Value>) -> bool {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, store: &SpanStore, attached: &AtomicBool) {
+fn handle_connection(mut stream: TcpStream, store: &SpanStore) {
     stream.set_read_timeout(Some(READ_TIMEOUT)).ok();
     let msg = match stream.try_clone().and_then(|s| http::read_message(&mut BufReader::new(s), false, http::MAX_BODY_BYTES)) {
         Ok(m) => m,
@@ -93,7 +93,7 @@ fn handle_connection(mut stream: TcpStream, store: &SpanStore, attached: &Atomic
     };
     let (status, body) = match msg.route() {
         ("POST", "/hello") => {
-            attached.store(true, Ordering::SeqCst);
+            store.attach();
             (200, "{}".to_string())
         }
         ("POST", "/spans") => match serde_json::from_slice::<Value>(&msg.body) {
@@ -118,13 +118,13 @@ fn handle_connection(mut stream: TcpStream, store: &SpanStore, attached: &Atomic
     let _ = http::write_response(&mut stream, status, &body);
 }
 
-fn start_server(port: u16, store: Arc<SpanStore>, attached: Arc<AtomicBool>) -> std::io::Result<()> {
+fn start_server(port: u16, store: Arc<SpanStore>) -> std::io::Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", port))?;
     thread::Builder::new().name("intake".into()).spawn(move || {
         for conn in listener.incoming() {
             let Ok(stream) = conn else { continue };
-            let (s, a) = (store.clone(), attached.clone());
-            let spawned = thread::Builder::new().spawn(move || handle_connection(stream, &s, &a));
+            let s = store.clone();
+            let spawned = thread::Builder::new().spawn(move || handle_connection(stream, &s));
             if let Err(e) = spawned {
                 log(&format!("could not handle a connection: {e}"));
             }
@@ -173,8 +173,7 @@ fn main() {
     }
 
     let store = Arc::new(SpanStore::default());
-    let attached = Arc::new(AtomicBool::new(false));
-    if let Err(e) = start_server(config.extension_port, store.clone(), attached.clone()) {
+    if let Err(e) = start_server(config.extension_port, store.clone()) {
         log(&format!("could not listen on 127.0.0.1:{}: {e}", config.extension_port));
     }
     debug("registered");
@@ -186,6 +185,9 @@ fn main() {
         Duration::from_millis(config.export_timeout_ms),
         Box::new(log),
     );
+    // The tracer announces itself without blocking init, so its hello can land just after the first
+    // INVOKE. With the exec wrapper configured a tracer is expected: give it a moment to say hello.
+    let mut expect_hello = std::env::var("AWS_LAMBDA_EXEC_WRAPPER").is_ok_and(|w| w.ends_with("/ivy-wrapper"));
     let mut queue = ExportQueue::new(exporter, config.max_queue_spans, Box::new(move || started.elapsed().as_millis() as u64), Box::new(log));
 
     loop {
@@ -208,7 +210,14 @@ fn main() {
             debug(&format!("shutdown ({})", event.shutdown_reason.as_deref().unwrap_or("unknown")));
             std::process::exit(0);
         }
-        if let Some(request_id) = event.request_id.as_deref().filter(|_| attached.load(Ordering::SeqCst)) {
+        if expect_hello && !store.is_attached() {
+            let wait_ms = HELLO_WAIT_MS.min(event.deadline_ms - epoch_ms()).max(0) as u64;
+            if !store.wait_attached(Duration::from_millis(wait_ms)) {
+                debug("no hello from the tracer");
+            }
+        }
+        expect_hello = false;
+        if let Some(request_id) = event.request_id.as_deref().filter(|_| store.is_attached()) {
             let wait_ms = (event.deadline_ms - epoch_ms() + WAIT_GRACE_MS).max(0) as u64;
             if !store.wait_for(request_id, Duration::from_millis(wait_ms)) {
                 debug(&format!("no final spans for {request_id}"));
