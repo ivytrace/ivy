@@ -54,9 +54,9 @@ const aws = (service: string, method: string, extra: Record<string, string>, req
   "cloud.region": "eu-west-1",
   "aws.request_id": `${service.toUpperCase()}${method.toUpperCase()}REQ`,
   "http.response.status_code": status,
+  ...(request === undefined ? {} : { "ivy.payload.request": JSON.stringify(request) }),
+  ...(response === undefined ? {} : { "ivy.payload.response": JSON.stringify(response) }),
   ...extra,
-  "ivy.payload.request": JSON.stringify(request),
-  "ivy.payload.response": JSON.stringify(response),
 });
 
 const http = (method: string, url: string, status: number, request: unknown, response: unknown) => ({
@@ -700,4 +700,66 @@ export const importWorker = build(traceIdAt(40_000, "c011a95edca11500000000aa"),
   ...Import.importSpans.map((s): SpanSpec => ({ ...s, parent: "i1" })),
 ]);
 
-export const traces = [checkoutFailed, checkoutOk, queueFailed, plainOtel, initFailed, oomCrashed, supportBot, supportBotGenAi, importWorker];
+/** SQS → Lambda ticket triage calling Amazon Bedrock directly with the AWS SDK (InvokeModel, Converse, Nova). */
+export const ticketTriage = build(traceIdAt(45_000, "b3d70c4a11e2f3a4b5c6d7e8"), 45_000, "eu-west-1", "support-triageTicket", [
+  {
+    id: "b1",
+    name: "support-triageTicket",
+    kind: "CONSUMER",
+    offset: 0,
+    duration: 2391.7,
+    status: "OK",
+    attributes: {
+      "ivy.invocation": "true",
+      "faas.invocation_id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+      "faas.coldstart": "false",
+      "faas.trigger": "pubsub",
+      "ivy.trigger.source": "aws:sqs",
+      "messaging.destination.name": "support-tickets",
+      "ivy.memory_used_mb": "121",
+      "ivy.payload.request": JSON.stringify({ Records: [{ messageId: "m-71", body: JSON.stringify({ ticketId: "tkt_4410", message: AI.TICKET }), eventSource: "aws:sqs" }] }),
+      "ivy.payload.response": JSON.stringify({ batchItemFailures: [] }),
+    },
+  },
+  {
+    id: "b2",
+    parent: "b1",
+    name: "BedrockRuntime.InvokeModel",
+    offset: 6,
+    duration: 702.4,
+    attributes: aws("BedrockRuntime", "InvokeModel", AI.bedrockAttributes.invokeModel, undefined, undefined),
+  },
+  orderLookup("b3", "b1", 712),
+  {
+    id: "b4",
+    parent: "b1",
+    name: "BedrockRuntime.Converse",
+    offset: 733,
+    duration: 811.9,
+    attributes: aws("BedrockRuntime", "Converse", AI.bedrockAttributes.converse, undefined, undefined),
+  },
+  {
+    id: "b5",
+    parent: "b1",
+    name: "BedrockRuntime.InvokeModel",
+    offset: 1549,
+    duration: 402.6,
+    attributes: aws("BedrockRuntime", "InvokeModel", AI.bedrockAttributes.invokeNova, undefined, undefined),
+  },
+  {
+    id: "b6",
+    parent: "b1",
+    name: "DynamoDB.UpdateItem",
+    offset: 1955,
+    duration: 21.2,
+    attributes: aws(
+      "DynamoDB",
+      "UpdateItem",
+      { "aws.dynamodb.table_names": '["tickets-prod"]' },
+      { TableName: "tickets-prod", Key: { pk: { S: "TICKET#tkt_4410" } }, UpdateExpression: "SET category = :c, priority = :p" },
+      {},
+    ),
+  },
+]);
+
+export const traces = [checkoutFailed, checkoutOk, queueFailed, plainOtel, initFailed, oomCrashed, supportBot, supportBotGenAi, importWorker, ticketTriage];

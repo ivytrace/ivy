@@ -2,19 +2,49 @@ export const REDACTED = '[redacted]';
 
 const normalize = (key: string) => key.toLowerCase().replace(/[-_]/g, '');
 
-export type KeyMatcher = (key: string) => boolean;
+/**
+ * Token *counts* (`max_tokens`, `input_tokens`, `inputTokens`, `cache_read_input_tokens`, `tokenCount`,
+ * `x-amzn-bedrock-output-token-count`, `completion_tokens_details`) are not secrets, although they contain
+ * the default key `token`: a normalized key ending in `tokens`, `tokencount(s)`, `tokensdetails` or
+ * `tokenusage` is a count, unless the part before it names a credential (`accessTokens`, `apiTokens`, …).
+ */
+const COUNT_KEY = /(tokens|tokencounts?|tokensdetails|tokenusage)$/;
+const CREDENTIAL_PREFIX = /(access|refresh|session|id|api|auth|bearer|oauth|csrf|xsrf|client|device|push|secret|security|reset|invite|verification|bot)$/;
+
+export function isTokenCountKey(key: string): boolean {
+  const k = normalize(key);
+  const m = COUNT_KEY.exec(k);
+  return !!m && !CREDENTIAL_PREFIX.test(k.slice(0, m.index));
+}
+
+/**
+ * Whether a key (with its value) must be redacted. Numbers and booleans are kept when the key matched only
+ * through a `token` entry (`tokenLimit: 4096`): secrets are strings. Other entries (`cardnumber`, `cvv`,
+ * `password`) redact numbers too.
+ */
+export type KeyMatcher = (key: string, value?: unknown) => boolean;
+
+const NOT_SECRET = 0;
+const TOKEN_ONLY = 1;
+const SECRET = 2;
 
 export function createKeyMatcher(keys: string[]): KeyMatcher {
   const needles = [...new Set(keys.map(normalize).filter(Boolean))];
-  const cache = new Map<string, boolean>();
-  return (key: string) => {
+  const cache = new Map<string, number>();
+  const classify = (key: string): number => {
     let hit = cache.get(key);
     if (hit === undefined) {
       const k = normalize(key);
-      hit = needles.some((n) => k.includes(n));
+      const matched = isTokenCountKey(k) ? [] : needles.filter((n) => k.includes(n));
+      hit = !matched.length ? NOT_SECRET : matched.every((n) => n.includes('token')) ? TOKEN_ONLY : SECRET;
       if (cache.size < 5000) cache.set(key, hit);
     }
     return hit;
+  };
+  return (key: string, value?: unknown) => {
+    const hit = classify(key);
+    if (hit === TOKEN_ONLY) return !(typeof value === 'number' || typeof value === 'bigint' || typeof value === 'boolean');
+    return hit === SECRET;
   };
 }
 
@@ -63,7 +93,7 @@ export function serialize(value: unknown, maxBytes: number, isSecret: KeyMatcher
   let json: string | undefined;
   try {
     json = JSON.stringify(value, function (this: any, key: string, v: unknown) {
-      if (key !== '' && isSecret(key)) return REDACTED;
+      if (key !== '' && isSecret(key, v)) return REDACTED;
       const original = key === '' ? value : this[key];
       if (original !== null && typeof original === 'object') {
         if (original instanceof Uint8Array) return decodeBinary(original);
@@ -98,11 +128,17 @@ export function serializeBody(body: string, contentType: string | undefined, max
   return capString(redactText(body, isSecret), maxBytes);
 }
 
+/** A JSON literal as far as redaction cares: numbers and booleans as such, anything else as text. */
+function literal(text: string): unknown {
+  if (text === 'true' || text === 'false') return text === 'true';
+  return /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(text) ? Number(text) : text;
+}
+
 /** Best-effort redaction for bodies that could not be parsed (e.g. truncated JSON, form bodies). */
 export function redactText(text: string, isSecret: KeyMatcher): string {
   return text
-    .replace(/"([^"\\]{1,100})"(\s*:\s*)("(?:[^"\\]|\\.)*"?|[^,}\]\s]+)/g, (m, key: string, sep: string) =>
-      isSecret(key) ? `"${key}"${sep}"${REDACTED}"` : m,
+    .replace(/"([^"\\]{1,100})"(\s*:\s*)("(?:[^"\\]|\\.)*"?|[^,}\]\s]+)/g, (m, key: string, sep: string, value: string) =>
+      isSecret(key, literal(value)) ? `"${key}"${sep}"${REDACTED}"` : m,
     )
     .replace(/(^|&)([^=&\s"{}]{1,100})=([^&]*)/g, (m, pre: string, key: string) =>
       isSecret(key) ? `${pre}${key}=${encodeURIComponent(REDACTED)}` : m,

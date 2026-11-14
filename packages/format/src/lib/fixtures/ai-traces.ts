@@ -191,3 +191,132 @@ export const genAiAttributes = {
     "gen_ai.tool.call.result": JSON.stringify(ORDER),
   },
 };
+
+// ---- Amazon Bedrock ------------------------------------------------------------------------
+
+/**
+ * A ticket-triage function calling Amazon Bedrock directly with the AWS SDK: `InvokeModel` with an
+ * Anthropic messages body (the shape of a real production capture), `Converse` with a tool call, and
+ * `InvokeModel` on Amazon Nova.
+ */
+export const TRIAGE_SYSTEM =
+  'You triage customer support tickets for an online shop. Reply with JSON only: {"category": …, "priority": "low" | "normal" | "urgent", "summary": …}.';
+export const TICKET = "My order ord_8812 still hasn't arrived and the tracking page has said 'in transit' for six days. Can you check?";
+export const TRIAGE = '{"category":"shipping","priority":"normal","summary":"Order ord_8812 stuck in transit for six days."}';
+export const CLAUDE_MODEL_ID = "eu.anthropic.claude-haiku-5-5-20261001-v1:0";
+export const NOVA_MODEL_ID = "eu.amazon.nova-lite-v1:0";
+export const DUTCH_REPLY = "Hoi Ada! Goed nieuws: je bestelling ord_8812 is onderweg met DHL en komt donderdag aan.";
+
+export const anthropicRequest = {
+  anthropic_version: "bedrock-2023-05-31",
+  system: TRIAGE_SYSTEM,
+  messages: [{ role: "user", content: [{ type: "text", text: TICKET }] }],
+  max_tokens: 1024,
+  temperature: 0,
+  thinking: { type: "disabled" },
+};
+
+export const anthropicResponse = {
+  id: "msg_bdrk_01Xq7",
+  type: "message",
+  role: "assistant",
+  model: "claude-haiku-5-5-20261001",
+  content: [{ type: "text", text: TRIAGE }],
+  stop_reason: "end_turn",
+  stop_sequence: null,
+  usage: { input_tokens: 412, output_tokens: 38, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+};
+
+export const converseRequest = {
+  modelId: NOVA_MODEL_ID,
+  system: [{ text: "You draft replies to support tickets. Look the order up first." }],
+  messages: [
+    { role: "user", content: [{ text: TICKET }] },
+    { role: "assistant", content: [{ toolUse: { toolUseId: "tooluse_k2Pq", name: "getOrder", input: { orderId: "ord_8812" } } }] },
+    { role: "user", content: [{ toolResult: { toolUseId: "tooluse_k2Pq", content: [{ json: ORDER }], status: "success" } }] },
+  ],
+  inferenceConfig: { maxTokens: 512, temperature: 0.3, topP: 0.9 },
+  toolConfig: {
+    tools: [{ toolSpec: { name: "getOrder", description: "Look up an order by ID", inputSchema: { json: { type: "object", properties: { orderId: { type: "string" } } } } } }],
+  },
+};
+
+export const converseResponse = {
+  output: { message: { role: "assistant", content: [{ text: ANSWER }] } },
+  stopReason: "end_turn",
+  usage: { inputTokens: 655, outputTokens: 61, totalTokens: 716 },
+  metrics: { latencyMs: 803 },
+};
+
+export const novaRequest = {
+  schemaVersion: "messages-v1",
+  system: [{ text: "Translate the reply to Dutch." }],
+  messages: [{ role: "user", content: [{ text: REPLY }] }],
+  inferenceConfig: { maxTokens: 300, temperature: 0.2 },
+};
+
+export const novaResponse = {
+  output: { message: { role: "assistant", content: [{ text: DUTCH_REPLY }] } },
+  stopReason: "end_turn",
+  usage: { inputTokens: 58, outputTokens: 29, totalTokens: 87 },
+};
+
+const bedrockGenAi = (modelId: string, input: number, output: number, finish: string) => ({
+  "gen_ai.system": "aws.bedrock",
+  "gen_ai.operation.name": "chat",
+  "gen_ai.request.model": modelId,
+  "gen_ai.usage.input_tokens": String(input),
+  "gen_ai.usage.output_tokens": String(output),
+  "gen_ai.response.finish_reasons": JSON.stringify([finish]),
+});
+
+const sdkBody = (body: unknown) => ({ contentType: "application/json", body });
+
+/** Attributes per Bedrock span as the layer records them (AWS SDK middleware), payloads included. */
+export const bedrockAttributes = {
+  invokeModel: {
+    ...bedrockGenAi(CLAUDE_MODEL_ID, 412, 38, "end_turn"),
+    "gen_ai.request.max_tokens": "1024",
+    "gen_ai.request.temperature": "0",
+    "gen_ai.response.model": "claude-haiku-5-5-20261001",
+    "gen_ai.response.id": "msg_bdrk_01Xq7",
+    "ivy.payload.request": JSON.stringify({ modelId: CLAUDE_MODEL_ID, accept: "application/json", ...sdkBody(anthropicRequest) }),
+    "ivy.payload.response": JSON.stringify(sdkBody(anthropicResponse)),
+  },
+  converse: {
+    ...bedrockGenAi(NOVA_MODEL_ID, 655, 61, "end_turn"),
+    "ivy.payload.request": JSON.stringify(converseRequest),
+    "ivy.payload.response": JSON.stringify(converseResponse),
+  },
+  invokeNova: {
+    ...bedrockGenAi(NOVA_MODEL_ID, 58, 29, "end_turn"),
+    "ivy.payload.request": JSON.stringify({ modelId: NOVA_MODEL_ID, ...sdkBody(novaRequest) }),
+    "ivy.payload.response": JSON.stringify(sdkBody(novaResponse)),
+  },
+  /**
+   * The InvokeModel call as an older layer captured it at the HTTP level (a bundled SDK copy it could not
+   * patch): no operation and no `gen_ai.*`, the raw bodies, token counts in the response headers. Before
+   * the redaction fix the counts themselves were `[redacted]`.
+   */
+  invokeModelHttp: {
+    "http.request.method": "POST",
+    "url.full": `https://bedrock-runtime.eu-west-1.amazonaws.com/model/${encodeURIComponent(CLAUDE_MODEL_ID)}/invoke`,
+    "server.address": "bedrock-runtime.eu-west-1.amazonaws.com",
+    "server.port": "443",
+    "http.response.status_code": "200",
+    "rpc.system": "aws-api",
+    "rpc.service": "Bedrock",
+    "cloud.region": "eu-west-1",
+    "aws.request_id": "7c1e9d2a-4b3f-4e8a-9c6d-1a2b3c4d5e6f",
+    "ivy.http.request.headers": JSON.stringify({ "content-type": "application/json", authorization: "[redacted]" }),
+    "ivy.http.response.headers": JSON.stringify({
+      "content-type": "application/json",
+      "x-amzn-requestid": "7c1e9d2a-4b3f-4e8a-9c6d-1a2b3c4d5e6f",
+      "x-amzn-bedrock-input-token-count": "412",
+      "x-amzn-bedrock-output-token-count": "38",
+      "x-amzn-bedrock-invocation-latency": "702",
+    }),
+    "ivy.payload.request": JSON.stringify(anthropicRequest),
+    "ivy.payload.response": JSON.stringify(anthropicResponse),
+  },
+};

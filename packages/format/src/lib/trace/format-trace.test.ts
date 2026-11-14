@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { checkoutFailed, checkoutOk, importWorker, initFailed, oomCrashed, plainOtel, queueFailed, supportBot, supportBotGenAi } from "../fixtures/traces.js";
+import { checkoutFailed, checkoutOk, importWorker, initFailed, oomCrashed, plainOtel, queueFailed, supportBot, supportBotGenAi, ticketTriage } from "../fixtures/traces.js";
 import { estimateTokens } from "../text/text.js";
+import * as AI from "../fixtures/ai-traces.js";
 import { formatTrace } from "./format-trace.js";
+import { spanLabel } from "./label.js";
 
 describe("formatTrace", () => {
   it("renders a failed API invocation", () => {
@@ -110,6 +112,21 @@ describe("formatTrace", () => {
     expect(text).toMatchSnapshot();
     expect(text).toContain("chat gpt-4o-mini 812→24 tok tool:getOrder");
     expect(text).toContain("execute_tool getOrder");
+  });
+
+  it("renders direct Amazon Bedrock calls as LLM calls", () => {
+    const text = formatTrace(ticketTriage, { maxTokens: 0 });
+    expect(text).toMatchSnapshot();
+    expect(text).toContain("3 LLM calls 1125→128 tok");
+    expect(text).toContain("BedrockRuntime.InvokeModel claude-haiku-5-5 412→38 tok");
+    expect(text).toContain("BedrockRuntime.Converse nova-lite 655→61 tok");
+    expect(text).toContain("BedrockRuntime.InvokeModel nova-lite 58→29 tok");
+    expect(text).not.toMatch(/Bedrock\S*\.eu-west-1/);
+  });
+
+  it("labels Bedrock spans captured at the HTTP level by older layers", () => {
+    const span = { ...ticketTriage.spans[1], name: "POST bedrock-runtime.eu-west-1.amazonaws.com", attributes: AI.bedrockAttributes.invokeModelHttp };
+    expect(spanLabel(span)).toBe("BedrockRuntime.InvokeModel claude-haiku-5-5 412→38 tok");
   });
 
   it("trims payloads to payloadChars", () => {

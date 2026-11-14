@@ -387,16 +387,32 @@ const AWS_DESCRIBERS: Record<string, (span: Span, req: unknown, res: unknown) =>
 
 const normalizeService = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
+/** `POST /model/…/invoke` from an HTTP-level AWS span without a known operation. */
+function httpOperation(span: Span): string | undefined {
+  const method = span.attributes["http.request.method"];
+  if (!method) return undefined;
+  try {
+    return `${method} ${new URL(span.attributes["url.full"]).pathname}`;
+  } catch {
+    return method;
+  }
+}
+
 function describeAws(span: Span, req: unknown, res: unknown) {
   const a = span.attributes;
-  const service = a["rpc.service"] || span.name.split(".")[0] || "AWS";
+  // Span names are `Service.Operation`, except HTTP-level spans of SDK copies the layer couldn't patch
+  // (`POST bedrock-runtime.eu-west-1.amazonaws.com`), which must not yield `eu-west-1` as the operation.
+  const fromName = /^([\w-]+)\.([\w-]+)$/.exec(span.name);
+  const service = a["rpc.service"] || fromName?.[1] || "AWS";
   const key = normalizeService(service);
-  const operation = a["rpc.method"] || span.name.split(".")[1] || span.name;
-  const specific = AWS_DESCRIBERS[key]?.(span, req, res) ?? { fields: [] };
+  const operation = a["rpc.method"] || fromName?.[2] || httpOperation(span) || "Unknown";
+  const describer = Object.hasOwn(AWS_DESCRIBERS, key) ? AWS_DESCRIBERS[key] : undefined;
+  const specific = describer?.(span, req, res) ?? { fields: [] };
   return {
     icon: AWS_SERVICE_ICONS[key] ?? ("aws" as ServiceIcon),
     serviceLabel: service,
-    operation,
+    // Services without a describer have no target, so the title names the service: `STS.AssumeRole`.
+    operation: describer ? operation : `${service}.${operation}`,
     ...specific,
     graphLabel: specific.graphLabel || service,
     groupingKey: ["aws", key, operation, specific.target ?? "", specific.groupingExtra ?? ""].join("|"),
@@ -448,6 +464,7 @@ function describeLlmSpan(span: Span, l: LlmSpan) {
       : undefined;
   const fields = [
     ...field("Model", l.model),
+    ...field("Model ID", l.modelId),
     ...field("Response model", l.responseModel),
     ...field("Tokens", tokens),
     ...field("Cached input", l.cachedInputTokens !== undefined ? formatTokens(l.cachedInputTokens) : undefined),
@@ -458,14 +475,18 @@ function describeLlmSpan(span: Span, l: LlmSpan) {
     ...field("Tool call ID", l.tool?.id),
   ];
   const note = llmNote(l);
+  // Bedrock hosts several model makers: one graph node per maker, `Bedrock · Anthropic`.
+  const bedrock = l.provider === "bedrock";
   return {
     icon: "ai" as ServiceIcon,
     serviceLabel: internal ? "AI" : label,
     operation: l.operation,
     target: l.kind === "tool" ? l.tool?.name : l.kind === "step" ? undefined : l.model,
     note: internal ? note : [note, l.providerLabel].filter(Boolean).join(" · ") || undefined,
-    graphLabel: internal ? span.name : label,
-    groupingKey: internal ? ["llm-internal", span.name].join("|") : ["llm", l.provider ?? l.model ?? "unknown"].join("|"),
+    graphLabel: internal ? span.name : bedrock ? ["Bedrock", l.vendor].filter(Boolean).join(" · ") : label,
+    groupingKey: internal
+      ? ["llm-internal", span.name].join("|")
+      : ["llm", l.provider ?? l.model ?? "unknown", ...(bedrock && l.vendor ? [l.vendor] : [])].join("|"),
     fields,
   };
 }

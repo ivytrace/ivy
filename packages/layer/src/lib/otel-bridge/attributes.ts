@@ -36,8 +36,8 @@ const lastSegment = (key: string) => key.slice(key.lastIndexOf('.') + 1);
 
 /**
  * Applies the layer's payload rules to the attributes of a bridged span, at flush time (after the
- * response): string values whose own key matches `IVY_REDACT_KEYS` are redacted (numbers such as
- * token counts are kept), JSON strings are redacted by key at any depth, and every string is capped at
+ * response): values whose own key matches `IVY_REDACT_KEYS` are redacted (token counts are kept, see
+ * `createKeyMatcher`), JSON strings are redacted by key at any depth, and every string is capped at
  * `maxBytes`. String arrays (e.g. `ai.prompt.tools`) get the same per element, within 4 × `maxBytes`.
  * Returns whether anything was truncated.
  */
@@ -46,11 +46,11 @@ export function capAttributes(span: Span, maxBytes: number, isSecret: KeyMatcher
   const attrs = span.attributes;
   for (const key in attrs) {
     const value = attrs[key];
+    if (!Array.isArray(value) && isSecret(lastSegment(key), value)) {
+      attrs[key] = REDACTED;
+      continue;
+    }
     if (typeof value === 'string') {
-      if (isSecret(lastSegment(key))) {
-        attrs[key] = REDACTED;
-        continue;
-      }
       const capped = capJsonOrText(value, maxBytes, isSecret);
       attrs[key] = capped.text;
       truncated ||= capped.truncated;

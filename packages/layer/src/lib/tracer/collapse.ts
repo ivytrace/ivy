@@ -171,6 +171,9 @@ export class SpanReducer {
     try {
       s.finalize?.(s);
       s.finalize = undefined;
+      // Finalizing may set `gen_ai.usage.*` (Bedrock Runtime requests: body and token-count headers).
+      const after = spanTokens(s.attributes);
+      if (after.input !== undefined || after.output !== undefined) return after;
       const body = s.payloads.find((p) => p.key === 'ivy.payload.response')?.value;
       return typeof body === 'string' ? bodyTokens(body) : t;
     } catch {

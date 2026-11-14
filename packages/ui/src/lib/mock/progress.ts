@@ -59,7 +59,7 @@ export function progressRows(createdMs: number, liveStart: number | null, now: n
 /** Invocations that "arrive" every few seconds once live mode started polling. */
 export function liveRows(liveStart: number | null, now: number): MockInvocation[] {
   if (liveStart === null) return [];
-  const samples = INVOCATIONS.filter((i) => i.status === "ok" && !i.cold_start && i.function !== IMPORT_FUNCTION && i.function !== "support-answerTicket").slice(0, 24);
+  const samples = INVOCATIONS.filter((i) => i.status === "ok" && !i.cold_start && i.function !== IMPORT_FUNCTION && !i.function.startsWith("support-")).slice(0, 24);
   const count = Math.min(Math.floor((now - liveStart) / LIVE_EVERY_MS), MAX_LIVE_ROWS);
   const out: MockInvocation[] = [];
   for (let k = 1; k <= count; k++) {

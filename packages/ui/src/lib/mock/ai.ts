@@ -145,3 +145,55 @@ export const supportEvent = () => ({
 });
 
 export const supportResponse = () => ({ statusCode: 200, body: JSON.stringify({ reply: AI.REPLY }) });
+
+/**
+ * Spans of `support-triageTicket`: SQS → Lambda calling Amazon Bedrock directly with the AWS SDK (an
+ * Anthropic model on InvokeModel, then Converse with a tool call and Nova on InvokeModel). Offsets are on a
+ * 2392 ms timeline.
+ */
+export const TRIAGE_TIMELINE_MS = 2392;
+
+const bedrock = (operation: string, attributes: Record<string, string>): Record<string, string> => ({
+  "rpc.system": "aws-api",
+  "rpc.service": "BedrockRuntime",
+  "rpc.method": operation,
+  "cloud.region": "eu-west-1",
+  "aws.request_id": "7c1e9d2a-4b3f-4e8a-9c6d-1a2b3c4d5e6f",
+  "http.response.status_code": "200",
+  ...attributes,
+});
+
+export function triageSpans(): AiSpanSpec[] {
+  return [
+    { name: "BedrockRuntime.InvokeModel", offset: 6, duration: 702.4, attributes: bedrock("InvokeModel", AI.bedrockAttributes.invokeModel) },
+    { ...orderLookup, offset: 712 },
+    { name: "BedrockRuntime.Converse", offset: 733, duration: 811.9, attributes: bedrock("Converse", AI.bedrockAttributes.converse) },
+    { name: "BedrockRuntime.InvokeModel", offset: 1549, duration: 402.6, attributes: bedrock("InvokeModel", AI.bedrockAttributes.invokeNova) },
+    {
+      name: "DynamoDB.UpdateItem",
+      offset: 1955,
+      duration: 21.2,
+      attributes: {
+        "rpc.system": "aws-api",
+        "rpc.service": "DynamoDB",
+        "rpc.method": "UpdateItem",
+        "cloud.region": "eu-west-1",
+        "http.response.status_code": "200",
+        "aws.dynamodb.table_names": JSON.stringify(["tickets-prod"]),
+        "ivy.payload.request": JSON.stringify({ TableName: "tickets-prod", Key: { pk: { S: "TICKET#tkt_4410" } }, UpdateExpression: "SET category = :c, priority = :p" }),
+        "ivy.payload.response": "{}",
+      },
+    },
+  ];
+}
+
+export const triageEvent = () => ({
+  Records: [
+    {
+      messageId: "8b1f2c3d-4e5f-4a6b-9c7d-8e9f0a1b2c3d",
+      eventSource: "aws:sqs",
+      eventSourceARN: "arn:aws:sqs:eu-west-1:123456789012:support-tickets",
+      body: JSON.stringify({ ticketId: "tkt_4410", message: AI.TICKET }),
+    },
+  ],
+});

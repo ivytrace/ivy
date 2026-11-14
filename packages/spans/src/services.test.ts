@@ -202,7 +202,7 @@ describe("describeSpan", () => {
     const d = describeSpan(span({ name: "Kinesis.PutRecord", attributes: aws("Kinesis", "PutRecord") }));
     expect(d.icon).toBe("aws");
     expect(d.serviceLabel).toBe("Kinesis");
-    expect(d.operation).toBe("PutRecord");
+    expect(d.operation).toBe("Kinesis.PutRecord");
   });
 
   it("renders HTTP calls and recognises known hosts", () => {

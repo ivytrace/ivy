@@ -11,8 +11,12 @@ import {
   triggerLabel,
   type LlmSpan,
   type Span,
+  type SpanDescription,
 } from "@ivy/spans";
 import { ms } from "../text/text.js";
+
+/** `DynamoDB.GetItem`; services without a describer already have the service in the operation. */
+const awsCall = (d: SpanDescription) => (d.operation.startsWith(`${d.serviceLabel}.`) ? d.operation : `${d.serviceLabel}.${d.operation}`);
 
 function httpTarget(span: Span): string {
   const a = span.attributes;
@@ -45,8 +49,9 @@ export function triggerText(span: Span): string {
  */
 function llmLabel(span: Span, l: LlmSpan): string {
   if (l.kind === "tool") return l.tool && !span.name.includes(l.tool.name) ? `${span.name} ${l.tool.name}` : span.name;
-  const parts = [span.name];
-  if (l.model && !span.name.includes(l.model)) parts.push(l.model);
+  const name = l.name ?? span.name;
+  const parts = [name];
+  if (l.model && !name.includes(l.model)) parts.push(l.model);
   if (l.inputTokens !== undefined || l.outputTokens !== undefined) parts.push(`${l.inputTokens ?? 0}→${l.outputTokens ?? 0} tok`);
   if (l.ttftMs !== undefined) parts.push(`(ttft ${ms(l.ttftMs)})`);
   const tools = requestedTools(l);
@@ -58,7 +63,8 @@ function llmLabel(span: Span, l: LlmSpan): string {
 /** Short operation name of an LLM span for matching across traces, e.g. `ai.generateText gpt-4o-mini`. */
 function llmKey(span: Span, l: LlmSpan): string {
   if (l.kind === "tool") return l.tool && !span.name.includes(l.tool.name) ? `${span.name} ${l.tool.name}` : span.name;
-  return l.model && !span.name.includes(l.model) ? `${span.name} ${l.model}` : span.name;
+  const name = l.name ?? span.name;
+  return l.model && !name.includes(l.model) ? `${name} ${l.model}` : name;
 }
 
 /**
@@ -88,7 +94,7 @@ export function spanLabel(span: Span): string {
   if (isAwsSpan(span)) {
     const d = describeSpan(span);
     const status = span.attributes["http.response.status_code"];
-    const parts = [`${d.serviceLabel}.${d.operation}`];
+    const parts = [awsCall(d)];
     if (d.target) parts.push(d.target);
     if (d.note && !d.note.startsWith("message ")) parts.push(`(${d.note})`);
     if (status && status !== "200") parts.push(`→ ${status}`);
@@ -121,7 +127,7 @@ export function callKey(span: Span): string {
   if (llm) return llmKey(span, llm);
   if (isAwsSpan(span)) {
     const d = describeSpan(span);
-    return `${d.serviceLabel}.${d.operation}${d.target ? ` ${withoutIds(d.target)}` : ""}`;
+    return `${awsCall(d)}${d.target ? ` ${withoutIds(d.target)}` : ""}`;
   }
   if (isHttpSpan(span)) {
     const method = span.attributes["http.request.method"] || span.name.split(" ")[0];

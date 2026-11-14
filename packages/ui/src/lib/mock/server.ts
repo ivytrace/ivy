@@ -35,6 +35,7 @@ export const PROJECT_OF: Record<string, string> = {
   "auth-getProfile": "billing-api-prod",
   "reports-nightlyExport": "billing-api-staging",
   "support-answerTicket": "support-api-prod",
+  "support-triageTicket": "support-api-prod",
   "email-sendReceipt": "billing-api-prod",
 };
 
