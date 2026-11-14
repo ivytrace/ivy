@@ -100,7 +100,7 @@ export const presentProject = (p: ProjectRecord) => ({
   id: p.id,
   slug: p.slug,
   name: p.name,
-  archived: p.archived,
+  archived: Boolean(p.archived),
   default: isDefaultProject(p),
   created_at: new Date(p.created_at).toISOString(),
 });
