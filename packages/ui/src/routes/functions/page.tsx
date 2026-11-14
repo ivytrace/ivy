@@ -14,7 +14,7 @@ import { useTimeRange } from "@/components/layout/time-range";
 import { sparklineBucket, useAwsAccounts, useAwsFunctions, useConfig, useFunctions, useTimeseries, useWorkspaceFunctions } from "@/lib/api/hooks";
 import { firstStep, joinedByInvite, welcomeLink, welcomeSeen } from "@/lib/welcome/welcome";
 import type { FunctionSummary } from "@/lib/api/types";
-import { ALL_PROJECTS, awsAccountsLink, errorsLink, invocationsLink, pageLink, type Scope } from "@/lib/links/links";
+import { ALL_PROJECTS, awsAccountsLink, errorsLink, invocationsLink, pageLink, rowScope, type Scope } from "@/lib/links/links";
 import { useScope } from "@/lib/links/use-scope";
 import { formatAgo, formatDuration, formatNumber, formatPercent } from "@/lib/utils/format";
 import { cn } from "@/lib/utils/cn";
@@ -51,9 +51,6 @@ function TracingCell({ fn }: { fn: FunctionSummary }) {
   );
 }
 
-/** Rows of the all-projects view link into the row's own project. */
-const rowScope = (scope: Scope, f: FunctionSummary): Scope => ({ workspace: scope.workspace, project: f.project ?? scope.project });
-
 function columnsFor(scope: Scope): ColumnDef<FunctionSummary, unknown>[] {
   const all = scope.project === ALL_PROJECTS;
   return [
@@ -75,7 +72,7 @@ function columnsFor(scope: Scope): ColumnDef<FunctionSummary, unknown>[] {
           header: "Project",
           cell: ({ row }: { row: { original: FunctionSummary } }) =>
             row.original.project ? (
-              <Link to={pageLink(rowScope(scope, row.original), "functions")} className="font-mono text-xs hover:underline">
+              <Link to={pageLink(rowScope(scope, row.original), "functions")} className="whitespace-nowrap font-mono text-xs text-muted-foreground hover:text-foreground">
                 {row.original.project}
               </Link>
             ) : null,
@@ -208,7 +205,7 @@ export default function Functions() {
       <p className="mb-4 text-sm text-muted-foreground">
         {all ? "Every project of this workspace. " : ""}Functions start appearing after their first traced invocation.
       </p>
-      {!all && <div className="my-5 mb-8 grid gap-5 md:grid-cols-3">
+      <div className="my-5 mb-8 grid gap-5 md:grid-cols-3">
         <TimeseriesChart title="Invocations" points={series.data?.items} error={series.error} metric="invocations" />
         <TimeseriesChart
           title="Errors"
@@ -227,7 +224,7 @@ export default function Functions() {
           suffix=" ms"
           summaryLabel="max"
         />
-      </div>}
+      </div>
       {functions.error ? (
         <ErrorState error={functions.error} onRetry={() => void functions.mutate()} className="rounded-md border" />
       ) : !functions.data ? (

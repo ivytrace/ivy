@@ -132,7 +132,7 @@ export const schemas = {
   ),
   FunctionList: list('FunctionSummary'),
   Invocation: object({
-    trace_id: str, span_id: str, ts: time, function: str, region: str,
+    trace_id: str, span_id: str, ...projectFields, ts: time, function: str, region: str,
     status: { type: 'string', enum: ['ok', 'error'] }, duration_ms: num, cold_start: bool, request_id: str,
     trigger: { type: 'string', examples: ['aws:apigatewayv2', 'aws:sqs'] },
     http_method: nstr, http_path: nstr, http_status: { type: ['integer', 'null'] },

@@ -8,7 +8,7 @@ import { selectWorkspaces, scoped } from "../workspaces/scope.js";
 import { failure, functionName, guarded, label, limit, READ_ONLY, since, text, project, workspace } from "./common.js";
 
 const LIST_FORMAT =
-  "Each line: [workspace], time (UTC), status, function, duration, `cold` for cold starts, the HTTP route and status " +
+  "Each line: [workspace/project], time (UTC), status, function, duration, `cold` for cold starts, the HTTP route and status " +
   "or the trigger, the error for failures, and the trace ID to pass to get_trace_summary or compare_invocations. " +
   "Failures outside the handler carry a label (Init failed, Out of memory, Timed out, Crashed) and say when there is no " +
   "trace beyond the platform report and the log tail (the runtime never started, or the process died).";
@@ -27,7 +27,7 @@ async function listAcross(data: IvyData, scope: string | undefined, query: Invoc
 
   const more = rows.length > shown.length || result.ok.some((r) => r.value.length >= query.limit) ? "; more exist, narrow the range or raise limit" : "";
   const head = `${shown.length} ${what} in ${where}, last ${query.since}, newest first${more}:`;
-  const lines = shown.map((r) => `${label(r.workspace)} ${formatInvocationLine(r.inv)}`);
+  const lines = shown.map((r) => `${label(r.workspace, r.inv.project)} ${formatInvocationLine(r.inv)}`);
   return text(`${head}\n${lines.join("\n")}${failureNote(result.failed)}`);
 }
 

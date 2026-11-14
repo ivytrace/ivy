@@ -5,8 +5,10 @@ import { decodeCursor, encodeCursor } from '../utils/cursor.js';
 import { emptyToNull, isoFromMs, round, zeroToNull } from '../utils/format.js';
 import { badRequest } from '../utils/http-error.js';
 import type { TimeRange } from '../utils/time-range.js';
+import { projectFields, type ProjectNames } from './projects.js';
 
 interface InvocationRow {
+  project_id?: string;
   ts_ms: number;
   trace_id: string;
   span_id: string;
@@ -44,8 +46,12 @@ export function parseLimit(value: string | number | undefined): number {
   return Math.min(limit, 500);
 }
 
-/** Invocations, newest first, with keyset pagination on (ts, span_id). */
-export async function listInvocations(scope: DataScope, range: TimeRange, filters: InvocationFilters) {
+/**
+ * Invocations, newest first, with keyset pagination on (ts, span_id). A workspace-wide scope reads
+ * every project, and its items carry `project_id` and `project`.
+ */
+export async function listInvocations(scope: DataScope, range: TimeRange, filters: InvocationFilters, projects?: ProjectNames) {
+  const byProject = scope.projectId === null;
   const limit = parseLimit(filters.limit);
   const where = [
     'tenant_id = {tenant:String}',
@@ -83,7 +89,7 @@ export async function listInvocations(scope: DataScope, range: TimeRange, filter
 
   const rows = await scopedDataQuery<InvocationRow>(
     scope,
-    `SELECT toUnixTimestamp64Milli(ts) AS ts_ms, trace_id, span_id, function, region, status, duration_ms,
+    `SELECT ${byProject ? 'project_id, ' : ''}toUnixTimestamp64Milli(ts) AS ts_ms, trace_id, span_id, function, region, status, duration_ms,
        cold_start, request_id, trigger, http_method, http_path, http_status, error_type, error_message, memory_used_mb,
        memory_limit_mb, failure_phase, synthetic, init_duration_ms
      FROM invocations
@@ -99,6 +105,7 @@ export async function listInvocations(scope: DataScope, range: TimeRange, filter
     items: page.map((row) => ({
       trace_id: row.trace_id,
       span_id: row.span_id,
+      ...(byProject ? projectFields(row.project_id ?? '', projects) : {}),
       ts: isoFromMs(row.ts_ms),
       function: row.function,
       region: row.region,

@@ -41,6 +41,9 @@ live in `docs/implementation/`.
   default project can be archived (not deleted: its data stays until retention) as long as another active project
   exists, which then becomes the default. Keys without a project and functions traced without a project follow the
   default; keys created for the archived project stop working. A workspace always keeps at least one project.
+- **"All projects"** is a scope of its own: Functions (with its charts), Invocations and Errors work across every
+  project of the workspace, each row labelled with its project and linking into it. It is the first entry of the
+  project switcher and can be the remembered last choice. A single trace always lives in one project.
 
 ## Authentication
 - Dashboard, API and MCP: **either no auth or OIDC**, never passwords or basic auth, not even temporarily.

@@ -14,8 +14,7 @@ import { Tooltipped } from "@/components/ui/tooltipped";
 import { useTimeRange } from "@/components/layout/time-range";
 import { useFunctions, useInvocations, useTimeseries } from "@/lib/api/hooks";
 import type { Invocation } from "@/lib/api/types";
-import { PickProject } from "@/components/common/pick-project";
-import { ALL_PROJECTS, errorsLink, invocationsLink, traceLink, type Scope } from "@/lib/links/links";
+import { ALL_PROJECTS, errorsLink, invocationsLink, pageLink, rowScope, traceLink, type Scope } from "@/lib/links/links";
 import { useScope } from "@/lib/links/use-scope";
 import { triggerLabel } from "@/lib/spans/services";
 import { formatAgo, formatDuration, formatNumber, formatTimestamp } from "@/lib/utils/format";
@@ -24,7 +23,9 @@ const PAGE_SIZE = 50;
 const ALL = "__all";
 
 function columnsFor(scope: Scope): ColumnDef<Invocation, unknown>[] {
-  const linkTo = (inv: Invocation) => traceLink(scope, inv.trace_id, inv.span_id);
+  const all = scope.project === ALL_PROJECTS;
+  // Under "All projects" a row opens in its own project: traces only exist per project.
+  const linkTo = (inv: Invocation) => traceLink(rowScope(scope, inv), inv.trace_id, inv.span_id);
   return [
   {
     accessorKey: "ts",
@@ -42,13 +43,28 @@ function columnsFor(scope: Scope): ColumnDef<Invocation, unknown>[] {
     header: "Function",
     cell: ({ row }) => (
       <Link
-        to={invocationsLink(scope, { function: row.original.function })}
+        to={invocationsLink(rowScope(scope, row.original), { function: row.original.function })}
         className="block max-w-56 truncate hover:underline"
       >
         {row.original.function}
       </Link>
     ),
   },
+  ...(all
+    ? [
+        {
+          id: "project",
+          accessorFn: (inv: Invocation) => inv.project ?? "",
+          header: "Project",
+          cell: ({ row }: { row: { original: Invocation } }) =>
+            row.original.project ? (
+              <Link to={pageLink(rowScope(scope, row.original), "functions")} className="whitespace-nowrap font-mono text-xs text-muted-foreground hover:text-foreground">
+                {row.original.project}
+              </Link>
+            ) : null,
+        } satisfies ColumnDef<Invocation, unknown>,
+      ]
+    : []),
   {
     accessorKey: "status",
     header: "Result",
@@ -116,18 +132,7 @@ function useFilterParams() {
 
 export default function Invocations() {
   const scope = useScope();
-  if (scope.project === ALL_PROJECTS) {
-    return (
-      <div>
-        <h1 className="mb-4 text-2xl font-bold">Invocations</h1>
-        <PickProject workspace={scope.workspace} page="invocations" />
-      </div>
-    );
-  }
-  return <ProjectInvocations scope={scope} />;
-}
-
-function ProjectInvocations({ scope }: { scope: Scope }) {
+  const all = scope.project === ALL_PROJECTS;
   const columns = useMemo(() => columnsFor(scope), [scope.workspace, scope.project]);
   const { range } = useTimeRange();
   const { fn, status, q, update } = useFilterParams();
@@ -151,14 +156,17 @@ function ProjectInvocations({ scope }: { scope: Scope }) {
   const functions = useFunctions(range);
   const series = useTimeseries(range, { function: fn });
 
-  const throttles = fn ? (functions.data?.items.find((f) => f.name === fn)?.throttles ?? 0) : 0;
+  // Under "All projects" a function name can exist in several projects: its rows add up.
+  const throttles = fn ? (functions.data?.items.filter((f) => f.name === fn).reduce((n, f) => n + f.throttles, 0) ?? 0) : 0;
   const functionNames = [...new Set([...(functions.data?.items.map((f) => f.name) ?? []), ...(fn ? [fn] : [])])].sort();
 
   return (
     <div>
       <h1 className="text-2xl font-bold">{fn ?? "Invocations"}</h1>
       <p className="mb-4 text-sm text-muted-foreground">
-        {fn ? "Invocations of this function." : "All traced invocations, newest first."}
+        {fn
+          ? `Invocations of this function${all ? " in every project that has it" : ""}.`
+          : `All traced invocations${all ? " of every project" : ""}, newest first.`}
       </p>
       {throttles > 0 && (
         <p className="text-sm">

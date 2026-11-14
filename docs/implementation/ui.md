@@ -25,7 +25,7 @@ accounts and rules, `fixtures.ts` span data):
 - Two workspaces in multi-workspace mode: `acme` (you own it; projects `checkout-prod`, `checkout-staging`,
   `billing-api-prod`, `billing-api-staging`, `support-api-prod`, `default` and an archived one; three members, a pending invitation, ingest
   keys) and `side-project` (you're a member; only its untouched default project, so it opens the quick-start wizard).
-- Span data: a week of invocations of five functions (one, `support-answerTicket` in `support-api-prod`, an AI SDK support bot) spread over the `acme` projects (`PROJECT_OF` in `server.ts`), with
+- Span data: a week of invocations of five functions (one, `support-answerTicket` in `support-api-prod`, an AI SDK support bot) spread over the `acme` projects (`projectOfInvocation` in `server.ts`; a quarter of `checkout-createOrder` runs come from `checkout-staging`, so "All projects" shows one name in two projects), with
   filters, `since`/`from`/`to`, cursor pagination, error groups, timeseries buckets, and full traces with DynamoDB, S3,
   SQS, SNS, EventBridge, SES, Lambda, Secrets Manager and fetch spans, logs and exceptions. Other workspaces start empty
   and "receive" a first trace 6 s after a rule or an ingest key is created there, so the wizard's last step completes.
@@ -62,7 +62,7 @@ Everything lives under a workspace and, for data, a project (`workspaces-project
 | route | |
 |---|---|
 | `/w/:workspace/:project/functions`, `…/invocations`, `…/errors`, `…/traces/:traceId` | data pages of a project |
-| `/w/:workspace/all/functions`, `/w/:workspace/all/errors` | every project of the workspace; rows have a Project column and link into their project. Invocations and traces under `all` ask to pick a project |
+| `/w/:workspace/all/functions`, `…/all/invocations`, `…/all/errors` | every project of the workspace (charts included); rows have a quiet Project column and link into their own project (`rowScope`). `/w/:workspace/all/traces/:id` finds the trace's project and redirects there |
 | `/w/:workspace` | the last-used project of that workspace, else its default project |
 | `/w/:workspace/settings/general` · `members` · `projects` · `aws` · `aws/:id` | workspace settings |
 | `/invite/:token` | accept an invitation (signed in, outside the layout) |
@@ -70,15 +70,17 @@ Everything lives under a workspace and, for data, a project (`workspaces-project
 
 - The scope comes from the URL (`parseScope`, `useScope`); the API hooks build `/api/w/:ws/p/:project/…` or
   `/api/w/:ws/…` from it. Pages outside `/w/…` (the wizard) set it with `ScopeProvider`.
-- The last-used workspace and project are kept in localStorage (`ivy.lastScope`, in try/catch).
+- The last-used workspace and project are kept in localStorage (`ivy.lastScope`, in try/catch); `all` is a valid
+  last choice.
 - Old links keep working: `/`, `/functions`, `/invocations`, `/errors`, `/traces/:id`, `/settings`, `/settings/aws` and
   `/settings/aws/:id` redirect to the same page in the last-used workspace and project (else the first workspace from
   `GET /api/workspaces` and its default project), keeping the query string and hash (`legacyTarget`, unit-tested).
 - Hosted routing: `/w/*`, `/invite/*` and `/welcome/*` are app paths.
 
 **Header.** A `Workspace / Project ▾` breadcrumb next to the logo with a popover on each part: the workspaces (plus
-"Create workspace" in multi-workspace mode, and "Workspace settings"), and the active projects (plus "All projects",
-"New project", "Manage projects"). Switching project keeps the list page you're on (a trace goes back to Functions).
+"Create workspace" in multi-workspace mode, and "Workspace settings"), and the projects: "All projects" first with a divider after it, then the active projects, then
+"New project" and "Manage projects". Switching project keeps the list page you're on (Functions, Invocations, Errors);
+from a trace or a settings page it opens Functions (`switchProjectLink`, unit-tested).
 Menu and ⌘K links carry the current scope.
 
 Creating a workspace or project takes a name only: the server makes the slug (with `-2`, `-3`, … on collisions), and
@@ -115,10 +117,12 @@ Paths below are relative to `/w/:workspace/:project`.
 
 - `/functions`: totals charts (invocations, errors, p95) from `stats/timeseries`, plus a table from `functions` with
   per-function sparklines, error rate, cold starts, p50/p95 and the auto-trace state in a "Tracing" column (matched by
-  region + name; functions not in a connected account show "Manual"). Under `all` there are no totals charts.
+  region + name; functions not in a connected account show "Manual"). Under `all` the totals charts sum every project
+  (`/api/w/:ws/stats/timeseries`) and each row's sparklines are its own project's.
 - `/invocations?function=&status=&q=`: filters live in the URL so links can deep-link into a filtered list.
   Uses cursor pagination (a stack of `next_cursor`s for Previous/Next). With `function` set, the function's
-  charts are shown, as on trace-stack's per-function page.
+  charts are shown, as on trace-stack's per-function page. Under `all` the list and charts cover every project that
+  has the function, and rows link to their project's trace.
 - `/traces/:traceId?invocation=<span_id>`: the trace-stack layout. The header has status, duration, cold start,
   billed duration, init duration, memory used against the limit (red when the limit was reached) and AWS console
   links. Failures outside the handler get a `FailureBadge` ("Init failed", "Out of memory", "Timed out", "Crashed")

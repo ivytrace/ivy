@@ -39,9 +39,18 @@ API: `/api/w/:workspace/…` and `/api/w/:workspace/p/:project/…`. UI: `/w/:wo
 `/w/:workspace/:project/traces/:id`, `/w/:workspace/settings/…`. Path segments rather than query params, because the
 membership check and project resolution then run once in middleware for the whole prefix (a route can't forget them),
 API and UI URLs line up, and agents can build URLs from two slugs. Both accept slugs or IDs, so links built from IDs
-survive renames. The project segment `all` in the UI means "all projects of this workspace" (the function overview and
-errors exist workspace-wide in the API; invocations and traces don't, they need a project), which is why `all` and
-`settings` are reserved project slugs.
+survive renames. The project segment `all` in the UI means "all projects of this workspace" (functions, invocations,
+errors and timeseries exist workspace-wide in the API; a trace needs its project), which is why `all` and `settings`
+are reserved project slugs.
+
+### "All projects" is a full scope, except for single traces
+
+Functions (with its charts), Invocations and Errors work under `all`, through the workspace-wide routes. Rows carry
+their project's slug and link into that project (trace, function, project), because a trace lives in exactly one
+project. A trace URL under `all` (old link, ⌘K) looks up the trace's invocation in the workspace-wide list (`q` matches
+trace IDs exactly) and redirects to its project. The keyset cursor `(ts, span_id)` stays as it is across projects: a
+span ID is 64 random bits, so two projects sharing one at the same millisecond isn't a practical concern. The MCP
+tools use the same data functions without a project, so an agent and the dashboard see the same rows.
 
 ### Slugs are generated from names and hidden; URLs stay stable when renaming
 
@@ -193,6 +202,9 @@ The app's own paths that CloudFront must send to the app (in addition to those i
   assigner), `lib/aws/throttles.test.ts` (throttles under the moved default), the UI's
   `components/workspaces/archive-default.test.tsx` (the archive dialog) and `lib/mock/server.test.ts` (the mock API
   mirrors it), `routes/tenant-scope.test.ts` and `lib/clickhouse/scoped.test.ts` (project guard),
+  keys and auto-trace keys), `routes/tenant-scope.test.ts` and `lib/clickhouse/scoped.test.ts` (project guard; workspace-wide invocations and
+  timeseries: tenant bound, no project, items labelled with their project, a cursor page across projects, `project`
+  narrowing, 404 for another workspace without any query),
   `lib/ingest/router.test.ts` (`x-ivy-project`, old keys, archived/missing projects).
 - Schema: a ClickHouse volume created with the previous schema was refused by the new `init.sh` with the reset
   instructions; after `reset.sql` the new `init.sh` created all 14 tables and ran again as a no-op. (A data-preserving

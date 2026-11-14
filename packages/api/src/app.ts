@@ -110,6 +110,8 @@ export function createApp(options: { uiDir: string; access?: WorkspaceAccess }) 
   app.get(`${prj}/stats/timeseries`, getTimeseries);
   app.get(`${ws}/functions`, allProjects(), getFunctions);
   app.get(`${ws}/errors`, allProjects(), getErrors);
+  app.get(`${ws}/invocations`, allProjects(), getInvocations);
+  app.get(`${ws}/stats/timeseries`, allProjects(), getTimeseries);
 
   // AWS accounts and auto-trace, per workspace.
   app.get(`${ws}/aws/setup`, getAwsSetup);

@@ -16,6 +16,7 @@ import { AuthError, verifyAccessToken } from '../auth/verify.js';
 import { mountAgentSurface } from './mount.js';
 import { createProject } from '../tenancy/projects.js';
 import { createTenant } from '../tenancy/tenants.js';
+import { defaultProjectId } from '../tenancy/ids.js';
 import { fixedWorkspaceAccess } from '../tenancy/members.js';
 import { resetTenancyForTests } from '../tenancy/testing.js';
 import type { TenantRecord } from '../tenancy/store.js';
@@ -68,8 +69,8 @@ const oomStored: Trace = {
 const storedTraces = [checkoutFailed, checkoutOk, initFailed, oomStored];
 
 /** invocations rows as the invocations route selects them (absent values as '' / 0). */
-const invocationRow = (i: (typeof invocations)[number]) => ({
-  ...i, ts_ms: ms(i.ts), http_method: i.http_method ?? '', http_path: i.http_path ?? '', http_status: i.http_status ?? 0,
+const invocationRow = (tenant: unknown) => (i: (typeof invocations)[number]) => ({
+  ...i, project_id: defaultProjectId(String(tenant)), ts_ms: ms(i.ts), http_method: i.http_method ?? '', http_path: i.http_path ?? '', http_status: i.http_status ?? 0,
   error_type: i.error_type ?? '', error_message: i.error_message ?? '', memory_used_mb: i.memory_used_mb ?? 0,
   memory_limit_mb: i.memory_limit_mb ?? 0, failure_phase: i.failure_phase ?? '', init_duration_ms: i.init_duration_ms ?? 0,
 });
@@ -91,7 +92,7 @@ const fake = {
       rows = [...invocations, ...failureInvocations]
         .filter((i) => !params.query_params.status || i.status === params.query_params.status)
         .filter((i) => !params.query_params.function || i.function === params.query_params.function)
-        .map(invocationRow);
+        .map(invocationRow(params.query_params.tenant));
     }
     return { json: async () => rows };
   },
@@ -190,6 +191,12 @@ describe('MCP endpoint in the API', () => {
     const all = await run({});
     expect(all.length).toBeGreaterThan(0);
     for (const q of all) expect(q.query_params.project).toBeUndefined();
+
+    // All-projects rows say which project they're from, as the API's workspace-wide routes do.
+    const text = textOf(await client.callTool({ name: 'find_failing_invocations', arguments: { function: 'checkout-createOrder' } }));
+    expect(text).toMatch(/^\[acme\/default\] /m);
+    const scoped = textOf(await client.callTool({ name: 'find_failing_invocations', arguments: { function: 'checkout-createOrder', project: 'default' } }));
+    expect(scoped).toMatch(/^\[acme\] /m);
   });
 
   it('fans out over all workspaces, one tenant-scoped query per workspace, labelled', async () => {
@@ -201,7 +208,8 @@ describe('MCP endpoint in the API', () => {
     const text = textOf(await client.callTool({ name: 'find_failing_invocations', arguments: { since: '24h' } }));
     const lines = text.split('\n');
     expect(lines[0]).toBe('8 failed invocations in 2 workspaces, last 24h, newest first:');
-    expect(lines.filter((l) => l.startsWith('[prod] '))).toHaveLength(4);
+    expect(lines.filter((l) => l.startsWith('[prod/default] '))).toHaveLength(4);
+    // (ten_b isn't in the control plane here, so its project slug is unknown and left out.)
     expect(lines.filter((l) => l.startsWith('[staging] '))).toHaveLength(4);
 
     const data = captured.filter((q) => /FROM (otel_traces|invocations)/.test(q.query));

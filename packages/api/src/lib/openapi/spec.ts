@@ -21,6 +21,13 @@ const range = [
   query('to', 'Range end (ISO 8601). Default now.', { type: 'string', format: 'date-time' }),
 ];
 const fn = query('function', 'Exact function name.');
+const invocationFilters = [
+  fn,
+  query('status', 'Only ok or error.', { type: 'string', enum: ['ok', 'error'] }),
+  query('q', 'Free text: request ID or trace ID (exact), or text in the error message or HTTP path.'),
+  query('limit', 'Page size.', { type: 'integer', minimum: 1, maximum: 500, default: 50 }),
+  query('cursor', 'Opaque cursor from next_cursor.'),
+];
 const accountId = path('id', 'Connection ID (not the AWS account ID).');
 const ws = path('workspace', 'Workspace slug or ID.');
 const prj = path('project', 'Project slug or ID within the workspace.');
@@ -207,13 +214,15 @@ export const openApiDocument = {
     '/api/w/{workspace}/p/{project}/invocations': {
       get: {
         tags: ['Traces'], summary: 'Invocations, newest first', operationId: 'listInvocations',
-        parameters: [
-          ws, prj, ...range, fn,
-          query('status', 'Only ok or error.', { type: 'string', enum: ['ok', 'error'] }),
-          query('q', 'Free text: request ID or trace ID (exact), or text in the error message or HTTP path.'),
-          query('limit', 'Page size.', { type: 'integer', minimum: 1, maximum: 500, default: 50 }),
-          query('cursor', 'Opaque cursor from next_cursor.'),
-        ],
+        parameters: [ws, prj, ...range, ...invocationFilters],
+        responses: { 200: json(ref('InvocationList')), ...bad, ...notFound },
+      },
+    },
+    '/api/w/{workspace}/invocations': {
+      get: {
+        tags: ['Traces'], summary: 'Invocations of every project of the workspace, newest first', operationId: 'listWorkspaceInvocations',
+        description: 'Items carry `project_id` and `project` (slug); open a trace under its project.',
+        parameters: [ws, ...range, ...invocationFilters],
         responses: { 200: json(ref('InvocationList')), ...bad, ...notFound },
       },
     },
@@ -254,6 +263,17 @@ export const openApiDocument = {
           query('bucket', 'Bucket size; default keeps about 100 points or fewer.', { type: 'string', enum: ['1m', '5m', '15m', '1h', '1d'] }),
         ],
         responses: { 200: json(ref('Timeseries')), ...bad, ...notFound },
+      },
+    },
+    '/api/w/{workspace}/stats/timeseries': {
+      get: {
+        tags: ['Traces'], summary: 'Invocations, errors, p95 and throttles per bucket, over every project of the workspace', operationId: 'getWorkspaceTimeseries',
+        parameters: [
+          ws, ...range, fn,
+          query('project', 'Slug or ID: only this project (for a function name that exists in several projects).'),
+          query('bucket', 'Bucket size; default keeps about 100 points or fewer.', { type: 'string', enum: ['1m', '5m', '15m', '1h', '1d'] }),
+        ],
+        responses: { 200: json(ref('Timeseries')), ...bad, 404: error('Workspace or project not found') },
       },
     },
     '/api/w/{workspace}/aws/setup': {

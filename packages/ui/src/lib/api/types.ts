@@ -132,7 +132,7 @@ export interface FunctionSummary extends ProjectRef {
   throttles: number;
 }
 
-export interface Invocation {
+export interface Invocation extends ProjectRef {
   trace_id: string;
   span_id: string;
   ts: string;
