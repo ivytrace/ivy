@@ -27,6 +27,25 @@ describe("list formatters", () => {
     expect(formatErrorGroups(errorGroups.slice(2))).toContain("Init failed · Runtime.ImportModuleError");
   });
 
+  it("says how long an in-progress invocation has been running, or that no completion was recorded", () => {
+    const start = Date.UTC(2026, 10, 14, 12, 0, 0);
+    const running = {
+      ...invocations[0],
+      status: "in_progress" as const,
+      ts: new Date(start).toISOString(),
+      function: "import-worker",
+      cold_start: false,
+      deadline: new Date(start + 900_000).toISOString(),
+      last_seen: new Date(start + 5000).toISOString(),
+    };
+    expect(formatInvocations([running], undefined, start + 134_000)).toBe(
+      `2026-11-14T12:00:00Z RUNNING import-worker running for 2m 14s (in progress) · trace ${running.trace_id}`,
+    );
+    expect(formatInvocations([running], undefined, start + 960_000)).toBe(
+      `2026-11-14T12:00:00Z NO COMPLETION import-worker no completion recorded · deadline 2026-11-14T12:15:00Z passed without a final record · trace ${running.trace_id}`,
+    );
+  });
+
   it("says so when empty", () => {
     expect(formatInvocations([])).toBe("No invocations found.");
     expect(formatErrorGroups([])).toBe("No errors found.");

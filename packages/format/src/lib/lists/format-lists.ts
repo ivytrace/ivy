@@ -1,4 +1,4 @@
-import { failureLabel, missingTraceNote, type ErrorGroup, type Invocation } from "@ivy/spans";
+import { failureLabel, inProgressState, inProgressText, missingTraceNote, type ErrorGroup, type Invocation } from "@ivy/spans";
 import { ms, oneLine, shortIso } from "../text/text.js";
 
 const trigger = (t: string) => t.replace(/^aws:/, "") || "unknown";
@@ -7,7 +7,15 @@ const trigger = (t: string) => t.replace(/^aws:/, "") || "unknown";
  * One line per invocation, e.g.
  * `2026-11-14T12:00:01Z ERROR checkout-createOrder 245ms cold POST /orders → 500 · TypeError: Cannot read… · trace 673f…`
  */
-export function formatInvocationLine(inv: Invocation, messageChars = 140): string {
+export function formatInvocationLine(inv: Invocation, messageChars = 140, nowMs = Date.now()): string {
+  if (inv.status === "in_progress") {
+    const deadline = inv.deadline ? Date.parse(inv.deadline) : null;
+    const state = inProgressState(deadline, nowMs) === "running" ? "RUNNING" : "NO COMPLETION";
+    const parts = [shortIso(inv.ts), state, inv.function, inProgressText(Date.parse(inv.ts), deadline, nowMs)];
+    if (inv.cold_start) parts.push("cold");
+    if (state === "NO COMPLETION" && inv.deadline) parts.push(`· deadline ${shortIso(inv.deadline)} passed without a final record`);
+    return `${parts.join(" ")} · trace ${inv.trace_id}`;
+  }
   const parts = [shortIso(inv.ts), inv.status === "error" ? "ERROR" : "ok", inv.function, ms(inv.duration_ms)];
   if (inv.cold_start) parts.push("cold");
   parts.push(
@@ -28,9 +36,9 @@ export function formatInvocationLine(inv: Invocation, messageChars = 140): strin
   return `${line} · trace ${inv.trace_id}`;
 }
 
-export function formatInvocations(items: Invocation[], messageChars?: number): string {
+export function formatInvocations(items: Invocation[], messageChars?: number, nowMs?: number): string {
   if (!items.length) return "No invocations found.";
-  return items.map((inv) => formatInvocationLine(inv, messageChars)).join("\n");
+  return items.map((inv) => formatInvocationLine(inv, messageChars, nowMs)).join("\n");
 }
 
 /** One line per error group: count, function, error, first/last seen and a sample trace. */

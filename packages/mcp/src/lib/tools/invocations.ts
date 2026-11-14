@@ -11,7 +11,9 @@ const LIST_FORMAT =
   "Each line: [workspace/project], time (UTC), status, function, duration, `cold` for cold starts, the HTTP route and status " +
   "or the trigger, the error for failures, and the trace ID to pass to get_trace_summary or compare_invocations. " +
   "Failures outside the handler carry a label (Init failed, Out of memory, Timed out, Crashed) and say when there is no " +
-  "trace beyond the platform report and the log tail (the runtime never started, or the process died).";
+  "trace beyond the platform report and the log tail (the runtime never started, or the process died). Long-running " +
+  "invocations still running show RUNNING and \"running for 2m 14s (in progress)\"; NO COMPLETION means one passed its " +
+  "deadline without a final record (the environment probably died).";
 
 /** Runs the query in every selected workspace, merges newest first and cuts to the combined limit. */
 async function listAcross(data: IvyData, scope: string | undefined, query: InvocationQuery & { limit: number; since: string }, what: string) {
@@ -68,7 +70,7 @@ export function registerInvocationTools(server: McpServer, data: IvyData) {
         project,
         q: z.string().min(1).optional().describe("Request ID, trace ID, or text in the error message or HTTP path."),
         function: functionName,
-        status: z.enum(["ok", "error"]).optional().describe("Only successful (ok) or failed (error) invocations."),
+        status: z.enum(["ok", "error", "in_progress"]).optional().describe("Only successful (ok), failed (error) or still running (in_progress) invocations."),
         since: since("24h"),
         limit: limit(20),
       },
