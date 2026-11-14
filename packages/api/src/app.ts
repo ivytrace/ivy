@@ -23,7 +23,14 @@ import { patchRule } from './routes/aws/rules/patch.js';
 import { postRule } from './routes/aws/rules/post.js';
 import { getAwsSetup } from './routes/aws/setup.js';
 import { getAwsTemplate } from './routes/aws/template.js';
+import { getAlerts } from './routes/alerts/get.js';
+import { putAlerts } from './routes/alerts/put.js';
+import { deleteSlackIntegration, getSlackCallback, postSlackConnect, postSlackTest } from './routes/alerts/slack.js';
 import { getConfig } from './routes/config/get.js';
+import { getDigest, getDigestPreview } from './routes/digest/get.js';
+import { putDigest } from './routes/digest/put.js';
+import { getUnsubscribe, postUnsubscribe } from './routes/digest/unsubscribe.js';
+import { getNotifications, putNotifications } from './routes/me/notifications.js';
 import { getErrors } from './routes/errors/get.js';
 import { getFunctions } from './routes/functions/get.js';
 import { getHealth } from './routes/health/get.js';
@@ -68,6 +75,10 @@ export function createApp(options: { uiDir: string; access?: WorkspaceAccess }) 
   app.get('/api/health', getHealth);
   app.get('/api/config', getConfig);
   app.post('/api/aws/events', postAwsEvent);
+  // Alerts: Slack's OAuth redirect and the digest's unsubscribe link (public, self-authenticating).
+  app.get('/api/slack/oauth/callback', getSlackCallback);
+  app.get('/api/digest/unsubscribe', getUnsubscribe);
+  app.post('/api/digest/unsubscribe', postUnsubscribe);
   mountAgentSurface(app, access, { uiDir: options.uiDir });
 
   // The caller's account: workspaces and invite links (no workspace context).
@@ -75,6 +86,8 @@ export function createApp(options: { uiDir: string; access?: WorkspaceAccess }) 
   app.post('/api/workspaces', postWorkspace);
   app.get('/api/invitations/:token', getInvitationByToken);
   app.post('/api/invitations/:token/accept', postAcceptInvitation);
+  app.get('/api/me/notifications', getNotifications(access));
+  app.put('/api/me/notifications', putNotifications(access));
 
   // Everything else is in a workspace the caller is a member of (404 otherwise), and data in a project.
   const ws = '/api/w/:workspace';
@@ -101,6 +114,16 @@ export function createApp(options: { uiDir: string; access?: WorkspaceAccess }) 
   app.get(`${prj}/keys`, getKeys);
   app.post(`${prj}/keys`, postKey);
   app.delete(`${prj}/keys/:id`, deleteKey);
+
+  // Alerts: per project (Slack), and the workspace's weekly email digest.
+  app.get(`${prj}/alerts`, getAlerts);
+  app.put(`${prj}/alerts`, putAlerts);
+  app.post(`${prj}/alerts/slack/connect`, postSlackConnect);
+  app.delete(`${prj}/alerts/slack/:id`, deleteSlackIntegration);
+  app.post(`${prj}/alerts/slack/:id/test`, postSlackTest);
+  app.get(`${ws}/digest`, getDigest);
+  app.put(`${ws}/digest`, putDigest);
+  app.get(`${ws}/digest/preview`, getDigestPreview);
 
   // Data: per project, and workspace-wide where it makes sense (explicitly all projects).
   app.get(`${prj}/functions`, getFunctions);

@@ -11,6 +11,11 @@ export const PUBLIC_ROUTES = [
   // API description and reference page (docs/implementation/mcp.md)
   'GET /api/openapi.json',
   'GET /api/docs',
+  // Slack's OAuth redirect: checked by its signed state and a cookie set when the flow started (alerts.md)
+  'GET /api/slack/oauth/callback',
+  // Digest unsubscribe links work without signing in; the token is signed (alerts.md)
+  'GET /api/digest/unsubscribe',
+  'POST /api/digest/unsubscribe',
 ];
 
 export const isPublicRoute = (method: string, path: string) =>

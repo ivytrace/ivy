@@ -35,6 +35,7 @@ limits to new workspaces; self-hosted installs need none. This document is norma
 | `on-workspace-created` | notification | a workspace was created (`POST /api/workspaces`, or a user's personal workspace on first sign-in) | `WorkspaceCreatedData` | | |
 | `on-member-joined` | notification | a user accepted an invitation and became a member (not when they already were one) | `MemberJoinedData` | | |
 | `on-aws-account-connected` | notification | verifying an AWS connection succeeded for the first time | `AwsAccountConnectedData` | | |
+| `on-error-group-created` | notification | the alert evaluator saw an error group for the first time (within about a minute of its first occurrence; `alerts.md`) | `ErrorGroupCreatedData` | | |
 
 Payload types (`lib/hooks/types.ts`):
 
@@ -69,9 +70,34 @@ interface AwsAccountConnectedData {
   workspace: WorkspaceRef;
   connection: { id: string; name: string; account_id: string; stack_region: string; regions: string[]; all_regions: boolean };
 }
+
+// on-error-group-created
+interface ErrorGroupCreatedData {
+  workspace: WorkspaceRef;
+  project: { id: string; slug: string; name: string };
+  group: {
+    fingerprint: string;            // the error group's fingerprint; `throttled:<region>:<function>` for throttles
+    kind: 'error' | 'throttle';
+    function: string;
+    error_type: string;
+    error_message: string;          // at most 500 characters
+    failure_kind: 'init_failed' | 'out_of_memory' | 'timed_out' | 'crashed' | null;
+    first_seen: string;             // ISO 8601
+    occurrences: number;
+    sample_trace_id: string | null;
+    url: string | null;             // the latest trace (or errors page) in the dashboard; null without IVY_PUBLIC_URL
+  };
+}
 ```
 
-Payloads carry IDs, slugs, names and emails, never trace data or access tokens. The only secret any payload carries
+`on-error-group-created` is for your own integrations (PagerDuty, a chat other than Slack, a ticket). It fires for
+every project of every workspace while the hook file exists (the evaluator then scans all projects each minute, not
+only those with Slack), at most once per group: the group's alert state in `ivy_control.alert_state` records it.
+Throttle groups only fire for projects that include throttles in their alert settings. Groups that already existed
+when the hook was installed don't fire.
+
+Payloads carry IDs, slugs, names and emails, never trace data or access tokens (`on-error-group-created` carries
+the error's type and trimmed message, as the dashboard shows them, but no payloads or log lines). The only secret any payload carries
 is the CloudFormation template's event secret, which `publish-cfn-template` needs by its nature.
 
 ### `publish-cfn-template` in detail

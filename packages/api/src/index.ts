@@ -2,6 +2,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
+import { startAlertLoop } from './lib/alerts/loop.js';
 import { startSyncLoop } from './lib/aws/scheduler.js';
 import { readAuthConfig } from './lib/auth/config.js';
 import { hookStats } from './lib/hooks/run.js';
@@ -21,6 +22,7 @@ serve({ fetch: createApp({ uiDir }).fetch, port }, (info) => {
 });
 
 startSyncLoop();
+startAlertLoop();
 
 // Internal only (loopback): counters of this API process, like the ingest router's /stats.
 const adminPort = Number(process.env.IVY_API_ADMIN_PORT ?? 3020);

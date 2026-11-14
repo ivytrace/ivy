@@ -59,8 +59,12 @@ the dashboard's (`/w/:workspace/:project/…`); and agents/MCP tools can build t
   "auth": { "enabled": true, "issuer": "https://auth.includable.com", "clientId": "ivy", "audience": "https://ivytrace.dev/api", "scopes": "openid email profile offline_access" },
   "workspaces": { "multi": true },
   "email": { "enabled": true },
+  "alerts": { "slack": true, "email": true },
   "aws": { "quick_create": true } }
 ```
+`alerts.slack` is true when `IVY_SLACK_CLIENT_ID`, `IVY_SLACK_CLIENT_SECRET`, `IVY_PUBLIC_URL` and `IVY_SECRET_KEY`
+are set; `alerts.email` (the weekly digest) when `IVY_SMTP_URL`, `IVY_EMAIL_FROM` and `IVY_PUBLIC_URL` are
+(`alerts.md`).
 With auth off: `"auth": { "enabled": false }` and `"workspaces": { "multi": false }`. `email.enabled` is true when
 `IVY_SMTP_URL` and `IVY_EMAIL_FROM` are set (invitations are then also emailed). `aws.quick_create` is true when
 the `publish-cfn-template` hook is installed (see "Hosting hooks"); otherwise connecting AWS is download-only.
@@ -483,6 +487,61 @@ can't be traced. Matches are against the functions found by each account's last 
 EventBridge API destination target, authenticated with the `x-ivy-event-secret` header (per connection), not user
 auth, so it is not under a workspace. Syncs the event's region. 202, or 401/403.
 
+## Alerts
+
+Design and setup: `alerts.md`. Owners change project alerts and the workspace digest; every member can read them and
+change their own digest subscription.
+
+### `GET /api/w/:workspace/p/:project/alerts`
+```json
+{ "available": { "slack": true, "missing": [] },
+  "can_edit": true,
+  "settings": { "slack_enabled": true, "interval_minutes": 60, "every_occurrences": 100, "include_throttles": false },
+  "integrations": [{ "id": "slk_…", "team_name": "Acme", "channel": "#alerts", "status": "ok", "error": null,
+                     "configuration_url": "https://acme.slack.com/services/B…", "created_at": "…" }] }
+```
+`available.missing` lists the environment variables Slack still needs. `status: "broken"` (with `error`) after Slack
+rejected the webhook (revoked, channel archived or deleted); the evaluator skips it until a test message succeeds.
+The webhook URL is never returned.
+
+### `PUT /api/w/:workspace/p/:project/alerts` (owner)
+Partial `{ slack_enabled?, interval_minutes? (1–10080), every_occurrences? (1–1000000), include_throttles? }`; returns
+the settings. 400 on anything else.
+
+### `POST /api/w/:workspace/p/:project/alerts/slack/connect` (owner)
+`{ "url": "https://slack.com/oauth/v2/authorize?client_id=…&scope=incoming-webhook&redirect_uri=…&state=…" }` and a
+`Set-Cookie: ivy_slack_oauth=<nonce>; Path=/api/slack; HttpOnly; SameSite=Lax` the callback checks. 409 without the
+Slack configuration.
+
+### `GET /api/slack/oauth/callback?code&state` (public)
+Slack's redirect. Checks the state (HMAC with `IVY_SECRET_KEY`, workspace, project, user, 10-minute expiry) and that
+the cookie matches it, that the user still owns the workspace, exchanges the code (`oauth.v2.access`), stores the
+webhook encrypted and redirects to `/w/<ws>/settings/alerts/<project>?slack=connected` (or `denied`, or `error` with
+`message`). A bad, expired or foreign state is a 400 page. Connecting the same channel again replaces it.
+
+### `DELETE /api/w/:workspace/p/:project/alerts/slack/:id` (owner), `POST …/alerts/slack/:id/test` (owner)
+Remove a channel (`{ "removed": true }`), or post a test message: `{ "ok": true, "error": null, "integration": {…} }`.
+A successful test marks a broken channel working again.
+
+### `GET /api/w/:workspace/digest`, `PUT /api/w/:workspace/digest` (owner)
+```json
+{ "available": true, "missing": [], "schedule": "0 8 * * 1", "enabled": true, "can_edit": true,
+  "subscribed": true, "recipients": 4 }
+```
+`subscribed` is the caller's choice (null without sign-in). `PUT { "enabled": false }` switches the workspace's digest off.
+
+### `GET /api/w/:workspace/digest/preview`
+`{ subject, html, text, period: { from, to }, empty }`: the digest of the seven days up to today as it would be
+sent; works without SMTP.
+
+### `GET /api/me/notifications`, `PUT /api/me/notifications`
+`{ "email": "…", "digest_available": true, "items": [{ "workspace": { "id", "slug", "name" }, "digest": true }] }`;
+`PUT { "workspace": "<slug or ID>", "digest": false }`. 403 with auth off (no users).
+
+### `GET /api/digest/unsubscribe?token=`, `POST /api/digest/unsubscribe?token=` (public)
+The digest's unsubscribe link (signed token: workspace and recipient, no expiry). GET shows a confirmation page, POST
+unsubscribes; POST is also the RFC 8058 one-click target of the `List-Unsubscribe` header.
+
 ## Hosting hooks
 
 Deployment-specific behaviour is added with executable hooks in `IVY_HOOKS_DIR`, not with API calls. The normative
@@ -494,6 +553,7 @@ contract (envelope, kinds, timeouts, environment, payload types) is `hooks.md`. 
 | `on-workspace-created` | notification | `{ workspace, owner }` | none (e.g. hosted applies plan limits) |
 | `on-member-joined` | notification | `{ workspace, member, invitation_id, invited_by }` | none |
 | `on-aws-account-connected` | notification | `{ workspace, connection }` | none |
+| `on-error-group-created` | notification | `{ workspace, project, group }` | none (fired by the alert evaluator, `alerts.md`) |
 
 Public Ivy has no plans or limits; a workspace without a limits record is unlimited.
 

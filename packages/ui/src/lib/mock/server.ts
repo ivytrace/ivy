@@ -1,4 +1,5 @@
 import type { ErrorGroup, FunctionSummary, Invocation, InvocationsResponse, TimeseriesPoint } from "../api/types.ts";
+import { createAlertsMock } from "./alerts.ts";
 import { createAwsMock, type MockOptions } from "./aws.ts";
 import { buildTrace, INVOCATIONS, type MockInvocation } from "./fixtures.ts";
 import { mockUsage, MOCK_BILLING_URL } from "./usage.ts";
@@ -221,6 +222,7 @@ export function createMockHandler(options: MockOptions = {}) {
   const workspaces = seedWorkspaces(!!options.empty);
   const aws = new Map<string, ReturnType<typeof createAwsMock>>();
   const live = new Map<string, Row[]>();
+  const alerts = createAlertsMock({ configured: !options.noAlerts });
 
   const awsOf = (ws: MockWorkspace) => {
     let mock = aws.get(ws.id);
@@ -316,6 +318,8 @@ export function createMockHandler(options: MockOptions = {}) {
       }
       return json(200, p);
     }
+    const alertRes = rest.startsWith("/alerts") ? alerts.projectRoutes(ws, p.slug, rest, method, body) : null;
+    if (alertRes) return json(alertRes.status, alertRes.body);
     if (rest === "/keys" && method === "GET") {
       return json(200, { items: ws.keys.filter((k) => k.project === p.slug && !k.revoked_at).map(({ project: _p, ...k }) => k) });
     }
@@ -361,6 +365,11 @@ export function createMockHandler(options: MockOptions = {}) {
       return json(200, { deleted: true });
     }
     if (rest === "/members" && method === "GET") return json(200, { items: ws.members });
+    if (rest.startsWith("/digest")) {
+      const sevenDays = new URLSearchParams({ since: "7d" });
+      const res = alerts.workspaceRoutes(ws, rest, method, body, () => errors(poolOf(ws, null), throttlePoolOf(ws, null), sevenDays, true, ids(ws)));
+      if (res) return json(res.status, res.body);
+    }
     if (rest === "/usage" && method === "GET") return json(200, mockUsage(options.usage ?? "free", ws.id));
     const member = rest.match(/^\/members\/([^/]+)$/);
     if (member) {
@@ -452,6 +461,7 @@ export function createMockHandler(options: MockOptions = {}) {
         workspaces: { multi: true },
         email: { enabled: false },
         aws: { quick_create: !options.noTemplate },
+        alerts: alerts.config,
         ...(options.noBilling ? {} : { billing: { url: MOCK_BILLING_URL } }),
       });
     }
@@ -466,6 +476,10 @@ export function createMockHandler(options: MockOptions = {}) {
       if (action === "portal") return json(200, { url: usagePage });
     }
     if (path === "/api/workspaces" && method === "GET") return json(200, { items: workspaces.map(present) });
+    if (path === "/api/me/notifications") {
+      const res = alerts.notifications(workspaces, method, body);
+      return json(res.status, res.body);
+    }
     if (path === "/api/workspaces" && method === "POST") {
       const name = String(body.name ?? "").trim();
       if (!name) return json(400, { error: "name must be a non-empty string" });

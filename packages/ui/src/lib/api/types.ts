@@ -15,6 +15,8 @@ export interface Config {
   workspaces?: { multi: boolean };
   email?: { enabled: boolean };
   aws?: { quick_create: boolean };
+  /** Which alert channels this server has configured (env vars); each is hidden or disabled otherwise. */
+  alerts?: { slack: boolean; email: boolean };
   /** Hosted billing service; no billing buttons without it. */
   billing?: { url: string };
 }
@@ -303,4 +305,57 @@ export interface TracingResponse {
   applied: boolean;
   error: string | null;
   function: AwsFunction | null;
+}
+
+export interface AlertSettings {
+  slack_enabled: boolean;
+  interval_minutes: number;
+  every_occurrences: number;
+  include_throttles: boolean;
+}
+
+export interface SlackChannel {
+  id: string;
+  team_name: string;
+  channel: string;
+  status: "ok" | "broken";
+  error: string | null;
+  configuration_url: string | null;
+  created_at: string;
+}
+
+export interface AlertsResponse {
+  available: { slack: boolean; missing: string[] };
+  can_edit: boolean;
+  settings: AlertSettings;
+  integrations: SlackChannel[];
+}
+
+export interface DigestInfo {
+  available: boolean;
+  missing: string[];
+  schedule: string;
+  enabled: boolean;
+  can_edit: boolean;
+  subscribed: boolean | null;
+  recipients: number;
+}
+
+export interface DigestPreview {
+  subject: string;
+  html: string;
+  text: string;
+  period: { from: string; to: string };
+  empty: boolean;
+}
+
+export interface NotificationItem {
+  workspace: { id: string; slug: string; name: string };
+  digest: boolean;
+}
+
+export interface NotificationsResponse {
+  email: string | null;
+  digest_available: boolean;
+  items: NotificationItem[];
 }

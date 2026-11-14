@@ -109,6 +109,12 @@ services:
       # Invitation emails (docs/implementation/workspaces-projects.md); unset = links to copy only
       IVY_SMTP_URL: ${IVY_SMTP_URL:-}
       IVY_EMAIL_FROM: ${IVY_EMAIL_FROM:-}
+      # Alerts (docs/implementation/alerts.md): Slack app credentials, digest schedule and extra recipients
+      IVY_SLACK_CLIENT_ID: ${IVY_SLACK_CLIENT_ID:-}
+      IVY_SLACK_CLIENT_SECRET: ${IVY_SLACK_CLIENT_SECRET:-}
+      IVY_DIGEST_CRON: ${IVY_DIGEST_CRON:-}
+      IVY_DIGEST_TO: ${IVY_DIGEST_TO:-}
+      IVY_ALERTS_INTERVAL_SECONDS: ${IVY_ALERTS_INTERVAL_SECONDS:-}
       # Executable hooks (docs/implementation/hooks.md); mount a directory there to use them
       IVY_HOOKS_DIR: ${IVY_HOOKS_DIR:-}
       # Tenancy and auto-trace (docs/implementation/tenancy.md, auto-trace.md)

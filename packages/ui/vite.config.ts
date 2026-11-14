@@ -25,6 +25,7 @@ const mockApi = (): Plugin => ({
       noTemplate: process.env.VITE_MOCK_NO_TEMPLATE === "1",
       usage: (process.env.VITE_MOCK_USAGE as MockUsage | undefined) || undefined,
       noBilling: process.env.VITE_MOCK_NO_BILLING === "1",
+      noAlerts: process.env.VITE_MOCK_NO_ALERTS === "1",
     });
     server.middlewares.use((req, res, next) => {
       if (!req.url?.startsWith("/api/")) return next();

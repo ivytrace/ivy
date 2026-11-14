@@ -1,0 +1,29 @@
+# Slack app for Ivy's error alerts (docs/implementation/alerts.md).
+# Create it at https://api.slack.com/apps → Create New App → From an app manifest, after replacing
+# https://ivy.example.com with your IVY_PUBLIC_URL. Then copy the app's Client ID and Client Secret into
+# IVY_SLACK_CLIENT_ID and IVY_SLACK_CLIENT_SECRET. Ivy only asks for the incoming-webhook scope: each
+# "Add to Slack" lets the installer pick one channel, and Ivy can post to that channel and nothing else.
+# For installs in other Slack workspaces, turn on Manage Distribution → Public Distribution in the app
+# settings (distribution is not part of the manifest).
+display_information:
+  name: Ivy
+  description: Error alerts from Ivy, open-source observability for AWS Lambda.
+  long_description: >-
+    Ivy traces AWS Lambda functions and groups their errors. This app posts a message to the channel you
+    choose when an error group is first seen in a project, then at most once an hour or every 100
+    occurrences (configurable per project). Messages show the error type and message, the function,
+    counts and a link to the trace in Ivy; they never contain request or response payloads. The app only
+    uses an incoming webhook: it cannot read messages or channels.
+  background_color: "#09090b"
+oauth_config:
+  redirect_urls:
+    - https://ivy.example.com/api/slack/oauth/callback
+  scopes:
+    bot:
+      - incoming-webhook
+settings:
+  incoming_webhooks:
+    incoming_webhooks_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

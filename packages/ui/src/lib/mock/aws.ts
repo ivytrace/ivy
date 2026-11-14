@@ -9,6 +9,8 @@ export interface MockOptions {
   usage?: MockUsage;
   /** Leave out billing.url from /api/config: no billing buttons (VITE_MOCK_NO_BILLING=1). */
   noBilling?: boolean;
+  /** Neither Slack nor email configured on the server: alerts settings explain why (VITE_MOCK_NO_ALERTS=1). */
+  noAlerts?: boolean;
 }
 
 export type MockUsage = "free" | "near" | "over" | "paid" | "unlimited";
