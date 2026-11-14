@@ -14,7 +14,8 @@ packages/api        Hono API (only component that talks to ClickHouse)
 packages/ui         React dashboard
 deploy/             docker-compose, collector config, ClickHouse schema
 tools/loadgen       Synthetic span generator
-docs/               Span conventions + API contract
+docs/spec/           Specs (human-written)
+docs/implementation/ Implementation decisions, span conventions, API contract
 ```
 
-See `docs/span-conventions.md` and `docs/api.md`.
+See `docs/implementation/span-conventions.md` and `docs/implementation/api.md`.
