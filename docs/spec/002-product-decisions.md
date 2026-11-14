@@ -65,6 +65,11 @@ live in `docs/implementation/`.
 - Billing and Stripe code live in `ivy-hosted`. The open-source product only knows generic per-workspace limits:
   no limits set means unlimited, so self-hosted is unlimited. Hosted sets the free tier through the
   `on-workspace-created` hook, with a scheduled reconcile as a safety net.
+- Usage is counted per calendar month in UTC. A free workspace at its quota is **rejected at ingest** (HTTP 429 with
+  `Retry-After` and an upgrade link), not silently dropped; a paid workspace is never blocked and pays for traces
+  beyond the free tier. Enforcement may overshoot by a little (seconds of traffic); invoices use the stored count.
+- The dashboard shows usage per workspace with a warning at 80% and at 100% of the quota, and Upgrade / Manage
+  billing buttons only where a billing service is configured.
 
 ## Dashboard
 - First visit: a quick-start wizard (workspace, project, connect AWS and pick functions, wait for the first trace).
