@@ -4,7 +4,9 @@
 mod config;
 mod export;
 mod http;
+mod platform;
 mod queue;
+mod spans;
 mod store;
 
 use config::Config;
@@ -16,11 +18,13 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use store::SpanStore;
+use spans::InvocationContext;
+use store::{FinishOptions, SpanStore};
 
 const WAIT_GRACE_MS: i64 = 200;
 const HELLO_WAIT_MS: i64 = 500;
 const SHUTDOWN_BUDGET_MS: i64 = 1500;
+const SHUTDOWN_TELEMETRY_WAIT_MS: i64 = 150;
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn log(msg: &str) {
@@ -35,15 +39,20 @@ struct Event {
     event_type: String,
     deadline_ms: i64,
     request_id: Option<String>,
+    function_arn: Option<String>,
     shutdown_reason: Option<String>,
 }
 
-fn register(api: &str, name: &str, events: &[&str]) -> Result<String, String> {
+/// Registers and returns the extension ID and, when Lambda includes it, the account ID.
+fn register(api: &str, name: &str, events: &[&str]) -> Result<(String, Option<String>), String> {
     let body = serde_json::json!({ "events": events }).to_string();
-    let headers = [("Lambda-Extension-Name", name), ("Content-Type", "application/json")];
+    let headers = [("Lambda-Extension-Name", name), ("Content-Type", "application/json"), ("Lambda-Extension-Accept-Feature", "accountId")];
     let res = http::request(api, "POST", "/2020-01-01/extension/register", &headers, body.as_bytes()).map_err(|e| e.to_string())?;
     match (res.status(), res.header("lambda-extension-identifier")) {
-        (200, Some(id)) => Ok(id.to_string()),
+        (200, Some(id)) => {
+            let account = serde_json::from_slice::<Value>(&res.body).ok().and_then(|v| v.get("accountId").and_then(Value::as_str).map(String::from));
+            Ok((id.to_string(), account))
+        }
         (status, _) => Err(format!("HTTP {status} {}", String::from_utf8_lossy(&res.body))),
     }
 }
@@ -59,6 +68,7 @@ fn next_event(api: &str, id: &str) -> Result<Event, String> {
         event_type: text("eventType").unwrap_or_default(),
         deadline_ms: v.get("deadlineMs").and_then(Value::as_i64).unwrap_or(0),
         request_id: text("requestId"),
+        function_arn: text("invokedFunctionArn"),
         shutdown_reason: text("shutdownReason"),
     })
 }
@@ -133,6 +143,53 @@ fn start_server(port: u16, store: Arc<SpanStore>) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Subscribes to platform events and function logs (Telemetry API). Function logs are only kept in a
+/// small in-memory tail for failures, never exported on their own.
+fn subscribe_telemetry(api: &str, id: &str, port: u16) -> Result<(), String> {
+    let body = platform::subscription_body(port).to_string();
+    let headers = [("Lambda-Extension-Identifier", id), ("Content-Type", "application/json")];
+    let res = http::request(api, "PUT", "/2022-07-01/telemetry", &headers, body.as_bytes()).map_err(|e| e.to_string())?;
+    match res.status() {
+        200 => Ok(()),
+        status => Err(format!("HTTP {status} {}", String::from_utf8_lossy(&res.body))),
+    }
+}
+
+fn handle_telemetry(mut stream: TcpStream, store: &SpanStore) {
+    stream.set_read_timeout(Some(READ_TIMEOUT)).ok();
+    let msg = match stream.try_clone().and_then(|s| http::read_message(&mut BufReader::new(s), false, http::MAX_BODY_BYTES)) {
+        Ok(m) => m,
+        Err(e) => {
+            let _ = http::write_response(&mut stream, 400, &e.to_string());
+            return;
+        }
+    };
+    match serde_json::from_slice::<Value>(&msg.body) {
+        Ok(Value::Array(events)) => {
+            store.add_telemetry(events);
+            let _ = http::write_response(&mut stream, 200, "{}");
+        }
+        _ => {
+            let _ = http::write_response(&mut stream, 400, "expected a JSON array");
+        }
+    }
+}
+
+fn start_telemetry_server(port: u16, store: Arc<SpanStore>) -> std::io::Result<()> {
+    // Lambda delivers to sandbox.localdomain, which is not loopback.
+    let listener = TcpListener::bind(("0.0.0.0", port))?;
+    thread::Builder::new().name("telemetry".into()).spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(stream) = conn else { continue };
+            let s = store.clone();
+            if let Err(e) = thread::Builder::new().spawn(move || handle_telemetry(stream, &s)) {
+                log(&format!("could not handle a telemetry connection: {e}"));
+            }
+        }
+    })?;
+    Ok(())
+}
+
 fn main() {
     let name = std::env::args()
         .nth(1)
@@ -155,8 +212,8 @@ fn main() {
         thread::sleep(Duration::from_millis(10));
         registered = register(&api, &name, events);
     }
-    let id = match registered {
-        Ok(id) => id,
+    let (id, account_id) = match registered {
+        Ok(r) => r,
         Err(e) => {
             log(&format!("register failed: {e}"));
             std::process::exit(1);
@@ -176,7 +233,25 @@ fn main() {
     if let Err(e) = start_server(config.extension_port, store.clone()) {
         log(&format!("could not listen on 127.0.0.1:{}: {e}", config.extension_port));
     }
+    if config.telemetry {
+        let started = Instant::now();
+        let subscribed = start_telemetry_server(config.telemetry_port, store.clone())
+            .map_err(|e| format!("could not listen on port {}: {e}", config.telemetry_port))
+            .and_then(|_| subscribe_telemetry(&api, &id, config.telemetry_port));
+        match subscribed {
+            Ok(()) => debug(&format!("subscribed to telemetry in {} µs", started.elapsed().as_micros())),
+            Err(e) => debug(&format!("telemetry unavailable ({} µs): {e}", started.elapsed().as_micros())),
+        }
+    }
     debug("registered");
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    let finish_options = FinishOptions {
+        redact_keys: config.redact_keys.clone(),
+        report_updates: config.report_updates,
+        fallback_resource: spans::env_resource(&env, account_id.as_deref()),
+    };
+    let mut first_invoke = true;
+    let mut last_request: Option<String> = None;
 
     let started = Instant::now();
     let exporter = HttpExporter::new(
@@ -200,7 +275,9 @@ fn main() {
             }
         };
         if event.event_type == "SHUTDOWN" {
-            for b in store.drain() {
+            let wait_ms = SHUTDOWN_TELEMETRY_WAIT_MS.min(event.deadline_ms - epoch_ms() - 300).max(0) as u64;
+            store.wait_for_telemetry(last_request.as_deref(), Duration::from_millis(wait_ms));
+            for b in store.finish(None, &finish_options) {
                 queue.add(b);
             }
             let budget = SHUTDOWN_BUDGET_MS.min(event.deadline_ms - epoch_ms() - 100);
@@ -210,6 +287,7 @@ fn main() {
             debug(&format!("shutdown ({})", event.shutdown_reason.as_deref().unwrap_or("unknown")));
             std::process::exit(0);
         }
+        let invoked_at = epoch_ms();
         if expect_hello && !store.is_attached() {
             let wait_ms = HELLO_WAIT_MS.min(event.deadline_ms - epoch_ms()).max(0) as u64;
             if !store.wait_attached(Duration::from_millis(wait_ms)) {
@@ -223,7 +301,10 @@ fn main() {
                 debug(&format!("no final spans for {request_id}"));
             }
         }
-        for b in store.drain() {
+        let ctx = InvocationContext { request_id: event.request_id.clone(), function_arn: event.function_arn.clone(), start_ms: invoked_at, cold_start: first_invoke };
+        first_invoke = false;
+        last_request = event.request_id.clone();
+        for b in store.finish(Some(&ctx), &finish_options) {
             queue.add(b);
         }
         if queue.size() > 0 {

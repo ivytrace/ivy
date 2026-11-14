@@ -14,7 +14,9 @@ How the Node.js layer is put together and why. Usage is in `packages/layer/READM
 3. **Extension** (`extensions/ivy-extension` → `ivy/bin/ivy-extension-<arch>`, from
    `extension/`). An external Lambda extension written in Rust, registered for `INVOKE` and
    `SHUTDOWN`, with a localhost HTTP server (`127.0.0.1:9790`) that receives span batches from
-   the tracer. See "Extension in Rust" below.
+   the tracer. See "Extension in Rust" below. It also subscribes to the Lambda Telemetry API
+   (platform events plus a small in-memory tail of function logs) to report failures outside the
+   handler: init errors, crashes, out of memory and timeouts. See `platform-failures.md`.
 
 ## In-process vs. extension split
 
@@ -51,6 +53,12 @@ If the handler finishes after all, the final batch replaces those spans by span 
 extension's store. If the function really times out, the extension's wait for the final batch
 expires at the deadline (+200 ms), it exports the snapshot, and then receives `SHUTDOWN`
 (reason `timeout`) as Lambda resets the environment, flushing anything left.
+
+With the Telemetry API (`platform-failures.md`) the extension learns about the timeout from
+`platform.runtimeDone` (`status: timeout`) and stops waiting at once; it completes the snapshot's root
+with `error.type = Sandbox.Timedout`, the end time and the function's last log lines. A crash or out
+of memory, where the process dies and the tracer sends nothing, becomes a synthetic invocation span
+the same way, and so does a failed init.
 
 ## Extension in Rust
 
@@ -90,7 +98,8 @@ protocol and behaviour as before, so the tracer did not change beyond the non-bl
   from `IVY_EXTENSION_BIN_DIR`. `packages/api/Dockerfile` has the same stage on `$BUILDPLATFORM`
   (dependencies compiled in their own layer for caching) and hands the binaries to the layer build.
 - **Tests**: `cargo test` in `extension/` (span store, queue, backoff, dropped count, HTTP
-  parsing, exporter against a local server); CI runs them in the `extension` job.
+  parsing, exporter against a local server, telemetry events: init failure, out of memory after
+  partial spans, timeout, report enrichment, no duplicates); CI runs them in the `extension` job.
 
 ## Delivery
 
