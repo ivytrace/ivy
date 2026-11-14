@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
+import { mountAgentSurface } from './lib/mcp/mount.js';
 import { serveUi } from './lib/static/serve-ui.js';
 import { singleTenantResolver, tenantContext, type TenantResolver } from './lib/tenancy/context.js';
 import { deleteAwsAccount } from './routes/aws/accounts/delete.js';
@@ -28,6 +29,7 @@ export function createApp(options: { uiDir: string; tenants?: TenantResolver }) 
   app.get('/api/health', getHealth);
   app.get('/api/config', getConfig);
   app.post('/api/aws/events', postAwsEvent);
+  mountAgentSurface(app, options.tenants ?? singleTenantResolver());
 
   app.use('/api/*', tenantContext(options.tenants ?? singleTenantResolver()));
   app.get('/api/functions', getFunctions);
