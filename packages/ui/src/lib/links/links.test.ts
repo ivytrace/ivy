@@ -48,9 +48,9 @@ describe("legacy redirects", () => {
 describe("picking the scope to open", () => {
   const workspaces = [{ slug: "personal" }, { slug: "acme" }];
   const projects = [
-    { slug: "default", default: true, archived: false },
-    { slug: "checkout-prod", default: false, archived: false },
-    { slug: "old", default: false, archived: true },
+    { slug: "billing", archived: false },
+    { slug: "checkout-prod", archived: false },
+    { slug: "old", archived: true },
   ];
 
   it("prefers the last-used workspace, else the first", () => {
@@ -60,11 +60,12 @@ describe("picking the scope to open", () => {
     expect(pickWorkspace([], null)).toBeNull();
   });
 
-  it("prefers the last-used project of that workspace, else the default", () => {
+  it("prefers the last-used project of that workspace, else the first active one", () => {
     expect(pickProject(projects, "acme", { workspace: "acme", project: "checkout-prod" })).toBe("checkout-prod");
     expect(pickProject(projects, "acme", { workspace: "acme", project: "all" })).toBe("all");
-    expect(pickProject(projects, "acme", { workspace: "other", project: "checkout-prod" })).toBe("default");
-    expect(pickProject(projects, "acme", { workspace: "acme", project: "old" })).toBe("default");
+    expect(pickProject(projects, "acme", { workspace: "other", project: "checkout-prod" })).toBe("billing");
+    expect(pickProject(projects, "acme", { workspace: "acme", project: "old" })).toBe("billing");
+    expect(pickProject([projects[2]], "acme", null)).toBe("all");
     expect(pickProject([projects[1]], "acme", null)).toBe("checkout-prod");
     expect(pickProject([], "acme", null)).toBe("all");
   });

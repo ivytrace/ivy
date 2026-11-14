@@ -21,6 +21,7 @@ import { memoryStore } from '../../lib/aws/memory-store.js';
 import { clearQuickCreateCacheForTests } from '../../lib/aws/publish.js';
 import { syncInProgress } from '../../lib/aws/scheduler.js';
 import { setAwsStore } from '../../lib/aws/store.js';
+import { ensureDefaultTenant } from '../../lib/tenancy/tenants.js';
 import { appFor, DEFAULT_PROJECT, resetTenancyForTests } from '../../lib/tenancy/testing.js';
 
 let app: ReturnType<typeof createApp>;
@@ -76,6 +77,7 @@ const stackTag = (name: string, stack: string) => ({ ResourceARN: fnArn(name), T
 
 beforeEach(async () => {
   await resetTenancyForTests();
+  await ensureDefaultTenant('ingest-key');
   app = await appFor();
   hooks = path.join(tmpdir(), 'ivy-no-hooks');
   lambda.reset();
@@ -121,8 +123,9 @@ describe('AWS account routes', () => {
     const body = await req(`${W}/setup`);
     expect(body.principal_arn).toBe('arn:aws:iam::999999999999:role/ivy-api');
     expect(body.events_url).toBe('https://ivy.example.com/api/aws/events');
-    expect(body.issues).toHaveLength(1);
+    expect(body.issues).toHaveLength(2);
     expect(body.issues[0]).toContain('IVY_INGEST_PUBLIC_URL');
+    expect(body.issues[1]).toContain('only the project of IVY_INGEST_API_KEY');
   });
 
   it('creates a pending connection with a unique external ID, download-only without the publish hook', async () => {
@@ -267,9 +270,12 @@ describe('AWS account routes', () => {
     expect((await app.request(`${W}/rules`, json({ matcher: { name: '*' }, project: 'nope' }))).status).toBe(400);
     expect((await app.request(`${W}/rules/dry-run`, json({ matcher: 'x' }))).status).toBe(400);
     expect((await app.request(`${W}/rules/rul_nope`, { method: 'DELETE' })).status).toBe(404);
-    const a = (await req(`${W}/rules`, json({ matcher: { name: 'a-*' } }))).rule;
-    const b = (await req(`${W}/rules`, json({ matcher: { name: 'b-*' }, enabled: false }))).rule;
+    // Every rule names its project: there is no default project to fall back to.
+    expect(await (await app.request(`${W}/rules`, json({ matcher: { name: '*' } }))).json()).toEqual({ error: 'project is required: every rule and traced function belongs to a project' });
+    const a = (await req(`${W}/rules`, json({ matcher: { name: 'a-*' }, project: 'default' }))).rule;
+    const b = (await req(`${W}/rules`, json({ matcher: { name: 'b-*' }, project: DEFAULT_PROJECT, enabled: false }))).rule;
     expect(a.project_id).toBe(DEFAULT_PROJECT);
+    expect((await app.request(`${W}/rules/${a.id}`, json({ project: null }, 'PATCH'))).status).toBe(400);
     expect((await req(`${W}/rules/order`, json({ order: [b.id, a.id] }, 'PUT'))).items.map((r: any) => r.id)).toEqual([b.id, a.id]);
     expect(await req(`${W}/rules/${b.id}`, json({ enabled: true, matcher: { name: 'b-*', region: 'eu-west-1' } }, 'PATCH'))).toMatchObject({
       enabled: true,
@@ -295,7 +301,7 @@ describe('AWS account routes', () => {
     expect(lambda.commandCalls(UpdateFunctionConfigurationCommand)[0].args[0].input).toMatchObject({ Layers: [], Environment: { Variables: {} } });
 
     // A full sync keeps it excluded, even with a catch-all rule.
-    await req(`${W}/rules`, json({ matcher: { name: '*' } }));
+    await req(`${W}/rules`, json({ matcher: { name: '*' }, project: 'default' }));
     await settle(a.id);
     const fns = (await req(`${W}/functions`)).items;
     expect(fns.find((f: any) => f.name === 'orders')).toMatchObject({ state: 'opted_out' });
@@ -304,6 +310,7 @@ describe('AWS account routes', () => {
     lambda.on(GetFunctionConfigurationCommand).resolves({ FunctionName: 'orders', FunctionArn: fnArn('orders'), Runtime: 'nodejs22.x', RevisionId: 'r4' });
     expect(await put({ mode: 'rules' })).toMatchObject({ function: { state: 'traced', source: 'rule', manual: null } });
     expect((await app.request(`${W}/functions/${ACCOUNT_ID}/eu-west-1/orders`, json({ mode: 'off' }, 'PUT'))).status).toBe(400);
+    expect((await app.request(`${W}/functions/${ACCOUNT_ID}/eu-west-1/orders`, json({ mode: 'trace' }, 'PUT'))).status).toBe(400);
     expect((await app.request(`${W}/functions/000000000000/eu-west-1/orders`, json({ mode: 'exclude' }, 'PUT'))).status).toBe(404);
   });
 
@@ -311,7 +318,7 @@ describe('AWS account routes', () => {
     const a = await connected();
     const res = await app.request(
       `${W}/functions/bulk`,
-      json({ mode: 'trace', functions: ['orders', 'stage-orders'].map((name) => ({ account_id: ACCOUNT_ID, region: 'eu-west-1', name })) }),
+      json({ mode: 'trace', project: 'default', functions: ['orders', 'stage-orders'].map((name) => ({ account_id: ACCOUNT_ID, region: 'eu-west-1', name })) }),
     );
     expect(res.status).toBe(202);
     await settle(a.id);
@@ -335,8 +342,8 @@ describe('AWS account routes', () => {
   it('turns throttle polling off and on, and reports a missing permission', async () => {
     const a = await connect();
     expect(a).toMatchObject({ throttle_metrics: true, throttle_status: null });
-    // Only traced functions are polled: a rule traces everything into the default project.
-    await req(`${W}/rules`, json({ matcher: { name: '*' } }));
+    // Only traced functions are polled: a rule traces everything into one project.
+    await req(`${W}/rules`, json({ matcher: { name: '*' }, project: 'default' }));
     cloudwatch.on(GetMetricDataCommand).rejects(Object.assign(new Error('not authorized to perform: cloudwatch:GetMetricData'), { name: 'AccessDenied' }));
     await app.request(`${W}/accounts/${a.id}/verify`, { method: 'POST' });
     await settle(a.id);

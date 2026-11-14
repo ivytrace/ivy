@@ -41,15 +41,24 @@ account traces nothing. Code lives in `packages/api/src/lib/aws/` and `packages/
 
 `lib/aws/assign.ts` (pure, unit-tested) decides per function whether it is traced and into which project:
 
-1. **Tags.** `ivy:trace=false` never traces (`opted_out`). `ivy:trace=true` traces.
+1. **Tags.** `ivy:trace=false` never traces (`opted_out`). `ivy:trace=true` traces, given a project (below).
 2. **Manual choice** in the dashboard (`aws_function_settings.mode`): `trace` into a project, or `exclude` (`opted_out`).
 3. **Rules** of the workspace (`aws_project_rules`), in order: the first enabled rule that matches, and whose project is
    active, traces the function into its project.
 4. Otherwise not traced: `available`.
 
 Whenever a function is traced, an `ivy:project=<slug>` tag naming an active project of the workspace picks the project;
-otherwise the manual choice's project, the rule's project, or (for `ivy:trace=true` alone) the workspace's default
-project. `ivy:project` alone doesn't trace. Archived projects are skipped (a rule pointing at one matches nothing).
+otherwise the manual choice's project or the rule's project. `ivy:project` alone doesn't trace. Archived projects are
+skipped (a rule pointing at one matches nothing).
+
+**There is no default project** (`workspaces-projects.md`): every rule and every manual "trace" names a project (the
+API answers 400 without one; the UI always asks, preselecting the stack's suggested project or the project last used
+for tracing in this browser, then the account's preselected project). A function selected without an active project
+gets the state **`needs_project`** and is not traced (detached if it was): `ivy:trace=true` without an `ivy:project`
+naming an active project and without a manual choice or rule that gives one, or a manual choice whose project was
+archived. The account page lists it as "Needs a project" with the reason and a project picker that saves a manual
+choice. On upgrade, functions that were traced by `ivy:trace=true` alone into the old default project got that project
+as a manual choice (`keepTagTracedFunctions`), so they kept tracing.
 
 A **rule** is a matcher plus a project plus `enabled`. Every non-empty matcher field must match: `account_id` and
 `region` exactly, `stack` (the CloudFormation stack name) and `name` (the function name) as globs (`*`, `?`;
@@ -58,7 +67,7 @@ functions**: a stack is usually one app in one environment, which is one project
 project `checkout-prod`). Serverless Framework, SAM, CDK and SST all set the stack tag. A stack rule is just a
 rule whose matcher has only `stack` (the account page shows it on the stack's group).
 
-The account's `default_project_id` is only the project the UI preselects; it never causes tracing.
+The account's `default_project_id` is only the project the UI offers first; it never causes tracing and is not a fallback.
 
 Each traced function gets its **project's** ingest key as `IVY_API_KEY` (one auto-trace key per project, `tenancy.md`).
 When a function moves to another project, the next sync rewrites `IVY_API_KEY`; spans already ingested stay in the
@@ -188,8 +197,8 @@ read (`tag:GetResources` denied), Ivy does not attach to functions that would ch
 the opt-out tag; they show as `pending`. In "all enabled regions" mode, regions that reject the credentials
 (`UnrecognizedClientException` etc., i.e. not enabled) are skipped silently; with explicit regions they're reported.
 
-`ingestConfig(tenant, project)` gives the endpoint and the project's auto-trace key: `IVY_INGEST_API_KEY` for the default
-workspace's default project, otherwise a system-managed key stored hashed and encrypted with `IVY_SECRET_KEY`
+`ingestConfig(tenant, project)` gives the endpoint and the project's auto-trace key: `IVY_INGEST_API_KEY` for the project
+of that bootstrap key, otherwise a system-managed key stored hashed and encrypted with `IVY_SECRET_KEY`
 (`tenancy.md`, "Auto-trace key"). Revoking that key makes the next sync write a new one into the project's functions.
 
 ### Throttles
@@ -215,9 +224,8 @@ CloudWatch through the same role (`lib/aws/throttles.ts`):
   explicitly workspace-wide). Only non-zero minutes are written; re-reading a minute replaces its row, and reads use
   `FINAL`.
 - **Projects.** A row's `project_id` is the project the function sends to when it is polled (its tag, manual choice or
-  rule; an empty assignment is the workspace's current default project). Only traced functions are polled, so throttles of
-  untraced or unassigned functions are dropped rather than parked in a default project: they belong to no project
-  and nobody looks at them there. A function that moves project keeps its earlier minutes under the old project, like
+  rule). Only traced functions with a project are polled, so throttles of untraced functions and of functions without
+  a project (`needs_project`) are dropped: they belong to no project. A function that moves project keeps its earlier minutes under the old project, like
   its invocations.
 - **API/UI.** `GET …/functions` (`throttles` per function, project-scoped and workspace-wide), `GET …/stats/timeseries`
   (`throttles` per bucket, stacked on the errors chart), and `GET …/errors` (both scopes) adds one synthetic `Throttled` group per function (no trace; the
@@ -251,7 +259,7 @@ See `api.md` (`/api/w/:workspace/aws/*`).
 | variable | | |
 |---|---|---|
 | `IVY_INGEST_PUBLIC_URL` | required to attach | ingest router URL reachable from Lambda, e.g. `https://ingest.example.com` (the OTLP/HTTP base, without `/v1/traces`) |
-| `IVY_INGEST_API_KEY` | default project | the key written into functions of the default workspace's default project (`dev-ingest-key` in compose) |
+| `IVY_INGEST_API_KEY` | self-hosted | the key written into functions of its own project ("Default" in the `default` workspace; `dev-ingest-key` in compose) |
 | `IVY_SECRET_KEY` | other projects | encrypts the per-project auto-trace keys; `GET …/aws/setup` lists it as an issue when unset |
 | `IVY_AWS_PRINCIPAL_ARN` | recommended | principal customers trust; derived from the credentials if unset |
 | AWS credentials | required | standard SDK chain: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_SESSION_TOKEN`, `AWS_PROFILE`, or a role |
@@ -267,12 +275,13 @@ See `api.md` (`/api/w/:workspace/aws/*`).
 - `packages/api`: `throttles.test.ts` (poll cadence and window, account-level first, per-function only when throttled and
   only for traced functions, stored under each function's project, 500-query batches and `NextToken`, `AccessDenied` →
   `missing_permission`, other errors keep the watermark), `assign.test.ts` (matchers, globs, the precedence of tags, manual choices and rules, disabled rules,
-  archived projects, `ivy:project`), `attach.test.ts` (plan rules, available vs opted out), `template.test.ts` (YAML
+  archived projects, `ivy:project`, `needs_project` for `ivy:trace=true` alone or an archived manual project), `attach.test.ts` (plan rules, available vs opted out), `template.test.ts` (YAML
   round trip, structure, cfn-lint, a quick-create URL without parameters), `sync.test.ts` (nothing traced on connect;
   stack, tags and last modified recorded; a stack rule traces into its project with that project's own key; new
   matching functions traced on the next sync; detach when a function stops matching; key rewritten when a function
   moves project; layer reuse/publish, conflict retry, revision conflicts, unreadable tags, disabled regions, removed
-  functions, manual exclude, detach on disconnect) and `routes/aws/aws.test.ts` (all routes end to end with in-memory
+  functions, manual exclude, detach on disconnect, `needs_project` not attached and detached until a manual choice,
+  `keepTagTracedFunctions` on upgrade) and `routes/aws/aws.test.ts` (all routes end to end with in-memory
   stores: connect without/with the publish hook, hook failure, grouped list and new counts, dry run, rule
   create/patch/reorder/delete with re-sync, manual choices, bulk, EventBridge), all with `aws-sdk-client-mock`; no AWS
   account involved.

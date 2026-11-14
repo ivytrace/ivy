@@ -16,9 +16,9 @@ import { setAwsStore } from '../../lib/aws/store.js';
 import type { AwsAccount, FunctionStatus, TraceState } from '../../lib/aws/types.js';
 import { alertStore, memoryAlertStore, setAlertStore } from '../../lib/alerts/store.js';
 import { decodedMail, mailHeader, startSmtpCatcher } from '../../lib/email/testing.js';
-import { defaultProjectId } from '../../lib/tenancy/ids.js';
+import { derivedProjectId } from '../../lib/tenancy/ids.js';
 import type { TenancyStore, TenantRecord } from '../../lib/tenancy/store.js';
-import { resetTenancyForTests } from '../../lib/tenancy/testing.js';
+import { resetTenancyForTests, testProject } from '../../lib/tenancy/testing.js';
 
 const app = createApp({ uiDir: '/nonexistent' });
 let issuer: Awaited<ReturnType<typeof startTestIssuer>>;
@@ -97,7 +97,7 @@ const fakeData: AlertDataSource = {
 const zero = { invocations: 0, errors: 0, failures: 0, throttles: 0 };
 
 function acmeWeek(): DigestData {
-  const project = defaultProjectId(acme.id);
+  const project = derivedProjectId(acme.id);
   const period = digestPeriod(MONDAY);
   return {
     totals: { invocations: 120_000, errors: 412, failures: 3, throttles: 17 },
@@ -164,6 +164,7 @@ beforeEach(async () => {
   vi.stubEnv('IVY_DIGEST_CRON', '');
   vi.stubEnv('IVY_DIGEST_TO', '');
   await call(owner, 'POST', '/api/workspaces', { name: 'Acme', slug: 'acme' });
+  await testProject((await store.findTenantBySlug('acme'))!.id);
   acme = (await store.findTenantBySlug('acme'))!;
   await store.saveMember({ tenant_id: acme.id, sub: erin.sub, email: erin.email!, role: 'member', created_at: Date.now() });
   weeks = new Map([[acme.id, acmeWeek()]]);

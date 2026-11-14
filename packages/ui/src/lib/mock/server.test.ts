@@ -31,7 +31,7 @@ describe("mock API: workspaces and data", () => {
     const call = client();
     expect(call<{ items: Workspace[] }>("GET", "/api/workspaces").body.items.map((w) => w.slug)).toEqual(["acme", "side-project"]);
     const projects = call<{ items: Project[] }>("GET", "/api/w/acme/projects").body.items.map((p) => p.slug);
-    expect(projects).toEqual(expect.arrayContaining(["checkout-prod", "checkout-staging", "billing-api-prod", "billing-api-staging", "default"]));
+    expect(projects).toEqual(expect.arrayContaining(["checkout-prod", "checkout-staging", "billing-api-prod", "billing-api-staging"]));
     expect(projects).not.toContain("legacy-reports");
     expect(call<{ items: unknown[] }>("GET", "/api/w/acme/members").body.items.length).toBeGreaterThan(1);
     expect(call<{ items: unknown[] }>("GET", "/api/w/acme/invitations").body.items).toHaveLength(1);
@@ -188,29 +188,36 @@ describe("mock API: workspaces and data", () => {
     expect(call("POST", `/api/invitations/${token}/accept`).status).toBe(410);
   });
 
-  it("moves the default project, also when the default is archived, and keeps one project", () => {
+  it("has no default project: new workspaces start empty, and any project can be archived, the last one too", () => {
     const call = client();
-    const defaultOf = () => call<{ items: Project[] }>("GET", "/api/w/acme/projects").body.items.filter((p) => p.default).map((p) => p.slug);
-    expect(defaultOf()).toEqual(["default"]);
-    expect(call<Workspace>("PATCH", "/api/w/acme", { default_project: "checkout-prod" }).body.default_project_id).toMatch(/^prj_/);
-    expect(defaultOf()).toEqual(["checkout-prod"]);
-    expect(call("PATCH", "/api/w/acme/p/checkout-prod", { archived: true, new_default: "checkout-staging" }).status).toBe(200);
-    expect(defaultOf()).toEqual(["checkout-staging"]);
+    expect(call<Workspace>("GET", "/api/w/acme").body).not.toHaveProperty("default_project_id");
+    expect(call<{ items: Project[] }>("GET", "/api/w/acme/projects").body.items.some((p) => "default" in p)).toBe(false);
 
     const solo = client({ empty: true });
-    expect(solo<{ error: string }>("PATCH", "/api/w/personal/p/default", { archived: true })).toEqual({
-      status: 409,
-      body: { error: "A workspace needs at least one project" },
-    });
+    expect(solo<{ items: Project[] }>("GET", "/api/w/personal/projects").body.items).toEqual([]);
+    expect(solo<Project>("POST", "/api/w/personal/projects", { name: "Checkout" }).status).toBe(201);
+    expect(solo<Project>("PATCH", "/api/w/personal/p/checkout", { archived: true }).body.archived).toBe(true);
+    expect(solo<{ items: Project[] }>("GET", "/api/w/personal/projects").body.items).toEqual([]);
+  });
+
+  it("needs a project for every rule and manual choice; ivy:trace=true alone needs a project", () => {
+    const call = client();
+    const fn = (name: string) => call<{ items: AwsFunction[] }>("GET", "/api/w/acme/aws/functions").body.items.find((f) => f.name === name)!;
+    expect(fn("ops-healthcheck")).toMatchObject({ state: "needs_project", reason: "Tagged ivy:trace=true without ivy:project", project: null });
+    expect(call("POST", "/api/w/acme/aws/rules", { matcher: { name: "*" } }).status).toBe(400);
+    expect(call("PUT", "/api/w/acme/aws/functions/123456789012/eu-west-1/ops-healthcheck", { mode: "trace" }).status).toBe(400);
+    expect(call("PUT", "/api/w/acme/aws/functions/123456789012/eu-west-1/ops-healthcheck", { mode: "trace", project: "checkout-prod" }).status).toBe(200);
+    expect(fn("ops-healthcheck")).toMatchObject({ state: "traced", project: "checkout-prod", source: "tag" });
   });
 
   it("receives a first trace in an empty workspace a few seconds after a key is created", () => {
     vi.useFakeTimers();
     const call = client({ empty: true });
     expect(call<{ items: Workspace[] }>("GET", "/api/workspaces").body.items.map((w) => w.slug)).toEqual(["personal"]);
-    const url = "/api/w/personal/p/default/invocations?since=1h&limit=1";
+    call("POST", "/api/w/personal/projects", { name: "First" });
+    const url = "/api/w/personal/p/first/invocations?since=1h&limit=1";
     expect(call<InvocationsResponse>("GET", url).body.items).toEqual([]);
-    call("POST", "/api/w/personal/p/default/keys", { name: "First key" });
+    call("POST", "/api/w/personal/p/first/keys", { name: "First key" });
     vi.advanceTimersByTime(7_000);
     expect(call<InvocationsResponse>("GET", url).body.items).toHaveLength(1);
     vi.useRealTimers();

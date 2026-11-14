@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import { presentFunction } from '../../../lib/aws/present.js';
 import { jsonBody, projectSlugs } from '../../../lib/aws/requests.js';
-import { dryRun, parseMatcher, targetProject, type DryRunOutcome } from '../../../lib/aws/rules.js';
+import { dryRun, parseMatcher, type DryRunOutcome } from '../../../lib/aws/rules.js';
 import { awsStore } from '../../../lib/aws/store.js';
 import { settingKey } from '../../../lib/aws/sync.js';
 import { tenantOf } from '../../../lib/tenancy/context.js';
@@ -12,9 +12,9 @@ export async function postRuleDryRun(c: Context) {
   const tenant = tenantOf(c).id;
   const body = await jsonBody(c);
   const matcher = parseMatcher(body.matcher);
-  // An unknown project is fine here: the caller may be about to create it.
+  // An unknown project is fine here: the caller may be about to create it, or hasn't picked one yet.
   const known = typeof body.project === 'string' && body.project ? await findProject(tenant, body.project) : null;
-  const projectId = known ? known.id : body.project ? '__new_project__' : await targetProject(tenant, undefined);
+  const projectId = known ? known.id : body.project ? '__new_project__' : '__no_project__';
   const [items, slugs, settings, accounts] = await Promise.all([
     dryRun(tenant, matcher, projectId),
     projectSlugs(tenant),

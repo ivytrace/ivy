@@ -28,7 +28,7 @@ export function LegacyRedirect() {
   return <Navigate to={`${target}${location.search}${location.hash}`} replace />;
 }
 
-/** `/w/:workspace`: the last-used project of that workspace, else its default project. */
+/** `/w/:workspace`: the last-used project of that workspace, else its first active project. */
 export function WorkspaceIndex() {
   const { workspace = "" } = useParams();
   const projects = useProjects(workspace);

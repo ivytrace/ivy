@@ -6,7 +6,7 @@ import { sign } from '../../lib/alerts/signing.js';
 import { startFakeSlack } from '../../lib/alerts/testing.js';
 import { decrypt } from '../../lib/tenancy/secret-box.js';
 import type { TenancyStore } from '../../lib/tenancy/store.js';
-import { resetTenancyForTests } from '../../lib/tenancy/testing.js';
+import { resetTenancyForTests, testProject } from '../../lib/tenancy/testing.js';
 
 const app = createApp({ uiDir: '/nonexistent' });
 const realFetch = globalThis.fetch;
@@ -69,6 +69,7 @@ beforeEach(async () => {
   slack.reset();
   for (const name of ['IVY_SLACK_CLIENT_ID', 'IVY_SLACK_CLIENT_SECRET', 'IVY_PUBLIC_URL', 'IVY_SECRET_KEY', 'IVY_SMTP_URL', 'IVY_EMAIL_FROM']) vi.stubEnv(name, '');
   await call(owner, 'POST', '/api/workspaces', { name: 'Acme', slug: 'acme' });
+  await testProject((await store.findTenantBySlug('acme'))!.id);
   const acme = (await store.findTenantBySlug('acme'))!;
   await store.saveMember({ tenant_id: acme.id, sub: erin.sub, email: erin.email!, role: 'member', created_at: Date.now() });
 });

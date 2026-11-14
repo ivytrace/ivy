@@ -23,8 +23,9 @@ The mock (`src/lib/mock/`) is a Vite middleware plugin, enabled only when `VITE_
 accounts and rules, `fixtures.ts` span data):
 
 - Two workspaces in multi-workspace mode: `acme` (you own it; projects `checkout-prod`, `checkout-staging`,
-  `billing-api-prod`, `billing-api-staging`, `support-api-prod`, `default` and an archived one; three members, a pending invitation, ingest
-  keys) and `side-project` (you're a member; only its untouched default project, so it opens the quick-start wizard).
+  `billing-api-prod`, `billing-api-staging`, `support-api-prod` and an archived one; three members, a pending invitation, ingest
+  keys; `ops-healthcheck` is tagged `ivy:trace=true` without `ivy:project`, so it shows "Needs a project") and
+  `side-project` (you're a member; no projects yet, so it opens the quick-start wizard).
 - Span data: a week of invocations of five functions (one, `support-answerTicket` in `support-api-prod`, an AI SDK support bot) spread over the `acme` projects (`projectOfInvocation` in `server.ts`; a quarter of `checkout-createOrder` runs come from `checkout-staging`, so "All projects" shows one name in two projects), with
 - Span data: a week of invocations of five functions (one, `support-answerTicket` in `support-api-prod`, an AI SDK support bot; plus `checkout-importOrders`, an import worker with collapsed calls and omitted spans) spread over the `acme` projects (`PROJECT_OF` in `server.ts`), with
   filters, `since`/`from`/`to`, cursor pagination, error groups, timeseries buckets, and full traces with DynamoDB, S3,
@@ -64,7 +65,7 @@ Everything lives under a workspace and, for data, a project (`workspaces-project
 |---|---|
 | `/w/:workspace/:project/functions`, `…/invocations`, `…/errors`, `…/traces/:traceId` | data pages of a project |
 | `/w/:workspace/all/functions`, `…/all/invocations`, `…/all/errors` | every project of the workspace (charts included); rows have a quiet Project column and link into their own project (`rowScope`). `/w/:workspace/all/traces/:id` finds the trace's project and redirects there |
-| `/w/:workspace` | the last-used project of that workspace, else its default project |
+| `/w/:workspace` | the last-used project of that workspace, else its first active project |
 | `/w/:workspace/settings/general` · `members` · `projects` · `aws` · `aws/:id` · `usage` · `alerts/:project` · `notifications` | workspace settings |
 | `/invite/:token` | accept an invitation (signed in, outside the layout) |
 | `/welcome/:step?ws=&project=&account=&from=&mode=` | the first-run quick start (signed in, outside the layout) |
@@ -75,7 +76,7 @@ Everything lives under a workspace and, for data, a project (`workspaces-project
   last choice.
 - Old links keep working: `/`, `/functions`, `/invocations`, `/errors`, `/traces/:id`, `/settings`, `/settings/aws`,
   `/settings/aws/:id`, `/settings/notifications` and `/settings/digest` redirect to the same page in the last-used workspace and project (else the first workspace from
-  `GET /api/workspaces` and its default project), keeping the query string and hash (`legacyTarget`, unit-tested).
+  `GET /api/workspaces` and its first active project), keeping the query string and hash (`legacyTarget`, unit-tested).
 - Merged settings pages keep their URLs: `/w/:workspace/settings/digest` redirects to `…/settings/notifications`
   (`routes/settings/redirects.ts`, a loader redirect so it is tested with a memory router).
 - Routing behind a shared domain: `/w/*`, `/invite/*` and `/welcome/*` are app paths (`auth.md`).
@@ -87,26 +88,26 @@ from a trace or a settings page it opens Functions (`switchProjectLink`, unit-te
 Menu and ⌘K links carry the current scope.
 
 Creating a workspace or project takes a name only: the server makes the slug (with `-2`, `-3`, … on collisions), and
-renaming never changes it. Settings show the URL read-only, with "Change URL" under Advanced. The wizard and onboarding
-are the exception for the untouched default project: naming it there also sets its URL from the name.
+renaming never changes it. Settings show the URL read-only, with "Change URL" under Advanced.
 
 **Settings.** General (name, URL, delete with the slug typed to confirm; owners only, not for the default workspace or
 in single-workspace mode), Members (multi-workspace mode only: roles, remove/leave, invitations with the link shown
 once to copy, "email sent" when SMTP is configured, pending list with revoke), Projects (create, rename, change URL,
-archive/unarchive, "Make default"; archiving the default project opens a dialog that picks the new default and says
-what moves there and that the project's own keys stop working; per-project ingest keys: create (shown once, with the
+archive/unarchive; archiving any project, the last active one too, asks once: keys created for it stop working, its
+data stays until retention, it can be unarchived; per-project ingest keys: create (shown once, with the
 environment variables), list, revoke), AWS
 accounts (below). The AWS entry shows the number of new untraced functions.
 
 **Onboarding.** The first time a workspace with no data in the last 7 days and no AWS accounts is opened, the Functions
 page sends the user to the quick-start wizard. Once it was finished or skipped (`ivy.welcomeSeen.<ws>` in localStorage)
 the page shows a two-step empty state instead (create the first project, then connect AWS or copy an ingest key).
+A workspace without active projects (new, or all archived) always shows that empty state on Functions.
 
 **Quick-start wizard** (`/welcome/<step>`; progress in the URL; "Skip" goes to the project's Functions):
 
 1. `workspace`: the name, prefilled from a work email's domain (`erin@acme.io` → "Acme") or the user's name. Only
    for owners in multi-workspace mode, and skipped after joining through an invitation.
-2. `project`: renames the untouched default project, or creates one. Hint: environments are separate projects.
+2. `project`: creates the first project (workspaces start without one). Hint: environments are separate projects.
 3. `aws`: the connect form (the project preselected) → the quick-create link, or the template download with upload
    steps when there's none → "I've deployed it" (verify, polled every 10 s) → the stack-grouped function picker to trace
    stacks or patterns into the project. Or "set it up by hand": an ingest key with `AWS_LAMBDA_EXEC_WRAPPER`,

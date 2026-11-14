@@ -3,8 +3,7 @@ import type { AuthUser } from '../auth/user.js';
 import { awsStore } from '../aws/store.js';
 import { notify } from '../hooks/run.js';
 import { forgetMemberships } from './members.js';
-import { workspaceDefaultProject } from './ids.js';
-import { forgetProjects, setDefaultProject } from './projects.js';
+import { forgetProjects } from './projects.js';
 import { DEFAULT_SHARD } from './shards.js';
 import { isSlug } from './slugs.js';
 import { tenancyStore, type MemberRole, type TenantRecord } from './store.js';
@@ -26,7 +25,7 @@ async function checkSlug(slug: unknown, self?: string): Promise<string> {
   return slug;
 }
 
-/** A new workspace (with its default project), owned by `user`. */
+/** A new workspace, without projects (the welcome wizard creates the first), owned by `user`. */
 export async function createWorkspace(user: AuthUser, input: { name?: unknown; slug?: unknown }): Promise<TenantRecord> {
   const name = checkName(input.name);
   const slug = input.slug === undefined || input.slug === '' ? undefined : await checkSlug(input.slug);
@@ -39,18 +38,9 @@ export async function createWorkspace(user: AuthUser, input: { name?: unknown; s
 
 export const workspaceRef = (w: TenantRecord) => ({ id: w.id, slug: w.slug, name: w.name });
 
-/**
- * Renames a workspace, changes its slug or its default project (`default_project`, ID or slug of an
- * active project). The default workspace keeps the slug `default`.
- */
-export async function updateWorkspace(
-  workspace: TenantRecord,
-  input: { name?: unknown; slug?: unknown; default_project?: unknown },
-): Promise<TenantRecord> {
-  if (input.default_project !== undefined) await setDefaultProject(workspace.id, input.default_project);
-  if (input.name === undefined && input.slug === undefined) return (await tenancyStore().getTenant(workspace.id)) ?? workspace;
-  // Re-read so this write doesn't put back a default project changed since the request started.
-  const next = { ...((await tenancyStore().getTenant(workspace.id)) ?? workspace) };
+/** Renames a workspace or changes its slug. The default workspace keeps the slug `default`. */
+export async function updateWorkspace(workspace: TenantRecord, input: { name?: unknown; slug?: unknown }): Promise<TenantRecord> {
+  const next = { ...workspace };
   if (input.name !== undefined) next.name = checkName(input.name);
   if (input.slug !== undefined && input.slug !== workspace.slug) {
     if (workspace.id === DEFAULT_TENANT) throw new HTTPException(409, { message: 'The default workspace’s slug can’t change' });
@@ -93,6 +83,5 @@ export const presentWorkspace = (w: TenantRecord, role: MemberRole) => ({
   name: w.name,
   role,
   default: w.id === DEFAULT_TENANT,
-  default_project_id: workspaceDefaultProject(w),
   created_at: new Date(w.created_at).toISOString(),
 });

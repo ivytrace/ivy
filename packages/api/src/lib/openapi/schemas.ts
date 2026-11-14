@@ -33,7 +33,7 @@ const projectFields = {
   project: { ...nstr, description: 'Project slug; workspace-wide routes only.' },
 };
 
-const TRACE_STATES = ['traced', 'available', 'opted_out', 'unsupported', 'conflict', 'error', 'pending'];
+const TRACE_STATES = ['traced', 'available', 'opted_out', 'needs_project', 'unsupported', 'conflict', 'error', 'pending'];
 
 const matcher = object(
   {
@@ -78,15 +78,11 @@ export const schemas = {
   }),
   Workspace: object({
     id: str, slug: str, name: str, role, default: bool,
-    default_project_id: { type: 'string', description: 'The default project: keys without a project and functions traced without a project go there.' },
     created_at: time,
   }),
   WorkspaceList: list('Workspace'),
   WorkspaceCreate: object({ name: str, slug: { type: 'string', description: 'Optional; generated from the name when omitted.' } }, ['name']),
-  WorkspaceUpdate: object({
-    name: str, slug: str,
-    default_project: { type: 'string', description: 'Slug or ID of an active project to make the default (any member may change it; name and slug are for owners).' },
-  }, []),
+  WorkspaceUpdate: object({ name: str, slug: str }, []),
   Member: object({ sub: str, email: nstr, role, you: bool, joined_at: time }),
   MemberList: list('Member'),
   MemberUpdate: object({ role }),
@@ -107,13 +103,10 @@ export const schemas = {
     status: { type: 'string', enum: ['pending', 'accepted', 'revoked', 'expired'] }, invited_by: nstr, expires_at: time,
   }),
   InvitationAccepted: object({ accepted: bool, workspace: ref('Workspace') }),
-  Project: object({ id: str, slug: str, name: str, archived: bool, default: bool, created_at: time }),
+  Project: object({ id: str, slug: str, name: str, archived: bool, created_at: time }),
   ProjectList: list('Project'),
   ProjectCreate: object({ name: str, slug: { type: 'string', description: 'Optional; generated from the name when omitted.' } }, ['name']),
-  ProjectUpdate: object({
-    name: str, slug: str, archived: bool,
-    new_default: { type: 'string', description: 'With `archived: true` on the default project: slug or ID of the project that becomes the default (default: the oldest remaining active project). Ignored for other projects.' },
-  }, []),
+  ProjectUpdate: object({ name: str, slug: str, archived: bool }, []),
   Key: object({
     id: str, name: str, kind: { type: 'string', enum: ['user', 'auto-trace', 'bootstrap'] },
     prefix: str, created_at: time, revoked_at: ntime,
@@ -235,7 +228,7 @@ export const schemas = {
       regions: strs,
       all_regions: bool,
       stack_region: str,
-      default_project: { type: 'string', description: 'Project the UI preselects (slug or ID); never causes tracing by itself.' },
+      default_project: { type: 'string', description: 'Project the UI offers first (slug or ID); never causes tracing and is not a fallback.' },
       throttle_metrics: { type: 'boolean', default: true },
     },
     ['account_id', 'regions'],
@@ -273,7 +266,7 @@ export const schemas = {
     },
   }),
   AwsFunctionChoice: object(
-    { mode: { type: 'string', enum: ['trace', 'exclude', 'rules'] }, project: { type: 'string', description: 'With mode `trace`; default: the default project.' } },
+    { mode: { type: 'string', enum: ['trace', 'exclude', 'rules'] }, project: { type: 'string', description: 'Slug or ID; required with mode `trace`.' } },
     ['mode'],
   ),
   AwsFunctionUpdateResult: object({ applied: bool, error: nstr, function: { oneOf: [ref('AwsFunction'), { type: 'null' }] } }),
@@ -281,7 +274,7 @@ export const schemas = {
     {
       functions: { type: 'array', maxItems: 500, items: object({ account_id: str, region: str, name: str }) },
       mode: { type: 'string', enum: ['trace', 'exclude', 'rules'] },
-      project: str,
+      project: { type: 'string', description: 'Slug or ID; required with mode `trace`.' },
     },
     ['functions', 'mode'],
   ),
@@ -291,7 +284,7 @@ export const schemas = {
   RuleCreate: object(
     {
       matcher: ref('RuleMatcher'),
-      project: { type: 'string', description: 'Slug or ID; default: the default project.' },
+      project: { type: 'string', description: 'Slug or ID. Every rule names a project: this or `new_project` is required.' },
       new_project: object({ name: str, slug: str }, ['name']),
       enabled: bool,
       position: int,

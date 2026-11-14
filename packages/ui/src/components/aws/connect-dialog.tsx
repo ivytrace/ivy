@@ -146,13 +146,13 @@ export function Details({ onCreated, bare, defaultProject }: { onCreated: (accou
           <RegionPicker value={selection} onChange={setSelection} options={setup?.regions ?? []} locked={region} />
         </Field>
       </div>
-      <Field label="Default project" htmlFor="account-project" hint="Preselected when you pick functions to trace">
-        <Select value={project || "__default"} onValueChange={(v) => setProject(v === "__default" ? "" : v)}>
+      <Field label="Preselected project" htmlFor="account-project" hint="Offered first when you pick functions to trace; you always choose">
+        <Select value={project || "__none"} onValueChange={(v) => setProject(v === "__none" ? "" : v)}>
           <SelectTrigger id="account-project" className="h-9">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="__default">Workspace default</SelectItem>
+            <SelectItem value="__none">None</SelectItem>
             {projects.data?.items.map((p) => (
               <SelectItem key={p.id} value={p.slug}>
                 {p.name}

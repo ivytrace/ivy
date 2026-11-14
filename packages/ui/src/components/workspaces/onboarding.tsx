@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useProjects } from "@/lib/api/hooks";
-import type { CreatedKey, Project } from "@/lib/api/types";
-import { createKey, firstProject, refreshWorkspace } from "@/lib/api/workspaces";
+import type { CreatedKey } from "@/lib/api/types";
+import { createKey, createProject, refreshWorkspace } from "@/lib/api/workspaces";
 import { awsAccountsLink, pageLink } from "@/lib/links/links";
 import { cn } from "@/lib/utils/cn";
 
@@ -32,9 +32,6 @@ function Step({ n, done, title, children }: { n: number; done: boolean; title: s
   );
 }
 
-/** The untouched project every workspace starts with: the first step renames it. */
-const isPristine = (projects: Project[]) => projects.length === 1 && projects[0].default && projects[0].slug === "default";
-
 /** Empty state of a new workspace: name the first project, then connect AWS or copy an ingest key. */
 export function Onboarding({ workspace }: { workspace: string }) {
   const navigate = useNavigate();
@@ -44,16 +41,16 @@ export function Onboarding({ workspace }: { workspace: string }) {
   const [error, setError] = useState<string | null>(null);
   const [key, setKey] = useState<CreatedKey | null>(null);
   const list = projects.data?.items ?? [];
-  const pristine = isPristine(list);
-  const project = list.find((p) => p.default) ?? list[0];
+  // A new workspace has no projects; so has one whose projects were all archived.
+  const needsProject = !!projects.data && list.length === 0;
+  const project = list[0];
 
-  async function rename(e: FormEvent) {
+  async function create(e: FormEvent) {
     e.preventDefault();
-    if (!project) return;
     setBusy(true);
     setError(null);
     try {
-      const next = await firstProject(workspace, list, name.trim());
+      const next = await createProject(workspace, { name: name.trim() });
       await refreshWorkspace(workspace);
       navigate(pageLink({ workspace, project: next.slug }, "functions"), { replace: true });
     } catch (err) {
@@ -82,9 +79,9 @@ export function Onboarding({ workspace }: { workspace: string }) {
         <h2 className="text-xl font-semibold">Welcome to Ivy</h2>
         <p className="mt-1 text-sm text-muted-foreground">Two steps until your first traces show up here.</p>
       </div>
-      <Step n={1} done={!pristine} title="Create your first project">
-        {pristine ? (
-          <form onSubmit={(e) => void rename(e)} className="grid gap-2">
+      <Step n={1} done={!needsProject} title="Create your first project">
+        {needsProject ? (
+          <form onSubmit={(e) => void create(e)} className="grid gap-2">
             <p className="text-sm text-muted-foreground">
               A project is usually one app in one environment, for example <span className="font-mono">checkout-prod</span>. Create one per
               environment.

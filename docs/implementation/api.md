@@ -81,7 +81,8 @@ personal workspace (they own it) on this call.
 ```
 
 ### `POST /api/workspaces`
-Body `{ "name": "Acme" }`. Creates the workspace with a `default` project; the caller becomes its owner. The slug is
+Body `{ "name": "Acme" }`. Creates the workspace without projects (the welcome wizard creates the first); the caller
+becomes its owner. The slug is
 generated from the name (lower case, accents folded, other characters → `-`, at most 40 characters, `workspace` if
 nothing is left) and made unique across workspaces by appending `-2`, `-3`, …; concurrent creates never get the same
 slug. An optional `"slug"` is used as given instead (409 if taken); the dashboard doesn't send it. 201 with the
@@ -106,15 +107,11 @@ An existing owner keeps the owner role.
 ## Workspace routes (`/api/w/:workspace`)
 
 ### `GET /api/w/:workspace`
-The workspace as in `GET /api/workspaces`, with the caller's role, plus `default_project_id`: the workspace's default
-project.
+The workspace as in `GET /api/workspaces`, with the caller's role. Workspaces have no default project.
 
 ### `PATCH /api/w/:workspace`
-Body: any of `name`, `slug` (owner), `default_project` (any member). Renaming doesn't change the slug, so URLs stay
-stable; changing the slug is a separate, explicit edit ("Change URL"). 409 if the slug is taken; the `default`
-workspace's slug can't change. `default_project` (slug or ID of an active project, 400 otherwise) makes that project
-the default: keys without a project and functions traced without a project go there from now on (keys within the
-router's one-minute key cache, functions at the next sync).
+Body: any of `name`, `slug` (owner). Renaming doesn't change the slug, so URLs stay stable; changing the slug is a
+separate, explicit edit ("Change URL"). 409 if the slug is taken; the `default` workspace's slug can't change.
 
 ### `DELETE /api/w/:workspace?confirm=<slug>` (owner)
 `confirm` must repeat the slug (400 otherwise). 409 while AWS accounts are connected (disconnect them first) and
@@ -161,21 +158,18 @@ is no per-project usage route.
 ### Projects
 
 - `GET /api/w/:workspace/projects` (`?archived=1` includes archived) →
-  `{ "items": [ { "id": "prj_…", "slug": "checkout-prod", "name": "Checkout (prod)", "archived": false, "default": false, "created_at": "…" } ] }`
-  `default` (boolean) marks the workspace's default project, where keys without a project and functions traced
-  without a project go. Every workspace starts with one; the designation moves with `PATCH /api/w/:workspace`
-  (`default_project`) or when the default project is archived.
+  `{ "items": [ { "id": "prj_…", "slug": "checkout-prod", "name": "Checkout (prod)", "archived": false, "created_at": "…" } ] }`
+  There is no default project: a new workspace has none until the first is created, and every key, rule and traced
+  function names its project.
 - `POST /api/w/:workspace/projects`, body `{ "name": "Checkout (prod)" }` → 201 with the project. The slug is
   generated from the name like workspace slugs (`checkout-prod`; fallback `project`), unique within the workspace
   (`-2`, `-3`, … on collisions; `all` and `settings` are skipped). An optional `"slug"` is used as given instead (409 if
   it exists in the workspace).
 - `GET /api/w/:workspace/p/:project` → the project.
-- `PATCH /api/w/:workspace/p/:project`, body: any of `name`, `slug`, `archived` (boolean), `new_default` → the
-  project. Renaming doesn't change the slug. Archiving stops the keys created for it from ingesting (401 at the
-  router) and re-syncs AWS accounts so no function sends to it. Archiving the **default** project first makes
-  `new_default` (slug or ID of another active project; 400 otherwise) the default, or without it the oldest remaining
-  active project; keys without a project then send to the new default. 409 "A workspace needs at least one project"
-  for the last active project. `new_default` is ignored for other projects.
+- `PATCH /api/w/:workspace/p/:project`, body: any of `name`, `slug`, `archived` (boolean) → the project. Renaming
+  doesn't change the slug. Archiving works the same for every project, the last active one included: the keys created
+  for it stop ingesting (401 at the router), AWS accounts are re-synced so no function sends to it, and its data stays
+  until retention. Unarchiving brings it back.
 
 ### Ingest keys of a project
 
@@ -357,8 +351,8 @@ secret). Without `account` only the trusted principal is filled in. `download=1`
 
 ### `POST /api/w/:workspace/aws/accounts` (connect)
 Body: `{ "account_id": "123456789012", "name"?: "Production", "regions": ["eu-west-1"], "all_regions"?: false, "stack_region"?: "eu-west-1", "default_project"?: "checkout-prod" }`.
-The stack region is added to `regions`. `default_project` (slug or ID) is only the project the UI preselects when
-tracing this account's functions. 201 with the account (status `pending`), shaped as below. With the
+The stack region is added to `regions`. `default_project` (slug or ID) is only the project the UI offers first when
+tracing this account's functions; it never causes tracing and is not a fallback. 201 with the account (status `pending`), shaped as below. With the
 `publish-cfn-template` hook, its `quick_create_url` opens the CloudFormation quick-create page for the connection's
 pre-filled template; without it (or when it fails) `quick_create_url` is null and the UI offers
 `template_download_url` plus upload steps. 409 if the
@@ -375,7 +369,7 @@ AWS account is already connected to this workspace.
   "status": "pending" | "connected" | "error", "error": "…" | null,
   "created_at": "…", "verified_at": "…" | null, "last_sync_at": "…" | null, "reviewed_at": "…" | null, "syncing": false,
   "throttle_metrics": true, "throttle_status": "ok" | "missing_permission" | "error" | null,
-  "counts": { "traced": 12, "available": 30, "opted_out": 1, "unsupported": 3, "conflict": 1, "error": 0, "pending": 0, "total": 47, "new": 4 },
+  "counts": { "traced": 12, "available": 30, "opted_out": 1, "needs_project": 1, "unsupported": 3, "conflict": 1, "error": 0, "pending": 0, "total": 47, "new": 4 },
   "quick_create_url": "https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/quickcreate?templateURL=…&stackName=…" | null,
   "quick_create_error": "Publishing the template failed: … Download the template and upload it in the CloudFormation console instead." | null,
   "template_download_url": "/api/w/acme/aws/template.yaml?account=…&download=1"
@@ -416,7 +410,11 @@ Removes the layer from all functions first unless `detach=false` (or the account
   "manual": { "mode": "trace" | "exclude", "project_id": "prj_…" | null, "project": "…" | null } | null,
   "new": false, "first_seen_at": "…", "updated_at": "…" }
 ```
-`project`/`project_id`: where the function sends spans (when the decision is to trace). `source`: what decided it.
+`state`: `traced`, `available` (nothing selects it), `opted_out` (tag `ivy:trace=false` or a manual exclude),
+`needs_project` (tag `ivy:trace=true` without an `ivy:project` naming an active project, and no manual choice or rule
+giving one; or a manual choice whose project was archived: not traced until a project is picked), `unsupported`,
+`conflict`, `error`, `pending`. `project`/`project_id`: where the function sends spans (when the decision is to trace).
+`source`: what decided it.
 `stack`: the `aws:cloudformation:stack-name` tag (Serverless Framework, SAM, CDK and SST all set it). Function data
 reflects the last sync.
 
@@ -443,15 +441,15 @@ One group per (stack, region), sorted by stack name; functions without a stack f
 optionally `account_id`/`region`). `suggested_project` is the stack name as a slug, for the "Trace stack" dialog.
 
 ### `PUT /api/w/:workspace/aws/functions/:accountId/:region/:name` (manual choice)
-Body `{ "mode": "trace", "project"?: "checkout-prod" }`, `{ "mode": "exclude" }`, or `{ "mode": "rules" }` (clear the
-manual choice: follow tags and rules again). `project` defaults to the workspace's default project. Stores the
+Body `{ "mode": "trace", "project": "checkout-prod" }`, `{ "mode": "exclude" }`, or `{ "mode": "rules" }` (clear the
+manual choice: follow tags and rules again). `project` (slug or ID) is required with `trace` (400 otherwise). Stores the
 choice, then applies it to that function right away:
 `{ "applied": true, "error": null, "function": <function> | null }`. If applying fails the choice is kept and the next
 sync retries. 404 if the AWS account isn't connected to the workspace.
 
 ### `POST /api/w/:workspace/aws/functions/bulk` ("Trace selected")
 Body `{ "functions": [ { "account_id": "123456789012", "region": "eu-west-1", "name": "fn-a" } ], "mode": "trace" | "exclude" | "rules", "project"?: "…" }`
-(at most 500). Stores the choices and starts a sync of the affected accounts: 202 `{ "updated": 2 }`.
+(at most 500; `project` is required with `trace`). Stores the choices and starts a sync of the affected accounts: 202 `{ "updated": 2 }`.
 
 ### Rules
 
@@ -459,14 +457,14 @@ A rule selects functions for tracing and names their project. Rules are evaluate
 rule that matches wins. A function no rule matches stays `available` (and is detached if it was traced).
 
 Precedence per function:
-1. Tags: `ivy:trace=false` never traces; `ivy:trace=true` traces.
+1. Tags: `ivy:trace=false` never traces; `ivy:trace=true` traces (given a project, see below).
 2. The manual choice (`PUT …/functions/…`): trace into a project, or exclude.
 3. Rules, in order.
 4. Otherwise not traced.
 
 Whenever a function is traced, an `ivy:project=<slug>` tag naming an active project of the workspace picks the
-project; otherwise the manual choice's project, the rule's project, or (for `ivy:trace=true` alone) the workspace's
-default project.
+project; otherwise the manual choice's project or the rule's project. There is no fallback: `ivy:trace=true` with
+neither is `needs_project` and not traced.
 
 Matcher: every non-empty field must match.
 ```json
@@ -480,10 +478,10 @@ prefix match). `tag` is `key=value` (the value may be a glob) or `key` (present)
   `{ "items": [ { "id": "rul_…", "position": 0, "matcher": { "account_id": null, "region": null, "stack": "checkout-prod", "name": null, "tag": null }, "project_id": "prj_…", "project": "checkout-prod", "enabled": true, "created_at": "…" } ] }`
 - `POST /api/w/:workspace/aws/rules`, body
   `{ "matcher": { "stack": "checkout-prod" }, "project"?: "checkout-prod", "new_project"?: { "name": "Checkout (prod)", "slug"?: "checkout-prod" }, "enabled"?: true, "position"?: 0 }`
-  → 201 `{ "rule": <rule>, "project": <project> }`. Give `project` (slug or ID; default: the workspace default
-  project) or `new_project` (creates the project first). Appended last unless `position` is given. Starts a sync of
+  → 201 `{ "rule": <rule>, "project": <project> }`. Every rule names its project: give `project` (slug or ID) or
+  `new_project` (creates the project first); 400 without either. Appended last unless `position` is given. Starts a sync of
   every connected account, so matching functions are traced within seconds.
-- `PATCH /api/w/:workspace/aws/rules/:id`, body: any of `matcher`, `project`, `enabled`, `position` → the rule; re-syncs.
+- `PATCH /api/w/:workspace/aws/rules/:id`, body: any of `matcher`, `project` (not null), `enabled`, `position` → the rule; re-syncs.
 - `DELETE /api/w/:workspace/aws/rules/:id` → `{ "deleted": true }`; re-syncs (functions only it selected are detached).
 - `PUT /api/w/:workspace/aws/rules/order`, body `{ "order": ["rul_b", "rul_a"] }` → `{ "items": [ <rule> ] }`; re-syncs.
 
@@ -491,7 +489,8 @@ prefix match). `tag` is `key=value` (the value may be a glob) or `key` (present)
 Which functions a matcher selects, and what adding it as a rule (last) would do. Nothing is stored. Used by the UI's
 live preview and by agents before creating a rule.
 Body `{ "matcher": { "stack": "checkout-prod" }, "project"?: "checkout-prod" }` (an unknown `project` is
-allowed here and treated as a new project).
+allowed here and treated as a new project; without `project` the preview counts matches only, with `project: null` on
+the items).
 ```json
 { "count": 8,
   "summary": { "trace": 7, "unchanged": 0, "excluded": 1, "other": 0, "unsupported": 0 },

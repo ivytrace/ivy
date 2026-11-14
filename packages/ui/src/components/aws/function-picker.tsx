@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Ban, Layers, Trash2, X } from "lucide-react";
 
 import { NewBadge } from "@/components/aws/account-parts";
-import { FunctionChoiceMenu, FunctionProject, TraceStateLabel } from "@/components/aws/trace-state";
+import { FunctionChoiceMenu, FunctionProject, NeedsProject, TraceStateLabel } from "@/components/aws/trace-state";
 import { dryRunSummary, TraceDialog, type TraceTarget } from "@/components/aws/trace-dialog";
 import { EmptyState } from "@/components/common/states";
 import { errorMessage } from "@/components/workspaces/name-dialog";
@@ -14,6 +14,7 @@ import { Tooltipped } from "@/components/ui/tooltipped";
 import { deleteRule, dryRun, refreshAws, setFunctionsChoice, updateRule } from "@/lib/api/aws";
 import { useProjects } from "@/lib/api/hooks";
 import type { AwsAccount, AwsFunction, DryRunResponse, FunctionGroup, RuleMatcher } from "@/lib/api/types";
+import { preselectProject, readLastTraceProject, rememberTraceProject } from "@/lib/aws/last-project";
 import { useWorkspace } from "@/lib/links/use-scope";
 import { formatAgo } from "@/lib/utils/format";
 
@@ -68,7 +69,8 @@ export function FunctionPicker({ account, groups, onError }: { account: AwsAccou
     .filter((g) => g.functions.length > 0);
   const all = groups.flatMap((g) => g.functions);
   const regions = [...new Set(all.map((f) => f.region))].sort();
-  const defaultProject = bulkProject || account.default_project || projects.data?.items.find((p) => p.default)?.slug || "";
+  // Always asked: preselects the project last used for tracing, else the account's preselected project.
+  const bulkTarget = bulkProject || preselectProject(projects.data?.items ?? [], readLastTraceProject(workspace), account.default_project);
 
   const toggle = (keys: string[], on: boolean) =>
     setSelected((prev) => {
@@ -84,7 +86,8 @@ export function FunctionPicker({ account, groups, onError }: { account: AwsAccou
     setBusy(true);
     try {
       const fns = all.filter((f) => selected.has(fnKey(f))).map((f) => ({ account_id: f.account_id, region: f.region, name: f.name }));
-      await setFunctionsChoice(workspace, fns, mode === "trace" ? { mode, project: defaultProject } : { mode });
+      if (mode === "trace") rememberTraceProject(workspace, bulkTarget);
+      await setFunctionsChoice(workspace, fns, mode === "trace" ? { mode, project: bulkTarget } : { mode });
       setSelected(new Set());
       await refreshAws();
     } catch (err) {
@@ -145,7 +148,7 @@ export function FunctionPicker({ account, groups, onError }: { account: AwsAccou
       {selected.size > 0 && (
         <div className="sticky top-2 z-10 mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-background/95 p-2 text-sm shadow">
           <span className="px-2 tabular-nums">{selected.size} selected</span>
-          <Select value={defaultProject} onValueChange={setBulkProject}>
+          <Select value={bulkTarget} onValueChange={setBulkProject}>
             <SelectTrigger className="h-8 w-52" aria-label="Project for selected functions">
               <SelectValue placeholder="Project" />
             </SelectTrigger>
@@ -157,7 +160,7 @@ export function FunctionPicker({ account, groups, onError }: { account: AwsAccou
               ))}
             </SelectContent>
           </Select>
-          <Button size="sm" onClick={() => void applySelected("trace")} disabled={busy || !defaultProject}>
+          <Button size="sm" onClick={() => void applySelected("trace")} disabled={busy || !bulkTarget}>
             Trace selected
           </Button>
           <Button size="sm" variant="outline" onClick={() => void applySelected("exclude")} disabled={busy}>
@@ -287,6 +290,7 @@ function StackGroup({
                     </span>
                   ))}
               </div>
+              {f.state === "needs_project" && <NeedsProject fn={f} onError={onError} />}
             </div>
             <div className="w-28">
               <TraceStateLabel state={f.state} reason={f.reason} />

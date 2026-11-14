@@ -27,17 +27,10 @@ export const hashKey = (key: string) => createHash('sha256').update(key, 'utf8')
 export const keyPrefix = (key: string) => key.slice(0, key.startsWith('ivy_') ? 10 : 4);
 
 /**
- * The ID of a workspace's default project, derived from the tenant ID so that every process (and
- * the schema migration in deploy/clickhouse/init.sh, which computes the same in SQL) agrees on it
- * without a lookup: `prj_` + the first 21 hex characters of sha256('ivy-default-project:' + tenant).
+ * The ID of a project Ivy creates itself, derived from the tenant ID so every process (and older
+ * schema migrations) agree on it without a lookup: `prj_` + the first 21 hex characters of
+ * sha256('ivy-default-project:' + tenant). Used for the self-hosted bootstrap project and, as the
+ * first project of workspaces created before workspaces started empty, by the key migration.
  */
-export const defaultProjectId = (tenantId: string) =>
+export const derivedProjectId = (tenantId: string) =>
   `prj_${createHash('sha256').update(`ivy-default-project:${tenantId}`, 'utf8').digest('hex').slice(0, 21)}`;
-
-/**
- * The project a workspace currently designates as its default: where keys without a project and
- * auto-traced functions without a project go. Movable (`tenants.default_project_id`); rows that
- * never set it fall back to the derived ID above.
- */
-export const workspaceDefaultProject = (tenant: { id: string; default_project_id?: string }) =>
-  tenant.default_project_id || defaultProjectId(tenant.id);

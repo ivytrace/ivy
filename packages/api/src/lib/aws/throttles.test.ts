@@ -2,8 +2,6 @@ import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwat
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import { mockClient } from 'aws-sdk-client-mock';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { defaultProjectId } from '../tenancy/ids.js';
-import { memoryTenancyStore, setTenancyStore, tenancyStore } from '../tenancy/store.js';
 import { resetAwsClientsForTests } from './clients.js';
 import { pollAccountThrottles, pollWindow, setThrottleSinkForTests, throttlePollDue, type ThrottleRow } from './throttles.js';
 import type { AwsAccount, FunctionStatus } from './types.js';
@@ -48,7 +46,7 @@ const fn = (function_name: string, state: FunctionStatus['state'] = 'traced', re
   runtime: 'nodejs22.x',
   state,
   reason: '',
-  project_id: function_name === 'worker' ? 'prj_ops' : '',
+  project_id: function_name === 'worker' ? 'prj_ops' : function_name === 'unassigned' ? '' : 'prj_checkout',
   project_source: state === 'traced' ? 'rule' : '',
   rule_id: '',
   stack: '',
@@ -61,7 +59,6 @@ const fn = (function_name: string, state: FunctionStatus['state'] = 'traced', re
 let saved: ThrottleRow[];
 
 beforeEach(() => {
-  setTenancyStore(memoryTenancyStore());
   cw.reset();
   sts.reset();
   resetAwsClientsForTests();
@@ -131,19 +128,19 @@ describe('throttle polling', () => {
       [{ Name: 'FunctionName', Value: 'worker' }],
     ]);
     expect(saved).toEqual([
-      { tenant_id: 'ten_a', project_id: defaultProjectId('ten_a'), function: 'checkout', region: 'eu-west-1', minute: t1.getTime(), account_id: account.account_id, throttles: 3 },
-      { tenant_id: 'ten_a', project_id: defaultProjectId('ten_a'), function: 'checkout', region: 'eu-west-1', minute: t2.getTime(), account_id: account.account_id, throttles: 4 },
+      { tenant_id: 'ten_a', project_id: 'prj_checkout', function: 'checkout', region: 'eu-west-1', minute: t1.getTime(), account_id: account.account_id, throttles: 3 },
+      { tenant_id: 'ten_a', project_id: 'prj_checkout', function: 'checkout', region: 'eu-west-1', minute: t2.getTime(), account_id: account.account_id, throttles: 4 },
       { tenant_id: 'ten_a', project_id: 'prj_ops', function: 'worker', region: 'eu-west-1', minute: t2.getTime(), account_id: account.account_id, throttles: 1 },
     ]);
   });
 
-  it("stores throttles of functions without a project under the workspace's current default project", async () => {
-    await tenancyStore().saveTenant({ id: 'ten_a', slug: 'a', name: 'A', shard_id: 'shard-1', default_project_id: 'prj_moved', created_at: 1 });
+  it('drops throttles of functions without a project, as for untraced ones', async () => {
     cw.on(GetMetricDataCommand)
       .resolvesOnce({ MetricDataResults: [{ Id: 'account', Timestamps: [new Date(NOW_MINUTE - MIN)], Values: [1] }] })
       .resolvesOnce({ MetricDataResults: [{ Id: 'f0', Timestamps: [new Date(NOW_MINUTE - MIN)], Values: [1] }] });
-    await pollAccountThrottles({ ...account, regions: ['eu-west-1'] }, ['eu-west-1'], [fn('checkout')], NOW);
-    expect(saved.map((r) => r.project_id)).toEqual(['prj_moved']);
+    await pollAccountThrottles({ ...account, regions: ['eu-west-1'] }, ['eu-west-1'], [fn('unassigned'), fn('checkout'), fn('tagged', 'needs_project')], NOW);
+    expect(queries(1).MetricDataQueries!.map((q) => q.MetricStat!.Metric!.Dimensions![0].Value)).toEqual(['checkout']);
+    expect(saved.map((r) => r.project_id)).toEqual(['prj_checkout']);
   });
 
   it('splits more than 500 functions into several requests and follows NextToken', async () => {

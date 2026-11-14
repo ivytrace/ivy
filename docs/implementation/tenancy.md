@@ -7,10 +7,11 @@ server from the API key, and the routing seams for sharding by tenant exist now,
 
 - **Tenant** = **workspace** in the product (`workspaces-projects.md`): `ivy_control.tenants`, ID
   `ten_<21 base62>` (the self-hosted tenant is just `default`), a slug, a name, a `shard_id` (default `shard-1`) and
-  a `default_project_id` ('' = the project with the derived ID, see `workspaces-projects.md`).
+  a legacy `default_project_id` (read only by the startup migration of keys without a project; see
+  `workspaces-projects.md`, "There is no default project").
 - **Project**: `ivy_control.projects`, ID `prj_…`, belongs to one tenant; every span belongs to one project.
-- **API key**: `ivy_control.api_keys`, ID `key_<21 base62>`, belongs to one tenant and one project (`project_id`;
-  empty for keys from before projects and the bootstrap key, meaning the workspace's current default project). The key itself is
+- **API key**: `ivy_control.api_keys`, ID `key_<21 base62>`, belongs to one tenant and one project (`project_id`,
+  always set; keys from before projects get one at startup and are rejected until then). The key itself is
   `ivy_<40 base62>` (~238 bits), shown once at creation. Ivy stores `sha256(key)` and a display prefix
   (`ivy_` + 6 characters), never the key. `kind` is `user`, `bootstrap` (from `IVY_INGEST_API_KEY`) or `auto-trace`
   (see below). Revoking sets `revoked_at`.
@@ -169,14 +170,14 @@ Functions get `IVY_API_KEY`, so Ivy must be able to produce a project's key in p
 hash can't give it back. There is one auto-trace key per project (a function's project decides its key,
 `auto-trace.md`). The key used:
 
-- the `default` tenant's default project with `IVY_INGEST_API_KEY` set: that key (self-hosted keeps working with no new configuration; the
-  plaintext already lives in the environment).
+- the project the `IVY_INGEST_API_KEY` bootstrap key belongs to (in the `default` tenant): that key (self-hosted keeps
+  working with no new configuration; the plaintext already lives in the environment). Null when that project is archived.
 - Otherwise a system-managed key of kind `auto-trace` of that project, minted the first time it is needed, stored hashed (for
   the router) and encrypted with AES-256-GCM under a key derived from `IVY_SECRET_KEY` (HKDF-SHA256), in
   `api_keys.encrypted_key`. Every process picks the oldest active one, so two processes that mint at the same moment
   still converge on one key.
-- Neither available (no `IVY_SECRET_KEY` for a non-default tenant): functions show as `pending` and `GET /api/aws/setup`
-  lists the issue.
+- Neither available (no `IVY_SECRET_KEY` for any other project): functions show as `pending` and `GET /api/aws/setup`
+  lists the issue. There is no key for "no project": a function without one is `needs_project` and not traced.
 
 Encrypting only system-managed keys (rather than every key) keeps user keys unrecoverable. Revoking the auto-trace key
 (`tenants revoke-key`) makes the next sync mint a new one and rewrite every traced function. If `IVY_SECRET_KEY`
@@ -185,13 +186,13 @@ revoked).
 
 ## Self-hosted bootstrap
 
-On startup, the API and the router each ensure tenant `default` (slug `default`, shard `shard-1`) and its default
-project exist, and, if `IVY_INGEST_API_KEY` is set, that it is an active `bootstrap` key without a project, so it
-follows whichever project is the default (bootstrap keys written before that named the first default project and are
-rewritten on startup). The API
-also gives every existing tenant a slug and a default project (`ensureWorkspaceDefaults`). The key ID is derived from the hash, so
-concurrent or repeated runs write the same row. Changing the variable revokes the previous bootstrap key; unsetting it
-revokes nothing. The dev flow (`dev-ingest-key`) and single-tenant installs work as before, now through the router.
+On startup, the API and the router each first give every key without a project its workspace's former default project
+(`assignProjectlessKeys`, see `workspaces-projects.md`, "There is no default project"), then ensure tenant `default`
+(slug `default`, shard `shard-1`) exists and, if `IVY_INGEST_API_KEY` is set, that it is an active `bootstrap` key of an
+ordinary project: "Default" (slug `default`, derived ID), created the first time. A new value of the variable revokes
+the previous bootstrap key and takes over its project while that is active. The API also gives every existing tenant a
+slug (`ensureWorkspaceSlugs`). The key ID is derived from the hash, so concurrent or repeated runs write the same row.
+Unsetting the variable revokes nothing. The dev flow (`dev-ingest-key`) and single-tenant installs work as before.
 
 ## Admin
 
@@ -200,11 +201,11 @@ there is also `packages/api/scripts/tenants.ts` (`tenants.mjs` in the image), wh
 directly (moving shards is CLI-only).
 
 ```sh
-pnpm --filter @ivy/api tenants create "Acme"            # prints the tenant ID and its first key, once
+pnpm --filter @ivy/api tenants create "Acme" [--project "Checkout"]   # a first project (default name "Default") and its key, shown once
 pnpm --filter @ivy/api tenants list
 pnpm --filter @ivy/api tenants keys <tenant>
 pnpm --filter @ivy/api tenants projects <tenant>
-pnpm --filter @ivy/api tenants create-key <tenant> [name] [--project <slug or id>]
+pnpm --filter @ivy/api tenants create-key <tenant> --project <slug or id> [name]
 pnpm --filter @ivy/api tenants revoke-key <tenant> <key id>
 pnpm --filter @ivy/api tenants set-shard <tenant> <shard>
 docker compose -f deploy/docker-compose.yml exec api node tenants.mjs list   # in Docker

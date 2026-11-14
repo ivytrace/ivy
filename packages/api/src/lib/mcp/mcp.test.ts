@@ -16,9 +16,9 @@ import { AuthError, verifyAccessToken } from '../auth/verify.js';
 import { mountAgentSurface } from './mount.js';
 import { createProject } from '../tenancy/projects.js';
 import { createTenant } from '../tenancy/tenants.js';
-import { defaultProjectId } from '../tenancy/ids.js';
+import { derivedProjectId } from '../tenancy/ids.js';
 import { fixedWorkspaceAccess } from '../tenancy/members.js';
-import { resetTenancyForTests } from '../tenancy/testing.js';
+import { resetTenancyForTests, testProject } from '../tenancy/testing.js';
 import type { TenantRecord } from '../tenancy/store.js';
 
 vi.mock('../auth/verify.js', async (original) => ({
@@ -70,7 +70,7 @@ const storedTraces = [checkoutFailed, checkoutOk, initFailed, oomStored];
 
 /** invocations rows as the invocations route selects them (absent values as '' / 0). */
 const invocationRow = (tenant: unknown) => (i: (typeof invocations)[number]) => ({
-  ...i, project_id: defaultProjectId(String(tenant)), ts_ms: ms(i.ts), http_method: i.http_method ?? '', http_path: i.http_path ?? '', http_status: i.http_status ?? 0,
+  ...i, project_id: derivedProjectId(String(tenant)), ts_ms: ms(i.ts), http_method: i.http_method ?? '', http_path: i.http_path ?? '', http_status: i.http_status ?? 0,
   error_type: i.error_type ?? '', error_message: i.error_message ?? '', memory_used_mb: i.memory_used_mb ?? 0,
   memory_limit_mb: i.memory_limit_mb ?? 0, failure_phase: i.failure_phase ?? '', init_duration_ms: i.init_duration_ms ?? 0,
 });
@@ -109,6 +109,7 @@ const appWith = (uiDir = '/nonexistent') => createApp({ uiDir, access: fixedWork
 beforeEach(async () => {
   await resetTenancyForTests();
   workspace = await createTenant('Acme', undefined, 'ten_a', 'acme');
+  await testProject(workspace.id);
   captured = [];
   setClientsForTests({ shard: fake, control: fake });
 });

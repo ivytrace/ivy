@@ -56,10 +56,10 @@ describe('workspaces', () => {
     expect(mine.body.items.map((w: { slug: string }) => w.slug)).toEqual(['erin']);
   });
 
-  it('creates a workspace with a default project, and rejects taken slugs', async () => {
+  it('creates a workspace without projects (the wizard creates the first), and rejects taken slugs', async () => {
     const created = await call(owner, 'POST', '/api/workspaces', { name: 'Acme', slug: 'acme' });
     expect(created).toMatchObject({ status: 201, body: { slug: 'acme', role: 'owner' } });
-    expect((await call(owner, 'GET', '/api/w/acme/projects')).body.items).toMatchObject([{ slug: 'default', default: true }]);
+    expect((await call(owner, 'GET', '/api/w/acme/projects')).body.items).toEqual([]);
     expect((await call(erin, 'POST', '/api/workspaces', { name: 'Other', slug: 'acme' })).status).toBe(409);
     expect((await call(erin, 'POST', '/api/workspaces', { name: 'Other', slug: 'default' })).status).toBe(409);
     expect((await call(erin, 'POST', '/api/workspaces', { name: 'Other', slug: 'Not A Slug' })).status).toBe(400);

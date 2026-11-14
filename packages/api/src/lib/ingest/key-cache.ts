@@ -1,4 +1,4 @@
-import { hashKey, workspaceDefaultProject } from '../tenancy/ids.js';
+import { hashKey } from '../tenancy/ids.js';
 import type { KeyMatch } from '../tenancy/store.js';
 
 export interface ResolvedKey {
@@ -17,15 +17,12 @@ export interface KeyCacheOptions {
 }
 
 /**
- * The key's tenant, shard and project. A key of an archived project is rejected like a revoked one.
- * Keys without a project (`project_id` '') follow the workspace's current default project, which may
- * not have a row yet right after the upgrade; any other missing project rejects the key.
+ * The key's tenant, shard and project. A key without a project, or whose project is archived or
+ * missing, is rejected like a revoked one.
  */
 function resolvedKey(match: KeyMatch): ResolvedKey | null {
-  const fallback = workspaceDefaultProject(match.tenant);
-  const projectId = match.key.project_id || fallback;
-  if (match.project ? match.project.archived : projectId !== fallback) return null;
-  return { tenantId: match.tenant.id, projectId, shardId: match.tenant.shard_id, keyId: match.key.id };
+  if (!match.key.project_id || !match.project || match.project.archived) return null;
+  return { tenantId: match.tenant.id, projectId: match.project.id, shardId: match.tenant.shard_id, keyId: match.key.id };
 }
 
 /**

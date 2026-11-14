@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Sparkline, TimeseriesChart } from "@/components/stats/timeseries-chart";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { useTimeRange } from "@/components/layout/time-range";
-import { sparklineBucket, useAwsAccounts, useAwsFunctions, useConfig, useFunctions, useTimeseries, useWorkspaceFunctions } from "@/lib/api/hooks";
+import { sparklineBucket, useAwsAccounts, useAwsFunctions, useConfig, useFunctions, useProjects, useTimeseries, useWorkspaceFunctions } from "@/lib/api/hooks";
 import { firstStep, joinedByInvite, welcomeLink, welcomeSeen } from "@/lib/welcome/welcome";
 import type { FunctionSummary } from "@/lib/api/types";
 import { ALL_PROJECTS, awsAccountsLink, errorsLink, invocationsLink, pageLink, rowScope, type Scope } from "@/lib/links/links";
@@ -190,6 +190,8 @@ export default function Functions() {
   // wizard the first time, and the onboarding steps inline after that.
   const recent = useWorkspaceFunctions(scope.workspace, { since: "7d" });
   const config = useConfig();
+  // Without an active project (all archived) the workspace starts over at "Create your first project".
+  const projects = useProjects(scope.workspace);
   if (noAccounts && recent.data?.items.length === 0 && config.data) {
     if (!welcomeSeen(scope.workspace)) {
       const invited = joinedByInvite(scope.workspace);
@@ -198,6 +200,7 @@ export default function Functions() {
     }
     return <Onboarding workspace={scope.workspace} />;
   }
+  if (projects.data?.items.length === 0) return <Onboarding workspace={scope.workspace} />;
 
   return (
     <div>

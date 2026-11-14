@@ -31,7 +31,7 @@ export default function AlertsSettings() {
   const active = projects.data.items.filter((p) => !p.archived);
   if (!project) {
     const last = readLastScope();
-    const pick = active.find((p) => last?.workspace === workspace && p.slug === last.project) ?? active.find((p) => p.default) ?? active[0];
+    const pick = active.find((p) => last?.workspace === workspace && p.slug === last.project) ?? active[0];
     return pick ? <Navigate to={alertsLink(workspace, pick.slug)} replace /> : null;
   }
 

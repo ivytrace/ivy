@@ -20,13 +20,11 @@ export interface AssignmentContext {
   /** Active (not archived) projects by ID and by slug. */
   projectsById: Map<string, { id: string; slug: string }>;
   projectsBySlug: Map<string, { id: string; slug: string }>;
-  /** The workspace's default project. */
-  defaultProjectId: string;
 }
 
 export type Assignment =
   | { traced: true; projectId: string; source: Exclude<ProjectSource, ''>; ruleId: string; reason: string }
-  | { traced: false; state: 'opted_out' | 'available'; source: ProjectSource; ruleId: ''; reason: string };
+  | { traced: false; state: 'opted_out' | 'available' | 'needs_project'; source: ProjectSource; ruleId: ''; reason: string };
 
 const globCache = new Map<string, RegExp>();
 
@@ -66,7 +64,9 @@ export function matchesRule(m: Partial<RuleMatcher>, fn: FunctionFacts): boolean
  * 3. the workspace's enabled rules, in order, first match wins;
  * 4. otherwise not traced ("available").
  * Whenever a function is traced, an `ivy:project=<slug>` tag naming an active project picks the
- * project; otherwise the manual choice's, the rule's, or the workspace default project.
+ * project; otherwise the manual choice's or the rule's. There is no fallback: a function selected
+ * without an active project (`ivy:trace=true` alone, a manual choice whose project was archived) is
+ * `needs_project` and not traced.
  */
 export function assignProject(fn: FunctionFacts, ctx: AssignmentContext): Assignment {
   const tagTrace = fn.tags[TRACE_TAG]?.trim().toLowerCase();
@@ -79,12 +79,18 @@ export function assignProject(fn: FunctionFacts, ctx: AssignmentContext): Assign
   const manualProject = manual?.mode === 'trace' ? active(manual.project_id) : undefined;
 
   if (tagTrace === 'true') {
-    const projectId = tagProject?.id ?? manualProject ?? rule?.project_id ?? ctx.defaultProjectId;
-    return { traced: true, projectId, source: 'tag', ruleId: '', reason: `Tagged ${TRACE_TAG}=true` };
+    const projectId = tagProject?.id ?? manualProject ?? rule?.project_id;
+    if (projectId) return { traced: true, projectId, source: 'tag', ruleId: '', reason: `Tagged ${TRACE_TAG}=true` };
+    const reason = fn.tags[PROJECT_TAG]
+      ? `Tagged ${TRACE_TAG}=true, but ${PROJECT_TAG}=${fn.tags[PROJECT_TAG]} is not an active project of this workspace`
+      : `Tagged ${TRACE_TAG}=true without ${PROJECT_TAG}`;
+    return { traced: false, state: 'needs_project', source: 'tag', ruleId: '', reason };
   }
   if (manual?.mode === 'exclude') return { traced: false, state: 'opted_out', source: 'manual', ruleId: '', reason: 'Excluded in the dashboard' };
   if (manual?.mode === 'trace') {
-    return { traced: true, projectId: tagProject?.id ?? manualProject ?? ctx.defaultProjectId, source: 'manual', ruleId: '', reason: 'Selected in the dashboard' };
+    const projectId = tagProject?.id ?? manualProject;
+    if (projectId) return { traced: true, projectId, source: 'manual', ruleId: '', reason: 'Selected in the dashboard' };
+    return { traced: false, state: 'needs_project', source: 'manual', ruleId: '', reason: 'Selected in the dashboard, but its project is archived' };
   }
   if (rule) return { traced: true, projectId: tagProject?.id ?? rule.project_id, source: 'rule', ruleId: rule.id, reason: 'Matches a rule' };
   return { traced: false, state: 'available', source: '', ruleId: '', reason: 'Not selected for tracing' };
@@ -93,13 +99,11 @@ export function assignProject(fn: FunctionFacts, ctx: AssignmentContext): Assign
 export function assignmentContext(
   projects: { id: string; slug: string; archived: boolean }[],
   rules: ProjectRule[],
-  defaultProjectId: string,
 ): Omit<AssignmentContext, 'manual'> {
   const activeProjects = projects.filter((p) => !p.archived);
   return {
     rules: [...rules].sort((a, b) => a.position - b.position || a.created_at - b.created_at),
     projectsById: new Map(activeProjects.map((p) => [p.id, p])),
     projectsBySlug: new Map(activeProjects.map((p) => [p.slug, p])),
-    defaultProjectId,
   };
 }

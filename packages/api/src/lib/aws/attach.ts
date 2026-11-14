@@ -26,7 +26,7 @@ export interface Desired {
   /** Whether the function should be traced (see assign.ts). */
   enabled: boolean;
   /** State and reason to report when not traced (default: opted out). */
-  offState?: 'available' | 'opted_out';
+  offState?: 'available' | 'opted_out' | 'needs_project';
   offReason?: string;
   layerArn: string | null;
   ingest: IngestConfig | null;

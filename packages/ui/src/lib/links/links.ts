@@ -90,13 +90,13 @@ interface Pickable {
 /**
  * The scope to open when the URL doesn't say: the last-used workspace (if the user still has it,
  * else the first), and in it the last-used project (if it still exists and isn't archived), else
- * the default project, else the first active one.
+ * the first active one.
  */
 export function pickWorkspace<W extends Pickable>(workspaces: W[], last: Partial<Scope> | null): W | null {
   return workspaces.find((w) => w.slug === last?.workspace) ?? workspaces[0] ?? null;
 }
 
-export function pickProject<P extends Pickable & { archived: boolean; default: boolean }>(
+export function pickProject<P extends Pickable & { archived: boolean }>(
   projects: P[],
   workspace: string,
   last: Partial<Scope> | null,
@@ -105,7 +105,7 @@ export function pickProject<P extends Pickable & { archived: boolean; default: b
   if (last?.workspace === workspace && last.project) {
     if (last.project === ALL_PROJECTS || active.some((p) => p.slug === last.project)) return last.project;
   }
-  return (active.find((p) => p.default) ?? active[0])?.slug ?? ALL_PROJECTS;
+  return active[0]?.slug ?? ALL_PROJECTS;
 }
 
 const LAST_KEY = "ivy.lastScope";

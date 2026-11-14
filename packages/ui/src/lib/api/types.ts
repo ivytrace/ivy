@@ -46,8 +46,6 @@ export interface Workspace {
   name: string;
   role: Role;
   default: boolean;
-  /** The default project: keys without a project and functions traced without one go there. */
-  default_project_id: string;
   created_at: string;
 }
 
@@ -56,7 +54,6 @@ export interface Project {
   slug: string;
   name: string;
   archived: boolean;
-  default: boolean;
   created_at: string;
 }
 
@@ -211,7 +208,8 @@ export type Since = "15m" | "1h" | "24h" | "7d";
 
 export type TimeRange = { since: Since } | { from: string; to: string };
 
-export type TraceState = "traced" | "available" | "opted_out" | "unsupported" | "conflict" | "error" | "pending";
+/** `needs_project`: selected (tag `ivy:trace=true`, or a manual choice whose project was archived) without a project to send to; not traced. */
+export type TraceState = "traced" | "available" | "opted_out" | "needs_project" | "unsupported" | "conflict" | "error" | "pending";
 
 export type AwsAccountStatus = "pending" | "connected" | "error";
 
@@ -237,6 +235,7 @@ export interface AwsAccount {
   external_id: string;
   stack_name: string;
   stack_region: string;
+  /** The project the UI preselects for this account's functions; never causes tracing. */
   default_project_id: string | null;
   default_project: string | null;
   regions: string[];

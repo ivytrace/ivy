@@ -298,13 +298,7 @@ export function createMockHandler(options: MockOptions = {}) {
 
   const find = (ref: string) => workspaces.find((w) => w.slug === ref || w.id === ref);
   const projectOf = (ws: MockWorkspace, ref: string) => ws.projects.find((p) => p.slug === ref || p.id === ref);
-  const present = ({ projects, members: _m, invitations: _i, keys: _k, ...w }: MockWorkspace) => ({
-    ...w,
-    default_project_id: projects.find((p) => p.default)?.id ?? "",
-  });
-  const makeDefault = (ws: MockWorkspace, id: string) => {
-    for (const x of ws.projects) x.default = x.id === id;
-  };
+  const present = ({ projects: _p, members: _m, invitations: _i, keys: _k, ...w }: MockWorkspace) => w;
   const ids = (ws: MockWorkspace) => new Map(ws.projects.map((p) => [p.slug, p.id]));
 
   function data(ws: MockWorkspace, project: string | null, rest: string, params: URLSearchParams): MockResponse | null {
@@ -344,19 +338,8 @@ export function createMockHandler(options: MockOptions = {}) {
         for (const k of ws.keys) if (k.project === p.slug) k.project = body.slug;
         p.slug = body.slug;
       }
-      if (typeof body.archived === "boolean") {
-        if (body.archived && !p.archived) {
-          const others = ws.projects.filter((x) => !x.archived && x.id !== p.id);
-          if (!others.length) return json(409, { error: "A workspace needs at least one project" });
-          if (p.default) {
-            const ref = body.new_default;
-            const next = ref ? others.find((x) => x.id === ref || x.slug === ref) : others[0];
-            if (!next) return json(400, { error: `new_default: unknown project ${String(ref)}` });
-            makeDefault(ws, next.id);
-          }
-        }
-        p.archived = body.archived;
-      }
+      // Any project can be archived, the last active one included.
+      if (typeof body.archived === "boolean") p.archived = body.archived;
       return json(200, p);
     }
     const alertRes = rest.startsWith("/alerts") ? alerts.projectRoutes(ws, p.slug, rest, method, body) : null;
@@ -391,11 +374,6 @@ export function createMockHandler(options: MockOptions = {}) {
         if (!slugOk(body.slug)) return json(400, { error: "Invalid slug" });
         if (workspaces.some((w) => w.slug === body.slug)) return json(409, { error: `The workspace slug "${body.slug}" is taken` });
         ws.slug = body.slug;
-      }
-      if (body.default_project !== undefined) {
-        const next = ws.projects.find((x) => !x.archived && (x.id === body.default_project || x.slug === body.default_project));
-        if (!next) return json(400, { error: `default_project: unknown project ${String(body.default_project)}` });
-        makeDefault(ws, next.id);
       }
       return json(200, present(ws));
     }
@@ -476,15 +454,15 @@ export function createMockHandler(options: MockOptions = {}) {
           created = res.body as { id: string };
           projectId = created.id;
         }
-        projectId ??= ws.projects.find((p) => p.default)!.id;
+        if (!projectId) return json(400, { error: "project is required: every rule and traced function belongs to a project" });
         const rule = awsOf(ws).addRule((body.matcher ?? {}) as Record<string, unknown>, projectId, body.enabled !== false);
         const project = ws.projects.find((p) => p.id === projectId)!;
         scheduleFirstTrace(ws, project.slug);
         return json(201, { rule, project });
       }
       if (rest === "/aws/functions/bulk" && body.mode === "trace") {
-        const project = ws.projects.find((p) => p.slug === body.project) ?? ws.projects.find((p) => p.default)!;
-        scheduleFirstTrace(ws, project.slug);
+        const project = ws.projects.find((p) => p.slug === body.project);
+        if (project) scheduleFirstTrace(ws, project.slug);
       }
       return awsOf(ws).handle(method, rest.slice(4), params, body) ?? notFound();
     }

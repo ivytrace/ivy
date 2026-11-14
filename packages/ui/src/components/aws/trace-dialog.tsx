@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { createRule, dryRun, refreshAws } from "@/lib/api/aws";
 import { useProjects } from "@/lib/api/hooks";
 import type { DryRunResponse, RuleMatcher } from "@/lib/api/types";
+import { preselectProject, readLastTraceProject, rememberTraceProject } from "@/lib/aws/last-project";
 import { useWorkspace } from "@/lib/links/use-scope";
 import { slugify } from "@/lib/utils/slug";
 
@@ -54,14 +55,15 @@ export function TraceDialog({ target, onOpenChange }: { target: TraceTarget | nu
     if (!target) return;
     setError(null);
     setPreview(null);
+    // Every rule names a project, so the dialog always asks; it preselects the stack's suggestion,
+    // else the project last used for tracing, else the account's preselected project.
     const suggested = target.suggested ?? "";
-    const match = list.find((p) => p.slug === suggested);
-    if (suggested && !match) {
+    if ((suggested && !list.some((p) => p.slug === suggested)) || !list.length) {
       setMode("new");
       setName(suggested);
     } else {
       setMode("existing");
-      setExisting(match?.slug ?? target.fallback ?? list.find((p) => p.default)?.slug ?? list[0]?.slug ?? "");
+      setExisting(preselectProject(list, suggested, readLastTraceProject(workspace), target.fallback));
     }
     // Initialise when a new target opens; the project list is read once.
   }, [target]);
@@ -81,7 +83,8 @@ export function TraceDialog({ target, onOpenChange }: { target: TraceTarget | nu
     setBusy(true);
     setError(null);
     try {
-      await createRule(workspace, mode === "new" ? { matcher: target.matcher, new_project: { name: name.trim() } } : { matcher: target.matcher, project: existing });
+      const res = await createRule(workspace, mode === "new" ? { matcher: target.matcher, new_project: { name: name.trim() } } : { matcher: target.matcher, project: existing });
+      rememberTraceProject(workspace, res.project?.slug ?? existing);
       await refreshAws();
       onOpenChange(false);
     } catch (err) {

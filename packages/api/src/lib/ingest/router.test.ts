@@ -2,7 +2,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { gzipSync } from 'node:zlib';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { defaultProjectId, hashKey } from '../tenancy/ids.js';
+import { hashKey } from '../tenancy/ids.js';
 import type { KeyMatch } from '../tenancy/store.js';
 import { FailureLimiter } from './failure-limiter.js';
 import { KeyCache } from './key-cache.js';
@@ -26,7 +26,7 @@ const KEYS: Record<string, KeyMatch> = {
     tenant: tenantA,
     project: project('prj_staging'),
   },
-  // A key from before projects: no project_id, and the default project has no row yet.
+  // A key from before projects that the startup migration hasn't given a project (yet): no fallback.
   [hashKey('old-key')]: { key: { id: 'key_2', tenant_id: 'ten_a', project_id: '' } as KeyMatch['key'], tenant: tenantA, project: null },
   [hashKey('archived-key')]: {
     key: { id: 'key_3', tenant_id: 'ten_a', project_id: 'prj_old' } as KeyMatch['key'],
@@ -108,13 +108,11 @@ const post = (body: Buffer | string, headers: Record<string, string>, path = '/v
 const JSON_BODY = JSON.stringify(jsonRequest(3));
 
 describe('ingest router', () => {
-  it('sends keys from before projects to the default project, and refuses archived or missing projects', async () => {
-    const ok = await post(JSON_BODY, { authorization: 'Bearer old-key', 'content-type': 'application/json' });
-    expect(ok.status).toBe(200);
-    expect(received[0].headers['x-ivy-project']).toBe(defaultProjectId('ten_a'));
+  it('refuses keys without a project (no fallback), and keys of archived or missing projects', async () => {
+    expect((await post(JSON_BODY, { authorization: 'Bearer old-key', 'content-type': 'application/json' })).status).toBe(401);
     expect((await post(JSON_BODY, { authorization: 'Bearer archived-key', 'content-type': 'application/json' })).status).toBe(401);
     expect((await post(JSON_BODY, { authorization: 'Bearer orphan-key', 'content-type': 'application/json' })).status).toBe(401);
-    expect(received).toHaveLength(1);
+    expect(received).toHaveLength(0);
   });
 
   it('forwards an authenticated request unchanged with the tenant header and the internal token', async () => {

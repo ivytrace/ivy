@@ -10,7 +10,7 @@ export interface AwsAccount {
   event_secret: string;
   stack_name: string;
   stack_region: string;
-  /** The project the UI preselects when tracing functions of this account ('' = the workspace default). */
+  /** The project the UI preselects when tracing functions of this account ('' = none). Never causes tracing. */
   default_project_id: string;
   /** Functions first seen after this count as "new" (the UI sets it when the list is viewed). */
   reviewed_at: number;
@@ -33,11 +33,12 @@ export type ThrottleStatus = '' | 'ok' | 'missing_permission' | 'error';
 
 /**
  * `available`: supported but not selected for tracing (no tag, manual choice or rule). `opted_out`:
- * excluded by the `ivy:trace=false` tag or a manual exclude.
+ * excluded by the `ivy:trace=false` tag or a manual exclude. `needs_project`: selected (by
+ * `ivy:trace=true` or a manual choice) without an active project to send to; not traced.
  */
-export type TraceState = 'traced' | 'available' | 'opted_out' | 'unsupported' | 'conflict' | 'error' | 'pending';
+export type TraceState = 'traced' | 'available' | 'opted_out' | 'needs_project' | 'unsupported' | 'conflict' | 'error' | 'pending';
 
-export const TRACE_STATES: TraceState[] = ['traced', 'available', 'opted_out', 'unsupported', 'conflict', 'error', 'pending'];
+export const TRACE_STATES: TraceState[] = ['traced', 'available', 'opted_out', 'needs_project', 'unsupported', 'conflict', 'error', 'pending'];
 
 /** Why a function is (or isn't) traced: a tag, a manual choice in the dashboard, a rule, or nothing. */
 export type ProjectSource = 'tag' | 'manual' | 'rule' | '';
@@ -71,7 +72,7 @@ export interface FunctionSetting {
   region: string;
   function_name: string;
   mode: ManualMode;
-  /** With mode `trace`: the project ('' = the workspace default). */
+  /** With mode `trace`: the project. ('' only on old rows: such a choice is `needs_project`.) */
   project_id: string;
 }
 

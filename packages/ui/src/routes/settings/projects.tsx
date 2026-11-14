@@ -3,8 +3,8 @@ import { Link } from "react-router";
 import { Archive, ArchiveRestore, KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { SectionHeader } from "@/components/common/section-header";
-import { ArchiveDefaultDialog } from "@/components/workspaces/archive-default";
 import { ErrorState, LoadingState } from "@/components/common/states";
+import { ArchiveProjectDialog } from "@/components/workspaces/archive-project";
 import { KeyReveal } from "@/components/workspaces/key-reveal";
 import { errorMessage, NameDialog, UrlSetting } from "@/components/workspaces/name-dialog";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { useKeys, useProjects } from "@/lib/api/hooks";
 import type { CreatedKey, Project } from "@/lib/api/types";
-import { createKey, createProject, refreshWorkspace, revokeKey, updateProject, updateWorkspace } from "@/lib/api/workspaces";
+import { createKey, createProject, refreshWorkspace, revokeKey, updateProject } from "@/lib/api/workspaces";
 import { pageLink } from "@/lib/links/links";
 import { useWorkspace } from "@/lib/links/use-scope";
 import { cn } from "@/lib/utils/cn";
@@ -23,7 +23,7 @@ export default function ProjectsSettings() {
   const projects = useProjects(workspace, true);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Project | null>(null);
-  const [archivingDefault, setArchivingDefault] = useState<Project | null>(null);
+  const [archiving, setArchiving] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function run(action: () => Promise<unknown>) {
@@ -37,7 +37,7 @@ export default function ProjectsSettings() {
   }
 
   function setArchived(p: Project, archived: boolean) {
-    if (archived && p.default) setArchivingDefault(p);
+    if (archived) setArchiving(p);
     else void run(() => updateProject(workspace, p.slug, { archived }));
   }
 
@@ -66,19 +66,18 @@ export default function ProjectsSettings() {
               project={p}
               onEdit={() => setEditing(p)}
               onArchive={(archived) => setArchived(p, archived)}
-              onMakeDefault={() => void run(() => updateWorkspace(workspace, { default_project: p.slug }))}
             />
           ))}
         </div>
       )}
 
-      {archivingDefault && projects.data ? (
-        <ArchiveDefaultDialog
-          key={archivingDefault.id}
+      {archiving && projects.data ? (
+        <ArchiveProjectDialog
+          key={archiving.id}
           workspace={workspace}
-          project={archivingDefault}
-          projects={projects.data.items}
-          onClose={() => setArchivingDefault(null)}
+          project={archiving}
+          last={!projects.data.items.some((p) => !p.archived && p.id !== archiving.id)}
+          onClose={() => setArchiving(null)}
         />
       ) : null}
       <NameDialog
@@ -128,13 +127,11 @@ function ProjectCard({
   project,
   onEdit,
   onArchive,
-  onMakeDefault,
 }: {
   workspace: string;
   project: Project;
   onEdit: () => void;
   onArchive: (archived: boolean) => void;
-  onMakeDefault: () => void;
 }) {
   const [showKeys, setShowKeys] = useState(false);
   return (
@@ -150,18 +147,10 @@ function ProjectCard({
           )}
           <div className="font-mono text-xs text-muted-foreground">
             /w/{workspace}/{project.slug}
-            {project.default ? <span className="ml-2 font-sans">· default</span> : null}
             {project.archived ? <span className="ml-2 font-sans">· archived</span> : null}
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {!project.archived && !project.default ? (
-            <Tooltipped title="Keys without a project and new auto-traced functions without a rule go to the default project">
-              <Button variant="ghost" size="sm" onClick={onMakeDefault}>
-                Make default
-              </Button>
-            </Tooltipped>
-          ) : null}
           {!project.archived && (
             <Button variant="outline" size="sm" onClick={() => setShowKeys((v) => !v)}>
               <KeyRound className="mr-2 size-4" />

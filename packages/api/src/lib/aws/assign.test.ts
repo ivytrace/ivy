@@ -3,7 +3,6 @@ import { assignmentContext, assignProject, globMatch, matchesRule, type Function
 import type { FunctionSetting, ProjectRule, RuleMatcher } from './types.js';
 
 const projects = [
-  { id: 'prj_default', slug: 'default', archived: false },
   { id: 'prj_prod', slug: 'api-prod', archived: false },
   { id: 'prj_staging', slug: 'api-staging', archived: false },
   { id: 'prj_tagged', slug: 'tagged', archived: false },
@@ -29,7 +28,7 @@ const stack = (s: string) => ({ 'aws:cloudformation:stack-name': s });
 const manual = (mode: FunctionSetting['mode'], project_id = ''): FunctionSetting => ({ account_id: '111111111111', region: 'eu-west-1', function_name: 'x', mode, project_id });
 
 function assign(f: FunctionFacts, rules: ProjectRule[], m: FunctionSetting | null = null) {
-  return assignProject(f, { ...assignmentContext(projects, rules, 'prj_default'), manual: m });
+  return assignProject(f, { ...assignmentContext(projects, rules), manual: m });
 }
 
 describe('globMatch and matchesRule', () => {
@@ -76,14 +75,17 @@ describe('assignProject precedence', () => {
   it('lets a manual choice beat rules', () => {
     expect(assign(fn('a', stack('api-prod')), rules, manual('exclude'))).toMatchObject({ traced: false, state: 'opted_out', source: 'manual' });
     expect(assign(fn('a', stack('api-prod')), rules, manual('trace', 'prj_staging'))).toMatchObject({ traced: true, projectId: 'prj_staging', source: 'manual' });
-    expect(assign(fn('loose'), [], manual('trace'))).toMatchObject({ traced: true, projectId: 'prj_default', source: 'manual' });
+    // A manual choice without an active project (old rows, or its project was archived) needs a project.
+    expect(assign(fn('loose'), [], manual('trace'))).toMatchObject({ traced: false, state: 'needs_project', source: 'manual' });
+    expect(assign(fn('loose'), rules, manual('trace', 'prj_old'))).toMatchObject({ traced: false, state: 'needs_project', source: 'manual' });
     expect(assign(fn('a', stack('api-prod')), rules, manual(''))).toMatchObject({ source: 'rule' });
   });
 
   it('lets tags beat everything', () => {
     const off = { 'ivy:trace': 'false', ...stack('api-prod') };
     expect(assign(fn('a', off), rules, manual('trace', 'prj_prod'))).toMatchObject({ traced: false, state: 'opted_out', source: 'tag' });
-    expect(assign(fn('a', { 'ivy:trace': 'true' }), [], manual('exclude'))).toMatchObject({ traced: true, projectId: 'prj_default', source: 'tag' });
+    expect(assign(fn('a', { 'ivy:trace': 'true' }), [], manual('trace', 'prj_prod'))).toMatchObject({ traced: true, projectId: 'prj_prod', source: 'tag' });
+    expect(assign(fn('a', { 'ivy:trace': 'true', ...stack('api-prod') }), rules)).toMatchObject({ traced: true, projectId: 'prj_prod', source: 'tag' });
     expect(assign(fn('a', { 'ivy:trace': 'TRUE', 'ivy:project': 'tagged' }), rules)).toMatchObject({ projectId: 'prj_tagged', source: 'tag' });
     // ivy:project picks the project of a function traced by a rule or a manual choice too.
     expect(assign(fn('a', { 'ivy:project': 'tagged', ...stack('api-prod') }), rules)).toMatchObject({ projectId: 'prj_tagged', source: 'rule' });
@@ -91,5 +93,11 @@ describe('assignProject precedence', () => {
     // An unknown or archived slug is ignored; ivy:project alone doesn't trace.
     expect(assign(fn('a', { 'ivy:project': 'old', ...stack('api-prod') }), rules)).toMatchObject({ projectId: 'prj_prod' });
     expect(assign(fn('a', { 'ivy:project': 'tagged' }), [])).toMatchObject({ traced: false, state: 'available' });
+  });
+
+  it('needs a project for ivy:trace=true without one: there is no default project', () => {
+    expect(assign(fn('a', { 'ivy:trace': 'true' }), [])).toMatchObject({ traced: false, state: 'needs_project', source: 'tag', reason: 'Tagged ivy:trace=true without ivy:project' });
+    expect(assign(fn('a', { 'ivy:trace': 'true' }), [], manual('exclude'))).toMatchObject({ traced: false, state: 'needs_project' });
+    expect(assign(fn('a', { 'ivy:trace': 'true', 'ivy:project': 'old' }), [])).toMatchObject({ traced: false, state: 'needs_project', reason: expect.stringContaining('not an active project') });
   });
 });

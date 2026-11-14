@@ -101,7 +101,7 @@ export const openApiDocument = {
     '/api/workspaces': {
       get: { tags: ['Workspaces'], summary: "The caller's workspaces", operationId: 'listWorkspaces', responses: { 200: json(ref('WorkspaceList')) } },
       post: {
-        tags: ['Workspaces'], summary: 'Create a workspace (with a default project)', operationId: 'createWorkspace',
+        tags: ['Workspaces'], summary: 'Create a workspace (without projects)', operationId: 'createWorkspace',
         description: 'The slug is generated from the name (-2, -3, … on collisions). 403 in single-workspace mode.',
         requestBody: body('WorkspaceCreate'), responses: { 201: json(ref('Workspace'), 'Created'), ...bad, 403: error('Single-workspace mode'), 409: error('Slug taken') },
       },
@@ -123,7 +123,7 @@ export const openApiDocument = {
     '/api/w/{workspace}': {
       get: { tags: ['Workspaces'], summary: 'The workspace and your role', operationId: 'getWorkspace', parameters: [ws], responses: { 200: json(ref('Workspace')), ...notFound } },
       patch: {
-        tags: ['Workspaces'], summary: 'Rename or change the slug (owner), or change the default project', operationId: 'updateWorkspace', parameters: [ws],
+        tags: ['Workspaces'], summary: 'Rename or change the slug (owner)', operationId: 'updateWorkspace', parameters: [ws],
         requestBody: body('WorkspaceUpdate'), responses: { 200: json(ref('Workspace')), ...bad, ...owner, ...notFound, 409: error('Slug taken') },
       },
       delete: {
@@ -184,9 +184,9 @@ export const openApiDocument = {
       patch: {
         tags: ['Projects'], summary: 'Rename, change the slug, archive or unarchive', operationId: 'updateProject', parameters: [ws, prj],
         description:
-          'Archiving the default project first makes `new_default` (or the oldest remaining active project) the default. ' +
-          'Keys without a project follow the default; keys created for an archived project stop working.',
-        requestBody: body('ProjectUpdate'), responses: { 200: json(ref('Project')), ...bad, ...notFound, 409: error('Slug taken, or archiving the last active project') },
+          'Any project can be archived, the last active one included. Keys created for an archived project stop working; ' +
+          'its data stays until retention, and it can be unarchived.',
+        requestBody: body('ProjectUpdate'), responses: { 200: json(ref('Project')), ...bad, ...notFound, 409: error('Slug taken') },
       },
     },
     '/api/w/{workspace}/p/{project}/keys': {

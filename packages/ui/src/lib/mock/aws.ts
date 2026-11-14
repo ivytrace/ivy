@@ -77,6 +77,7 @@ const PROD: Seed[] = [
   ["media-transcode", "us-east-1", "nodejs20.x", null, { tags: { team: "media" } }],
   ["orders-archive", "eu-west-1", "nodejs20.x", null, { first_seen_ms: Date.now() - 2 * 3600_000 }],
   ["ops-cron", "eu-west-1", "nodejs22.x", null, { first_seen_ms: Date.now() - 3 * 3600_000, tags: { team: "ops" } }],
+  ["ops-healthcheck", "eu-west-1", "nodejs22.x", null, { tags: { "ivy:trace": "true" } }],
   ["reports-imageResize", "us-east-1", "", null, { fixed: { state: "unsupported", reason: "Container image functions do not support layers" } }],
 ];
 
@@ -131,7 +132,7 @@ export function matches(m: RuleMatcher, fn: Pick<MockFunction, "account_id" | "r
 const fnKey = (f: { account_id: string; region: string; name: string }) => `${f.account_id}/${f.region}/${f.name}`;
 
 /** One workspace's AWS state. `projects` resolves project IDs and slugs (active projects only). */
-export function createAwsMock(options: MockOptions, projects: () => { id: string; slug: string; archived: boolean; default: boolean }[], workspaceSlug: () => string) {
+export function createAwsMock(options: MockOptions, projects: () => { id: string; slug: string; archived: boolean }[], workspaceSlug: () => string) {
   const now = Date.now();
   const accounts: MockAccount[] = [];
   let functions: MockFunction[] = [];
@@ -140,7 +141,6 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
   let counter = 0;
 
   const projectBy = (ref: string | null | undefined) => projects().find((p) => !p.archived && (p.id === ref || p.slug === ref));
-  const defaultProject = () => projects().find((p) => p.default)!;
 
   function makeAccount(fields: Partial<MockAccount> & Pick<MockAccount, "id" | "name" | "account_id" | "regions" | "stack_region">, at: number): MockAccount {
     const short = fields.id.replace(/\W/g, "").slice(0, 8);
@@ -205,9 +205,21 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
     const m = manual.get(fnKey(fn));
     const rule = ruleList.find((r) => r.enabled && projectBy(r.project_id) && matches(r.matcher, fn));
     if (fn.tags["ivy:trace"] === "false") return { state: "opted_out" as const, reason: "Tagged ivy:trace=false", project: null, source: "tag" as const, rule: null };
-    if (fn.tags["ivy:trace"] === "true") return { state: "traced" as const, reason: null, project: tagProject ?? defaultProject().id, source: "tag" as const, rule: null };
+    const manualProject = m?.mode === "trace" ? projectBy(m.project_id)?.id : undefined;
+    if (fn.tags["ivy:trace"] === "true") {
+      const project = tagProject ?? manualProject ?? rule?.project_id;
+      if (project) return { state: "traced" as const, reason: null, project, source: "tag" as const, rule: null };
+      const reason = fn.tags["ivy:project"]
+        ? `Tagged ivy:trace=true, but ivy:project=${fn.tags["ivy:project"]} is not an active project of this workspace`
+        : "Tagged ivy:trace=true without ivy:project";
+      return { state: "needs_project" as const, reason, project: null, source: "tag" as const, rule: null };
+    }
     if (m?.mode === "exclude") return { state: "opted_out" as const, reason: "Excluded in the dashboard", project: null, source: "manual" as const, rule: null };
-    if (m?.mode === "trace") return { state: "traced" as const, reason: null, project: tagProject ?? projectBy(m.project_id)?.id ?? defaultProject().id, source: "manual" as const, rule: null };
+    if (m?.mode === "trace") {
+      const project = tagProject ?? manualProject;
+      if (project) return { state: "traced" as const, reason: null, project, source: "manual" as const, rule: null };
+      return { state: "needs_project" as const, reason: "Selected in the dashboard, but its project is archived", project: null, source: "manual" as const, rule: null };
+    }
     if (rule) return { state: "traced" as const, reason: null, project: tagProject ?? rule.project_id, source: "rule" as const, rule: rule.id };
     return { state: "available" as const, reason: "Not selected for tracing", project: null, source: null, rule: null };
   }
@@ -263,7 +275,7 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
   const presentAccount = (a: MockAccount): AwsAccount => {
     const { created_ms: _c, sync_until, ...rest } = a;
     const own = functions.filter((f) => f.account_id === a.account_id).map(present);
-    const counts = { traced: 0, available: 0, opted_out: 0, unsupported: 0, conflict: 0, error: 0, pending: 0, total: own.length, new: 0 };
+    const counts = { traced: 0, available: 0, opted_out: 0, needs_project: 0, unsupported: 0, conflict: 0, error: 0, pending: 0, total: own.length, new: 0 };
     for (const f of own) {
       counts[f.state]++;
       if (f.new) counts.new++;
@@ -322,7 +334,7 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
 
   function dryRun(matcher: RuleMatcher, project: string | undefined) {
     const known = projectBy(project);
-    const pid = known?.id ?? (project ? `__new:${project}` : defaultProject().id);
+    const pid = known?.id ?? (project ? `__new:${project}` : "__no_project");
     const probe: MockRule = { id: "__probe", matcher: { account_id: null, region: null, stack: null, name: null, tag: null, ...matcher }, project_id: pid, enabled: true, created_at: "" };
     const items = functions
       .filter((f) => matches(matcher, f))
@@ -332,12 +344,12 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
         const ruleHit = after.rule === "__probe" || (!known && !after.rule && after.state === "available" && project);
         let outcome: DryRunOutcome;
         if (f.fixed) outcome = "unsupported";
-        else if (after.state === "opted_out") outcome = "excluded";
+        else if (after.state === "opted_out" || after.state === "needs_project") outcome = "excluded";
         else if (before.state === "traced" && (after.project === before.project_id || (ruleHit && before.project === project))) outcome = "unchanged";
         else if (ruleHit || after.rule === "__probe") outcome = "trace";
         else if (after.state === "traced") outcome = "other";
         else outcome = "trace";
-        return { function: before, outcome, project: outcome === "trace" || outcome === "unchanged" ? (known?.slug ?? project ?? defaultProject().slug) : before.project };
+        return { function: before, outcome, project: outcome === "trace" || outcome === "unchanged" ? (known?.slug ?? project ?? null) : before.project };
       });
     const summary: Record<DryRunOutcome, number> = { trace: 0, unchanged: 0, excluded: 0, other: 0, unsupported: 0 };
     for (const i of items) summary[i.outcome]++;
@@ -403,6 +415,7 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
       return { status: 200, body: { items } };
     }
     if (path === "/functions/bulk" && method === "POST") {
+      if (body.mode === "trace" && !projectBy(body.project as string)) return { status: 400, body: { error: "project is required: every rule and traced function belongs to a project" } };
       const list = (body.functions as { account_id: string; region: string; name: string }[]) ?? [];
       for (const f of list) {
         if (body.mode === "rules") manual.delete(fnKey(f));
@@ -416,6 +429,7 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
       const target = functions.find((f) => f.account_id === fn[1] && f.region === fn[2] && f.name === decodeURIComponent(fn[3]));
       if (!target) return { status: 404, body: { error: "Function not found" } };
       if (!["trace", "exclude", "rules"].includes(String(body.mode))) return { status: 400, body: { error: 'mode must be "trace", "exclude" or "rules"' } };
+      if (body.mode === "trace" && !projectBy(body.project as string)) return { status: 400, body: { error: "project is required: every rule and traced function belongs to a project" } };
       if (body.mode === "rules") manual.delete(fnKey(target));
       else manual.set(fnKey(target), { mode: body.mode as "trace" | "exclude", project_id: body.mode === "trace" ? (projectBy(body.project as string)?.id ?? null) : null });
       return { status: 200, body: { applied: true, error: null, function: present(target) } };

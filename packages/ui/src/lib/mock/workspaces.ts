@@ -2,8 +2,7 @@ import type { ApiKey, Invitation, Member, Project, Role, Workspace } from "../ap
 
 /** Mock control plane: workspaces, projects, members, invitations and ingest keys. */
 
-/** `default_project_id` is derived from the projects' `default` flags when presented. */
-export interface MockWorkspace extends Omit<Workspace, "default_project_id"> {
+export interface MockWorkspace extends Workspace {
   projects: Project[];
   members: Member[];
   invitations: (Invitation & { token: string })[];
@@ -37,7 +36,7 @@ export function slugFrom(name: string, taken: (slug: string) => boolean, fallbac
 }
 
 export function project(slug: string, name: string, ageDays: number, extra: Partial<Project> = {}): Project {
-  return { id: id("prj"), slug, name, archived: false, default: false, created_at: iso(Date.now() - ageDays * DAY), ...extra };
+  return { id: id("prj"), slug, name, archived: false, created_at: iso(Date.now() - ageDays * DAY), ...extra };
 }
 
 function key(projectSlug: string, name: string, kind: ApiKey["kind"], ageDays: number) {
@@ -52,7 +51,7 @@ export function newWorkspace(name: string, slug: string, role: Role, ageDays = 0
     role,
     default: false,
     created_at: iso(Date.now() - ageDays * DAY),
-    projects: [project("default", "Default", ageDays, { default: true })],
+    projects: [],
     members: [{ sub: "idn_you", email: "you@example.com", role, you: true, joined_at: iso(Date.now() - ageDays * DAY) }],
     invitations: [],
     keys: [],
@@ -69,7 +68,6 @@ export function seedWorkspaces(empty: boolean): MockWorkspace[] {
     project("billing-api-prod", "Billing API (prod)", 20),
     project("billing-api-staging", "Billing API (staging)", 20),
     project("support-api-prod", "Support API (prod)", 10),
-    project("default", "Default", 40, { default: true }),
     project("legacy-reports", "Legacy reports", 60, { archived: true }),
   ];
   acme.members.push(
@@ -94,7 +92,7 @@ export function seedWorkspaces(empty: boolean): MockWorkspace[] {
     key("support-api-prod", "Auto-trace (Lambda functions)", "auto-trace", 10),
   );
 
-  // Someone else's workspace you're a member of: only the untouched default project (onboarding).
+  // Someone else's workspace you're a member of, without projects yet (onboarding).
   const side = newWorkspace("Side project", "side-project", "member", 3);
   side.members.unshift({ sub: "idn_kim", email: "kim@example.com", role: "owner", you: false, joined_at: iso(Date.now() - 3 * DAY) });
   return [acme, side];

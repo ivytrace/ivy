@@ -71,7 +71,7 @@ describe("your email", () => {
 });
 
 describe("slack alerts per project", () => {
-  const project: Project = { id: "prj_1", slug: "checkout-prod", name: "Checkout (prod)", archived: false, default: false, created_at: "2026-11-01T00:00:00.000Z" };
+  const project: Project = { id: "prj_1", slug: "checkout-prod", name: "Checkout (prod)", archived: false, created_at: "2026-11-01T00:00:00.000Z" };
   const alerts = (integrations: AlertsResponse["integrations"]): AlertsResponse => ({
     available: { slack: true, missing: [] },
     can_edit: true,

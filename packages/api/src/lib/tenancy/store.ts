@@ -1,6 +1,5 @@
 import { controlClient } from '../clickhouse/client.js';
 import { crossTenantQuery, insertRows, tenantQuery } from '../clickhouse/scoped.js';
-import { workspaceDefaultProject } from './ids.js';
 
 /** A tenant is a workspace: members, AWS accounts, projects, and the shard holding its spans. */
 export interface TenantRecord {
@@ -9,7 +8,7 @@ export interface TenantRecord {
   slug: string;
   name: string;
   shard_id: string;
-  /** The workspace's default project; '' (rows from before it existed) means the derived ID, see workspaceDefaultProject. */
+  /** Legacy (workspaces no longer have a default project): read only by assignProjectlessKeys. */
   default_project_id?: string;
   created_at: number;
 }
@@ -28,7 +27,7 @@ export type KeyKind = 'user' | 'auto-trace' | 'bootstrap';
 
 export interface ApiKeyRecord {
   tenant_id: string;
-  /** '' for keys without a project (from before projects, and the bootstrap key): they follow the workspace's default project. */
+  /** Every key belongs to a project. '' only on keys from before projects until assignProjectlessKeys runs; they are rejected. */
   project_id: string;
   id: string;
   name: string;
@@ -44,7 +43,7 @@ export interface ApiKeyRecord {
 export interface KeyMatch {
   key: ApiKeyRecord;
   tenant: TenantRecord;
-  /** The key's project, or null when it doesn't exist (yet). */
+  /** The key's project, or null when it has none or it doesn't exist. */
   project: ProjectRecord | null;
 }
 
@@ -92,6 +91,8 @@ export interface TenancyStore {
   saveProject(project: ProjectRecord): Promise<void>;
   listKeys(tenant: string): Promise<ApiKeyRecord[]>;
   saveKey(key: ApiKeyRecord): Promise<void>;
+  /** Keys of every tenant with an empty `project_id` (revoked ones included). For the startup migration. */
+  listKeysWithoutProject(): Promise<ApiKeyRecord[]>;
   /** Active (not revoked) key with this hash, with its tenant and project. */
   findKeyByHash(hash: string): Promise<KeyMatch | null>;
   listInvitations(tenant: string): Promise<InvitationRecord[]>;
@@ -166,6 +167,8 @@ export const clickhouseTenancyStore: TenancyStore = {
     tenantQuery<ApiKeyRecord>(control(), tenant, `SELECT ${KEY_COLUMNS} FROM api_keys FINAL WHERE tenant_id = {tenant:String} ORDER BY created_at, id`),
   saveKey: (k) =>
     insertRows(control(), 'api_keys', [{ ...k, created_at: iso(k.created_at), revoked_at: isoOrNull(k.revoked_at), updated_at: version() }]),
+  listKeysWithoutProject: () =>
+    crossTenantQuery<ApiKeyRecord>(control(), `SELECT ${KEY_COLUMNS} FROM api_keys FINAL WHERE project_id = '' ORDER BY tenant_id, created_at, id`),
   async findKeyByHash(hash) {
     const keys = await crossTenantQuery<ApiKeyRecord>(
       control(),
@@ -176,11 +179,11 @@ export const clickhouseTenancyStore: TenancyStore = {
     if (!key) return null;
     const tenant = await clickhouseTenancyStore.getTenant(key.tenant_id);
     if (!tenant) return null;
-    const projectId = key.project_id || workspaceDefaultProject(tenant);
+    if (!key.project_id) return { key, tenant, project: null };
     const projects = await crossTenantQuery<ProjectRecord>(
       control(),
       `SELECT ${PROJECT_COLUMNS} FROM projects FINAL WHERE tenant_id = {tenant_id:String} AND id = {id:String}`,
-      { tenant_id: tenant.id, id: projectId },
+      { tenant_id: tenant.id, id: key.project_id },
     );
     return { key, tenant, project: projects[0] ?? null };
   },
@@ -266,11 +269,14 @@ export function memoryTenancyStore(): TenancyStore {
     async saveKey(k) {
       keys.set(`${k.tenant_id}/${k.id}`, copy(k));
     },
+    async listKeysWithoutProject() {
+      return [...keys.values()].filter((k) => !k.project_id).map(copy);
+    },
     async findKeyByHash(hash) {
       const key = [...keys.values()].find((k) => k.key_hash === hash && k.revoked_at === null);
       const tenant = key && tenants.get(key.tenant_id);
       if (!key || !tenant) return null;
-      const project = projects.get(`${tenant.id}/${key.project_id || workspaceDefaultProject(tenant)}`);
+      const project = key.project_id ? projects.get(`${tenant.id}/${key.project_id}`) : undefined;
       return { key: copy(key), tenant: copy(tenant), project: project ? copy(project) : null };
     },
     async listInvitations(tenant) {

@@ -33,7 +33,7 @@ export const updateAwsAccount = (
 export const deleteAwsAccount = (ws: string, id: string, detach: boolean) =>
   sendJson<{ deleted: boolean; detach_errors: string[] }>("DELETE", `${accountUrl(ws, id)}?detach=${detach}`);
 
-export type ManualChoice = { mode: "trace"; project?: string } | { mode: "exclude" } | { mode: "rules" };
+export type ManualChoice = { mode: "trace"; project: string } | { mode: "exclude" } | { mode: "rules" };
 
 export const setFunctionChoice = (ws: string, fn: { account_id: string; region: string; name: string }, choice: ManualChoice) =>
   sendJson<TracingResponse>("PUT", `${aws(ws)}/functions/${fn.account_id}/${fn.region}/${encodeURIComponent(fn.name)}`, choice);

@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { refreshAws } from "@/lib/api/aws";
 import { useAwsAccount, useAwsAccountFunctions, useInvocations, useMultiWorkspace, useProjects, useWorkspaceInfo } from "@/lib/api/hooks";
 import type { CreatedKey } from "@/lib/api/types";
-import { createKey, firstProject, refreshWorkspace, updateWorkspace } from "@/lib/api/workspaces";
+import { createKey, createProject, refreshWorkspace, updateWorkspace } from "@/lib/api/workspaces";
 import { useAuth } from "@/lib/auth/provider";
 import { pageLink, traceLink } from "@/lib/links/links";
 import { ScopeProvider } from "@/lib/links/use-scope";
@@ -53,7 +53,7 @@ function Wizard({ step, state }: { step: WelcomeStep; state: WelcomeState }) {
   // Only owners name the workspace, and not when they just joined it through an invitation.
   const namesWorkspace = firstStep(multi, state.from === "invite") === "workspace" && info.data?.role === "owner";
   const steps = WELCOME_STEPS.filter((s) => s !== "workspace" || namesWorkspace);
-  const project = state.project ?? projects.data?.items.find((p) => p.default)?.slug ?? projects.data?.items[0]?.slug;
+  const project = state.project ?? projects.data?.items[0]?.slug;
   const go = (next: WelcomeStep, patch: Partial<WelcomeState> = {}) => navigate(welcomeLink(next, { ...state, ...patch }));
   const finish = (ws = state.ws, p = project) => {
     markWelcomeSeen(ws);
@@ -180,9 +180,6 @@ function WorkspaceStep({ state, onDone }: { state: WelcomeState; onDone: (ws: st
 }
 
 function ProjectStep({ state, onDone }: { state: WelcomeState; onDone: (project: string) => void }) {
-  const projects = useProjects(state.ws);
-  if (!projects.data) return <LoadingState />;
-  const list = projects.data.items;
   return (
     <>
       <StepHeader title="Create your first project">
@@ -194,7 +191,7 @@ function ProjectStep({ state, onDone }: { state: WelcomeState; onDone: (project:
         placeholder="checkout-prod"
         submitLabel="Create project"
         onSubmit={async (name) => {
-          const p = await firstProject(state.ws, list, name);
+          const p = await createProject(state.ws, { name });
           await refreshWorkspace(state.ws);
           onDone(p.slug);
         }}

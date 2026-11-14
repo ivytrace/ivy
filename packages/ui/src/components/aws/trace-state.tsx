@@ -2,11 +2,13 @@ import { useState } from "react";
 import { Ban, Check, ListFilter, Loader2, MoreHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { refreshAws, setFunctionChoice, type ManualChoice } from "@/lib/api/aws";
 import { useProjects } from "@/lib/api/hooks";
 import type { AwsFunction, TraceState } from "@/lib/api/types";
+import { rememberTraceProject } from "@/lib/aws/last-project";
 import { useWorkspace } from "@/lib/links/use-scope";
 import { cn } from "@/lib/utils/cn";
 
@@ -14,6 +16,7 @@ export const TRACE_STATE_LABELS: Record<TraceState, string> = {
   traced: "Traced",
   available: "Available",
   opted_out: "Excluded",
+  needs_project: "Needs a project",
   unsupported: "Unsupported",
   conflict: "Conflict",
   error: "Error",
@@ -24,6 +27,7 @@ const DOT: Record<TraceState, string> = {
   traced: "bg-emerald-400",
   available: "border border-muted-foreground bg-transparent",
   opted_out: "bg-muted-foreground",
+  needs_project: "border border-amber-400 bg-transparent",
   unsupported: "bg-muted-foreground/40",
   conflict: "bg-amber-400",
   error: "bg-red-400",
@@ -34,6 +38,7 @@ const TEXT: Record<TraceState, string> = {
   traced: "text-emerald-400",
   available: "text-muted-foreground",
   opted_out: "text-muted-foreground",
+  needs_project: "text-amber-400",
   unsupported: "text-muted-foreground",
   conflict: "text-amber-400",
   error: "text-red-400",
@@ -79,6 +84,7 @@ export function FunctionChoiceMenu({ fn, onError }: { fn: AwsFunction; onError?:
   async function choose(choice: ManualChoice) {
     setOpen(false);
     setBusy(true);
+    if (choice.mode === "trace") rememberTraceProject(workspace, choice.project);
     try {
       const res = await setFunctionChoice(workspace, fn, choice);
       if (!res.applied && res.error) onError?.(`${fn.name}: ${res.error}`);
@@ -127,5 +133,57 @@ export function FunctionChoiceMenu({ fn, onError }: { fn: AwsFunction; onError?:
         </p>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/**
+ * For a function that is selected for tracing but has no project (`ivy:trace=true` without
+ * `ivy:project`): why, and a picker that saves a manual choice into the chosen project.
+ */
+export function NeedsProject({ fn, onError }: { fn: AwsFunction; onError?: (message: string) => void }) {
+  const workspace = useWorkspace();
+  const projects = useProjects(workspace);
+  const [busy, setBusy] = useState(false);
+
+  async function pick(project: string) {
+    setBusy(true);
+    rememberTraceProject(workspace, project);
+    try {
+      const res = await setFunctionChoice(workspace, fn, { mode: "trace", project });
+      if (!res.applied && res.error) onError?.(`${fn.name}: ${res.error}`);
+    } catch (err) {
+      onError?.(`${fn.name}: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      await refreshAws();
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-amber-300/90">
+      <span>
+        {fn.source === "tag" ? (
+          <>
+            Tagged <span className="font-mono">ivy:trace=true</span> without a valid <span className="font-mono">ivy:project</span>, so it isn't traced.
+            Pick a project, or tag it.
+          </>
+        ) : (
+          "Its project was archived, so it isn't traced. Pick another project."
+        )}
+      </span>
+      <Select value="" onValueChange={(v) => void pick(v)} disabled={busy}>
+        <SelectTrigger className="h-7 w-48 text-xs" aria-label={`Project for ${fn.name}`}>
+          <SelectValue placeholder="Pick a project" />
+        </SelectTrigger>
+        <SelectContent>
+          {projects.data?.items.map((p) => (
+            <SelectItem key={p.id} value={p.slug}>
+              {p.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {busy && <Loader2 className="size-3.5 animate-spin" />}
+    </div>
   );
 }

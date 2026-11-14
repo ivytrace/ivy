@@ -7,7 +7,7 @@ import { loadQuotaSnapshot } from './lib/limits/snapshot.js';
 import { QuotaGate } from './lib/limits/quota-gate.js';
 import { shardConfig, shardConfigs } from './lib/tenancy/shards.js';
 import { tenancyStore } from './lib/tenancy/store.js';
-import { ensureDefaultTenant } from './lib/tenancy/tenants.js';
+import { assignProjectlessKeys, ensureDefaultTenant } from './lib/tenancy/tenants.js';
 import { retry } from './lib/utils/retry.js';
 
 const env = (name: string) => process.env[name]?.trim() || undefined;
@@ -24,6 +24,7 @@ const adminPort = num('IVY_INGEST_ADMIN_PORT', 4320);
 const adminHost = env('IVY_INGEST_ADMIN_HOST') ?? '127.0.0.1';
 const log = (msg: string) => console.log(`[ingest] ${msg}`);
 
+await retry('projects for keys without one', () => assignProjectlessKeys());
 await retry('bootstrap of the default tenant', () => ensureDefaultTenant());
 
 const usage = new UsageCounters();

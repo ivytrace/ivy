@@ -39,7 +39,7 @@ export function AccountStatus({ account }: { account: AwsAccount }) {
   );
 }
 
-const COUNT_ORDER: TraceState[] = ["traced", "available", "opted_out", "conflict", "error", "pending", "unsupported"];
+const COUNT_ORDER: TraceState[] = ["traced", "needs_project", "available", "opted_out", "conflict", "error", "pending", "unsupported"];
 
 /** Compact per-state function counts; zero counts are left out (except traced). */
 export function FunctionCounts({ counts, onSelect }: { counts: AwsAccount["counts"]; onSelect?: (state: TraceState) => void }) {

@@ -14,6 +14,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetAwsClientsForTests } from './clients.js';
 import { applyUpdate, ensureLayer, resetLayerCacheForTests, setLayerZipForTests, sleep } from './lambda.js';
+import { keepTagTracedFunctions } from './keep-tagged.js';
 import { memoryStore } from './memory-store.js';
 import { setAwsStore } from './store.js';
 import { setThrottleSinkForTests } from './throttles.js';
@@ -357,5 +358,42 @@ describe('opt-in tracing with rules', () => {
     const moved = updatesByName().a;
     expect(moved.Environment!.Variables!.IVY_API_KEY).not.toBe('ingest-key');
     expect(await stateOf()).toMatchObject({ a: ['traced', staging.id, 'manual', ''] });
+  });
+
+  it('does not trace ivy:trace=true without ivy:project: the function needs a project, and a manual choice gives it one', async () => {
+    const tag = (...names: string[]) => ({ ResourceTagMappingList: names.map((n) => ({ ResourceARN: arn(n), Tags: [{ Key: 'ivy:trace', Value: 'true' }] })) });
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [config('fresh'), traced('attached')] });
+    tagging.on(GetResourcesCommand).resolves(tag('fresh', 'attached'));
+    await syncAccount(account);
+    expect(Object.keys(updatesByName())).toEqual(['attached']);
+    expect(updatesByName().attached).toMatchObject({ Layers: [], Environment: { Variables: {} } });
+    const fns = await mem.store.listFunctions('default');
+    expect(fns.map((f) => [f.function_name, f.state, f.project_id, f.reason]).sort()).toEqual([
+      ['attached', 'needs_project', '', 'Tagged ivy:trace=true without ivy:project'],
+      ['fresh', 'needs_project', '', 'Tagged ivy:trace=true without ivy:project'],
+    ]);
+
+    await mem.store.saveSetting('default', { account_id: ACCOUNT_ID, region: 'eu-west-1', function_name: 'fresh', mode: 'trace', project_id: DEFAULT_PROJECT });
+    lambda.resetHistory();
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [config('fresh'), config('attached')] });
+    await syncAccount(account);
+    expect(Object.keys(updatesByName())).toEqual(['fresh']);
+    expect(await stateOf()).toMatchObject({ fresh: ['traced', DEFAULT_PROJECT, 'tag', ''] });
+  });
+
+  it('keeps functions traced by ivy:trace=true alone in their project when upgrading (a manual choice)', async () => {
+    const other = await createProject('default', { name: 'other' });
+    const row = (function_name: string, tags: Record<string, string>, project_id = DEFAULT_PROJECT) => ({
+      tenant_id: 'default', account_id: ACCOUNT_ID, region: 'eu-west-1', function_name, function_arn: arn(function_name), runtime: 'nodejs22.x',
+      state: 'traced' as const, reason: '', project_id, project_source: 'tag' as const, rule_id: '', stack: '', tags, last_modified: '', first_seen_at: 1, updated_at: 1,
+    });
+    await mem.store.saveFunction(row('alone', { 'ivy:trace': 'true' }));
+    await mem.store.saveFunction(row('named', { 'ivy:trace': 'true', 'ivy:project': 'other' }, other.id));
+    await mem.store.saveFunction({ ...row('untraced', { 'ivy:trace': 'true' }), state: 'available', project_id: '' });
+    expect(await keepTagTracedFunctions()).toBe(1);
+    expect(await mem.store.listSettings('default')).toEqual([
+      { account_id: ACCOUNT_ID, region: 'eu-west-1', function_name: 'alone', mode: 'trace', project_id: DEFAULT_PROJECT },
+    ]);
+    expect(await keepTagTracedFunctions()).toBe(0);
   });
 });

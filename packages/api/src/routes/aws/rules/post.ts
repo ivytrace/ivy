@@ -3,7 +3,7 @@ import { presentRule } from '../../../lib/aws/present.js';
 import { jsonBody, projectSlugs } from '../../../lib/aws/requests.js';
 import { createRule, parseMatcher, resyncWorkspace } from '../../../lib/aws/rules.js';
 import { tenantOf } from '../../../lib/tenancy/context.js';
-import { createProject, defaultProjectOf, findProject, presentProject } from '../../../lib/tenancy/projects.js';
+import { createProject, findProject, presentProject } from '../../../lib/tenancy/projects.js';
 import { badRequest } from '../../../lib/utils/http-error.js';
 
 /** Creates a rule (optionally with a new project) and re-syncs, so matching functions get traced now. */
@@ -19,5 +19,5 @@ export async function postRule(c: Context) {
   const rule = await createRule(tenant, { ...body, project: projectRef });
   await resyncWorkspace(tenant);
   const project = await findProject(tenant, rule.project_id);
-  return c.json({ rule: presentRule(rule, await projectSlugs(tenant)), project: project && presentProject(project, await defaultProjectOf(tenant)) }, 201);
+  return c.json({ rule: presentRule(rule, await projectSlugs(tenant)), project: project && presentProject(project) }, 201);
 }

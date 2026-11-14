@@ -164,7 +164,7 @@ function AccountCard({
           <div className="min-w-56 flex-1">
             <FunctionCounts counts={account.counts} />
             <div className="text-xs text-muted-foreground">
-              {account.counts.total} functions{account.default_project ? ` · default project ${account.default_project}` : ""}
+              {account.counts.total} functions{account.default_project ? ` · preselects ${account.default_project}` : ""}
             </div>
           </div>
         )}
