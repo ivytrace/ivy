@@ -53,7 +53,7 @@ describe("mock API: workspaces and data", () => {
     // Other projects don't see it; all projects do, labelled.
     expect(call<{ items: FunctionSummary[] }>("GET", "/api/w/acme/p/checkout-staging/functions?since=7d").body.items).toEqual([]);
     const all = call<{ items: FunctionSummary[] }>("GET", "/api/w/acme/functions?since=7d").body.items;
-    expect(new Set(all.map((f) => f.project))).toEqual(new Set(["checkout-prod", "billing-api-prod", "billing-api-staging"]));
+    expect(new Set(all.map((f) => f.project))).toEqual(new Set(["checkout-prod", "billing-api-prod", "billing-api-staging", "support-api-prod"]));
     expect(call<{ items: ErrorGroup[] }>("GET", "/api/w/acme/errors?since=7d").body.items[0].project).toBeTruthy();
   });
 
@@ -70,7 +70,7 @@ describe("mock API: workspaces and data", () => {
 
   it("serves an AI SDK trace: generateText with a tool call, then streamText", () => {
     const call = client();
-    const base = "/api/w/acme/p/billing-api-prod";
+    const base = "/api/w/acme/p/support-api-prod";
     const inv = call<InvocationsResponse>("GET", `${base}/invocations?since=7d&status=ok&function=support-answerTicket`).body.items[0];
     const spans = call<Trace>("GET", `${base}/traces/${inv.trace_id}`).body.spans;
     expect(spans.map((s) => s.name)).toEqual(

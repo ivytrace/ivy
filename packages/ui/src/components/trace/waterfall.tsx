@@ -78,7 +78,7 @@ export function Waterfall({
                   />
                   <ServiceIcon icon={d.icon} label={d.serviceLabel} />
                   <span className={cn("min-w-0 flex-1 truncate", d.isError && "text-red-400")}>
-                    <SpanTitle description={d} />
+                    <SpanTitle description={d} stackNote />
                   </span>
                 </div>
                 <div className="relative flex h-9 flex-1 items-center pr-20">

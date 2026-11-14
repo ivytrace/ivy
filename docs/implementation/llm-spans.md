@@ -63,7 +63,7 @@ gave medians of 19.9/18.7 ms vs. 18.6/18.8 ms, i.e. within noise. Not yet measur
   (GenAI semantic-convention spans `invoke_agent`, `step n`, `chat`, `execute_tool`) or
   `new LegacyOpenTelemetry()` (`ai.*` spans). Telemetry is on by default once an integration is registered.
 - AI SDK 7 also publishes every call on the `ai:telemetry` `diagnostics_channel` tracing channel, even
-  without a registered integration. Ivy does not subscribe to it yet (see gaps).
+  without a registered integration. Ivy does not subscribe to it yet (see "Later").
 
 ### Tests
 
@@ -85,7 +85,8 @@ the Lambda image (`example/ai/v6.mjs` fully bundled, `v7.mjs` with `@opentelemet
 - Service graph: one node per provider (label = provider, `ai` icon, instance count = model calls). Agent
   steps and tool spans are not nodes; what a tool calls hangs off the function. Spans directly under a
   model call (the provider's HTTP request) belong to the provider node.
-- Dashboard: `components/trace/llm-details.tsx` shows settings chips, the conversation (role labels,
+- Dashboard: timeline rows put an LLM span's note (tokens, ttft, provider) on a smaller second line, so
+  it isn't cut off next to the model name. `components/trace/llm-details.tsx` shows settings chips, the conversation (role labels,
   text clamped at 600 characters / 10 lines with "Show all", fenced code, inline code and bold rendered as
   React text, never HTML), the response, tool calls and results as JSON trees, and the offered tools. The
   trace header shows `Tokens in → out` and the Overview tab an "LLM usage" table per model. The MCP App
@@ -100,7 +101,6 @@ the Lambda image (`example/ai/v6.mjs` fully bundled, `v7.mjs` with `@opentelemet
 
 ## Gaps
 
-- AI SDK 7 without `@ai-sdk/otel`: the `ai:telemetry` tracing channel could give zero-config capture.
 - Apps that register their own tracer provider while loading but don't install `@opentelemetry/sdk-trace-base`
   (e.g. a vendor SDK bundling it) lose their registration to the bridge; `IVY_CAPTURE_OTEL=false` fixes it.
 - A bundled `@opentelemetry/api` newer than 1.10 ignores the bridge's global (its minor is higher).
@@ -108,3 +108,9 @@ the Lambda image (`example/ai/v6.mjs` fully bundled, `v7.mjs` with `@opentelemet
   text as one "prompt" message. Long conversations may need a higher limit.
 - No cost estimates (prices per model change too often to hard-code).
 - Response streaming handlers are still not traced at all (`layer.md`).
+
+## Later
+
+- Subscribe to AI SDK 7's `ai:telemetry` `diagnostics_channel` tracing channel and build spans from its
+  lifecycle events, so AI SDK 7 apps are captured without installing and registering `@ai-sdk/otel`
+  (skipping calls when an OpenTelemetry integration is registered, to avoid duplicates).

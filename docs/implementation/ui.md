@@ -23,14 +23,14 @@ The mock (`src/lib/mock/`) is a Vite middleware plugin, enabled only when `VITE_
 accounts and rules, `fixtures.ts` span data):
 
 - Two workspaces in multi-workspace mode: `acme` (you own it; projects `checkout-prod`, `checkout-staging`,
-  `billing-api-prod`, `billing-api-staging`, `default` and an archived one; three members, a pending invitation, ingest
+  `billing-api-prod`, `billing-api-staging`, `support-api-prod`, `default` and an archived one; three members, a pending invitation, ingest
   keys) and `side-project` (you're a member; only its untouched default project, so it opens the quick-start wizard).
-- Span data: a week of invocations of five functions (one, `support-answerTicket`, an AI SDK support bot) spread over the `acme` projects (`PROJECT_OF` in `server.ts`), with
+- Span data: a week of invocations of five functions (one, `support-answerTicket` in `support-api-prod`, an AI SDK support bot) spread over the `acme` projects (`PROJECT_OF` in `server.ts`), with
   filters, `since`/`from`/`to`, cursor pagination, error groups, timeseries buckets, and full traces with DynamoDB, S3,
   SQS, SNS, EventBridge, SES, Lambda, Secrets Manager and fetch spans, logs and exceptions. Other workspaces start empty
   and "receive" a first trace 6 s after a rule or an ingest key is created there, so the wizard's last step completes.
 - AWS (`acme`): two connected accounts with CloudFormation stacks (`checkout-prod`, `billing-api-prod`,
-  `billing-api-staging`, `checkout-staging`, `billing-dev`), stackless functions, every state (traced, available,
+  `billing-api-staging`, `checkout-staging`, `support-api-prod`, `billing-dev`), stackless functions, every state (traced, available,
   excluded by tag or by hand, unsupported, conflict, error, pending) and new ones; three rules (two stack rules, one
   disabled tag rule) and a manual choice. The mock applies the API's precedence (tags, manual choice, rules), so rules,
   dry runs and per-function choices behave like the real thing. New connections verify 8 s after they're created and

@@ -61,6 +61,7 @@ const PROD: Seed[] = [
   ["auth-tokenRefresh", "eu-central-1", "nodejs22.x", "billing-api-prod", { tags: { "ivy:trace": "false" } }],
   ["auth-legacySaml", "eu-central-1", "nodejs16.x", "billing-api-prod", { fixed: { state: "unsupported", reason: "Runtime nodejs16.x is not supported" } }],
   ["reports-nightlyExport", "us-east-1", "nodejs22.x", "billing-api-staging"],
+  ["support-answerTicket", "eu-west-1", "nodejs22.x", "support-api-prod"],
   ["staging-api-handler", "us-east-1", "nodejs22.x", "billing-api-staging", { tags: { team: "api" } }],
   ["reports-pdfRender", "us-east-1", "python3.12", "billing-api-staging", { fixed: { state: "unsupported", reason: "Runtime python3.12 is not supported" } }],
   ["search-indexer", "us-east-1", "nodejs22.x", null, { fixed: { state: "conflict", reason: "AWS_LAMBDA_EXEC_WRAPPER is already set to /opt/datadog_wrapper" } }],
@@ -178,6 +179,7 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
     rules = [
       { id: "rul_checkout_prod", matcher: { account_id: null, region: null, stack: "checkout-prod", name: null, tag: null }, project_id: p("checkout-prod"), enabled: true, created_at: new Date(now - 20 * DAY).toISOString() },
       { id: "rul_billing_api_prod", matcher: { account_id: null, region: null, stack: "billing-api-prod", name: null, tag: null }, project_id: p("billing-api-prod"), enabled: true, created_at: new Date(now - 15 * DAY).toISOString() },
+      { id: "rul_support_api_prod", matcher: { account_id: null, region: null, stack: "support-api-prod", name: null, tag: null }, project_id: p("support-api-prod"), enabled: true, created_at: new Date(now - 10 * DAY).toISOString() },
       { id: "rul_team_media", matcher: { account_id: null, region: null, stack: null, name: null, tag: "team=media" }, project_id: p("checkout-prod"), enabled: false, created_at: new Date(now - 5 * DAY).toISOString() },
     ];
     manual.set("123456789012/us-east-1/reports-nightlyExport", { mode: "trace", project_id: p("billing-api-staging") });

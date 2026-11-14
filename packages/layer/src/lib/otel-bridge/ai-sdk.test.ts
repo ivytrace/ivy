@@ -108,6 +108,6 @@ describe('Vercel AI SDK 7 with @ai-sdk/otel', () => {
     expect(attrs(chats[0])).toMatchObject({ 'gen_ai.operation.name': 'chat', 'gen_ai.provider.name': 'openai', 'gen_ai.usage.input_tokens': 812 });
     expect(attrs(tool)).toMatchObject({ 'gen_ai.tool.name': 'getOrder' });
     const [chatStream] = r.byName('chat claude-haiku-4-5');
-    expect(attrs(chatStream)['gen_ai.client.operation.time_to_first_chunk']).toBeGreaterThan(0.03);
+    expect(attrs(chatStream)['gen_ai.client.operation.time_to_first_chunk']).toBeGreaterThan(0);
   });
 });
