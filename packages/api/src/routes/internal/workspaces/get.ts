@@ -42,5 +42,5 @@ export async function getInternalWorkspace(c: Context) {
   const now = Date.now();
   const month = parseMonth(c.req.query('month'), now);
   const tenant = await findWorkspace(c);
-  return c.json({ name: tenant.name, ...(await workspaceUsage({ id: tenant.id, shardId: tenant.shard_id }, month, now)) });
+  return c.json({ name: tenant.name, ...(await workspaceUsage({ id: tenant.id, shardId: tenant.shard_id }, month, { now })) });
 }

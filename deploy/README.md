@@ -34,6 +34,9 @@ Environment variables (set in your shell or a `deploy/.env` file):
 | `IVY_AWS_PRINCIPAL_ARN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION` | | Ivy's AWS identity for assuming the roles in connected accounts |
 | `IVY_CFN_TEMPLATE_URL`, `IVY_PUBLIC_URL`, `IVY_AWS_DEFAULT_REGION`, `IVY_AWS_SYNC_INTERVAL_SECONDS` | | optional auto-trace settings |
 | `IVY_MCP_RESOURCE` | `$IVY_PUBLIC_URL/mcp` | canonical URL of the MCP endpoint, the `aud` of MCP tokens when OIDC is on (`docs/implementation/mcp.md`) |
+| `IVY_INTERNAL_API_TOKEN` | | enables the internal admin API (`/internal/*`: workspace limits, usage, members) for an operator's billing service; ≥ 32 characters (`docs/implementation/limits.md`) |
+| `IVY_BILLING_URL` | | billing service base URL; the dashboard's Usage page then shows Upgrade / Manage billing |
+| `IVY_QUOTA_REFRESH_SECONDS`, `IVY_QUOTA_RETRY_AFTER_SECONDS`, `IVY_UPGRADE_URL` | 60, 300, `$IVY_PUBLIC_URL/settings/usage` | router: monthly trace quotas |
 | `IVY_BUILD_UI` | `auto` | `false` builds an API-only image |
 | `IVY_API_PORT`, `IVY_OTLP_HTTP_PORT`, `IVY_CLICKHOUSE_HTTP_PORT` | 3000, 4318, 8123 | host ports |
 
@@ -76,6 +79,21 @@ docker compose -f deploy/docker-compose.yml exec api node tenants.mjs revoke-key
 (From a checkout: `pnpm --filter @ivy/api tenants …`.) Until there is user login, the dashboard shows the
 `default` tenant. Per-tenant ingest counts: `docker compose -f deploy/docker-compose.yml exec ingest wget -qO-
 http://127.0.0.1:4320/stats`.
+
+## Limits
+
+Workspaces are unlimited unless they have a row in `ivy_control.workspace_limits` (`docs/implementation/limits.md`).
+With `IVY_INTERNAL_API_TOKEN` set:
+
+```sh
+T=…   # IVY_INTERNAL_API_TOKEN
+curl -H "authorization: Bearer $T" localhost:3000/internal/workspaces                       # usage this month
+curl -H "authorization: Bearer $T" -X PUT localhost:3000/internal/workspaces/<tenant>/limits \
+  -H 'content-type: application/json' -d '{"plan":"Free","monthly_trace_quota":100000,"over_quota":"block"}'
+curl -H "authorization: Bearer $T" -X DELETE localhost:3000/internal/workspaces/<tenant>/limits   # unlimited again
+```
+
+Over the quota, ingest answers 429 with `Retry-After`. The dashboard shows usage under Settings → Usage.
 
 ## Updating an existing volume
 

@@ -62,6 +62,8 @@ src/routes/        functions/, invocations/, traces/, errors/
 - `/settings/aws/:id`: the account's functions with state, reason and a tracing toggle, filterable by state.
   The Functions page has the same toggle and state in a "Tracing" column (matched by region + name; functions not in a
   connected account show "Manual"), and its empty state links to the connect dialog when no account is connected.
+- `/settings/usage`: plan, traces this month against the quota, 80%/100% banners (the banner also shows app-wide),
+  and Upgrade / Manage billing when `/api/config` has a billing URL. See `limits.md`.
 - Global: a time range picker (presets map to `since`, custom ranges to `from`/`to`; the preset is stored in
   localStorage), a ⌘K search (functions, jump to a trace ID, search invocations), and the "Authentication
   disabled" banner shown when `GET /api/config` returns `auth.enabled: false`.

@@ -27,6 +27,21 @@ Time range params, accepted by every list endpoint:
 `{ "version": "0.1.0", "auth": { "enabled": false } }`, or with OIDC:
 `{ "version": "0.1.0", "auth": { "enabled": true, "issuer": "https://auth.includable.com", "clientId": "ivy", "audience": "https://ivytrace.dev/api", "scopes": "openid email profile offline_access" } }`.
 The UI configures sign-in from it at runtime, and shows the "authentication disabled" banner when `auth.enabled` is false. Public.
+With `IVY_BILLING_URL` set it also has `"billing": { "url": "https://ivytrace.dev/billing" }`: the UI then shows
+"Upgrade" / "Manage billing" (`limits.md`).
+
+## `GET /api/usage`
+This month's traces (Lambda invocations, calendar month in UTC) and the limits of the caller's workspace. The count is
+exact and cached for up to a minute.
+```json
+{ "workspace": "ten_4Fq…", "month": "2026-11",
+  "period": { "start": "2026-11-01T00:00:00.000Z", "end": "2026-12-01T00:00:00.000Z" },
+  "traces": 62418,
+  "limits": { "plan": "Free", "monthly_trace_quota": 100000, "over_quota": "block", "source": "workspace" },
+  "blocked": false }
+```
+`monthly_trace_quota: null` is unlimited; `source: "unset"` means the workspace has no limits (unlimited, the default).
+`blocked`: ingest is answering 429 (quota reached with `over_quota: "block"`). See `limits.md`.
 
 ## `GET /api/functions`
 Function overview for the range.
@@ -193,6 +208,44 @@ OTLP/HTTP `ExportTraceServiceRequest`, `application/x-protobuf` or `application/
 `content-encoding: gzip`/`deflate`. Authenticated with `Authorization: Bearer <key>` or `x-api-key: <key>`.
 Answers as OTLP/HTTP: the collector's response on success; 400, 401, 413, 415, 429 (`Retry-After`) or 503
 (`Retry-After`) with a `google.rpc.Status` body otherwise. `/v1/logs` and `/v1/metrics` are 404; there is no gRPC.
+A workspace over a monthly trace quota with `over_quota: block` gets 429, `Retry-After: 300` (or until the month
+ends) and `{"code":8,"message":"Monthly trace quota reached (…). … Upgrade at …"}` (`limits.md`).
+
+## Internal admin API (separate, not under `/api`)
+
+For the operator's billing service; not part of the public contract and not in the OpenAPI document. Served by the
+API process at `/internal/*`, which only exists when `IVY_INTERNAL_API_TOKEN` is set (≥ 32 characters; otherwise every
+`/internal/*` path is 404). Every call needs `Authorization: Bearer $IVY_INTERNAL_API_TOKEN`: 401 otherwise. OIDC and
+workspace membership don't apply. Keep the prefix off public proxies (ivytrace.dev routes only `/api/*` and the app's
+paths to the API). Errors are `{ "error": "…" }` (400 invalid body or month, 404 unknown workspace).
+
+`:id` is the workspace (tenant) ID. `month` is `YYYY-MM` (UTC), default the current month. Usage objects are as in
+`GET /api/usage`, plus the workspace's `name`; the count is never cached here.
+
+### `GET /internal/workspaces?month=&limits=unset`
+Every workspace with its traces in the month and its limits. `limits=unset` keeps only workspaces without a limits
+row (for a reconcile job that gives new workspaces a free tier).
+```json
+{ "month": "2026-11", "items": [ { "name": "Acme", "workspace": "ten_…", "month": "2026-11", "period": { … },
+  "traces": 2481904, "limits": { "plan": "Pro", "monthly_trace_quota": 100000, "over_quota": "allow", "source": "workspace" },
+  "blocked": false } ] }
+```
+
+### `GET /internal/workspaces/:id?month=`
+One workspace's usage object.
+
+### `PUT /internal/workspaces/:id/limits`
+Body `{ "plan": "Free", "monthly_trace_quota": 100000 | null, "over_quota": "block" | "allow" }` (all optional:
+`""`, `null` = unlimited, `allow`). Replaces the workspace's limits. The ingest routers pick it up within
+`IVY_QUOTA_REFRESH_SECONDS`.
+`{ "workspace": "ten_…", "limits": { …, "source": "workspace" }, "updated_at": "…" }`
+
+### `DELETE /internal/workspaces/:id/limits`
+Removes the row: the workspace is unlimited again. `{ "workspace": "ten_…", "limits": { …, "source": "unset" } }`
+
+### `GET /internal/workspaces/:id/members`
+`{ "workspace": "ten_…", "items": [ { "sub": "idn_…", "email": "erin@example.com", "role": "owner" | "member" } ] }`
+(empty in single-tenant mode, where everyone uses `default`).
 
 ### `GET /health`
 `{ "ok": true }`

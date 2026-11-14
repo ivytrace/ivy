@@ -53,7 +53,10 @@ expires at the deadline (+200 ms), it exports the snapshot, and then receives `S
 - OTLP/HTTP JSON to `<IVY_ENDPOINT>/v1/traces`, `Authorization: Bearer <IVY_API_KEY>`, gzip for
   bodies over 1 KB, keep-alive agent.
 - Per flush: up to 3 attempts (timeout `IVY_EXPORT_TIMEOUT_MS`, backoff 100/300 ms) within
-  `IVY_FLUSH_BUDGET_MS` (2 s). Retries on network errors, 408, 429, 5xx.
+  `IVY_FLUSH_BUDGET_MS` (2 s). Retries on network errors, 408, 429, 5xx, except that a 429 or 503 with
+  `Retry-After` (e.g. a workspace over its monthly trace quota, `limits.md`) ends the flush at once: the batch is
+  dropped and counted, and nothing is sent until the delay has passed (capped at 1 hour), not even the forced flush
+  on `SHUTDOWN`.
 - When a flush fails the batch is dropped and counted, and the queue backs off (5 s doubling to
   5 min) so a dead endpoint costs one bounded attempt instead of one per invocation. Spans that
   arrive during backoff are buffered up to `IVY_MAX_QUEUE_SPANS` (oldest dropped first).

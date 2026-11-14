@@ -31,11 +31,18 @@ export function usageBody(workspace: string, month: Month, traces: number, limit
   };
 }
 
-/** A workspace's traces in a month (this month's count is cached for a minute) with its limits. */
-export async function workspaceUsage(tenant: { id: string; shardId: string }, month: Month, now = Date.now()): Promise<WorkspaceUsage> {
+/**
+ * A workspace's traces in a month with its limits. `cached`: this month's count may be up to a minute
+ * old (the dashboard); the internal API always counts.
+ */
+export async function workspaceUsage(
+  tenant: { id: string; shardId: string },
+  month: Month,
+  { now = Date.now(), cached = false }: { now?: number; cached?: boolean } = {},
+): Promise<WorkspaceUsage> {
   const [row, traces] = await Promise.all([
     limitsStore().get(tenant.id),
-    month === monthOf(now) ? currentMonthTraces(tenant, now) : countMonthlyTraces(tenant, month, now),
+    cached && month === monthOf(now) ? currentMonthTraces(tenant, now) : countMonthlyTraces(tenant, month, now),
   ]);
   return usageBody(tenant.id, month, traces, effectiveLimits(row));
 }
