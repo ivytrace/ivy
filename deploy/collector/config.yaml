@@ -1,0 +1,61 @@
+extensions:
+  bearertokenauth:
+    scheme: Bearer
+    token: ${env:IVY_INGEST_API_KEY}
+  file_storage:
+    directory: /var/lib/otelcol/file_storage
+    create_directory: true
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        auth:
+          authenticator: bearertokenauth
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth
+        cors:
+          allowed_origins: ["*"]
+          allowed_headers: ["Authorization"]
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  batch:
+    send_batch_size: 10000
+    send_batch_max_size: 20000
+    timeout: 2s
+
+exporters:
+  clickhouse:
+    endpoint: ${env:IVY_CLICKHOUSE_ENDPOINT}
+    username: ${env:IVY_CLICKHOUSE_USER}
+    password: ${env:IVY_CLICKHOUSE_PASSWORD}
+    database: ivy
+    traces_table_name: otel_traces
+    create_schema: false
+    timeout: 10s
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 0s
+
+service:
+  extensions: [bearertokenauth, file_storage, health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse]

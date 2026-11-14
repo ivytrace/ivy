@@ -1,0 +1,72 @@
+name: ivy
+
+x-clickhouse-env: &clickhouse-env
+  IVY_CLICKHOUSE_USER: ${IVY_CLICKHOUSE_USER:-ivy}
+  IVY_CLICKHOUSE_PASSWORD: ${IVY_CLICKHOUSE_PASSWORD:-ivy}
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8.37.168-alpine
+    environment:
+      CLICKHOUSE_DB: ivy
+      CLICKHOUSE_USER: ${IVY_CLICKHOUSE_USER:-ivy}
+      CLICKHOUSE_PASSWORD: ${IVY_CLICKHOUSE_PASSWORD:-ivy}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      IVY_RETENTION_DAYS: ${IVY_RETENTION_DAYS:-30}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/schema.sql:/ivy/schema.sql:ro
+      - ./clickhouse/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    ports:
+      - "${IVY_CLICKHOUSE_HTTP_PORT:-8123}:8123"
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse client --user \"$$CLICKHOUSE_USER\" --password \"$$CLICKHOUSE_PASSWORD\" -q 'EXISTS TABLE ivy.invocations_hourly' | grep -q 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    restart: unless-stopped
+
+  collector-volume-init:
+    image: alpine:3.20
+    command: ["sh", "-c", "chown -R 10001:10001 /var/lib/otelcol/file_storage"]
+    volumes:
+      - collector-queue:/var/lib/otelcol/file_storage
+
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.165.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    environment:
+      <<: *clickhouse-env
+      IVY_INGEST_API_KEY: ${IVY_INGEST_API_KEY:-dev-ingest-key}
+      IVY_CLICKHOUSE_ENDPOINT: tcp://clickhouse:9000?dial_timeout=10s
+    volumes:
+      - ./collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - collector-queue:/var/lib/otelcol/file_storage
+    ports:
+      - "${IVY_OTLP_GRPC_PORT:-4317}:4317"
+      - "${IVY_OTLP_HTTP_PORT:-4318}:4318"
+    depends_on:
+      clickhouse: { condition: service_healthy }
+      collector-volume-init: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ..
+      dockerfile: packages/api/Dockerfile
+    environment:
+      <<: *clickhouse-env
+      IVY_CLICKHOUSE_URL: http://clickhouse:8123
+      IVY_CLICKHOUSE_DATABASE: ivy
+      PORT: 3000
+    ports:
+      - "${IVY_API_PORT:-3000}:3000"
+    depends_on:
+      clickhouse: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  clickhouse-data:
+  collector-queue:
