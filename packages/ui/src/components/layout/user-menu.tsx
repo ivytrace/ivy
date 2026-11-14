@@ -1,11 +1,14 @@
 import { Link } from "react-router";
-import { LogOut } from "lucide-react";
+import { Bell, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/lib/auth/provider";
+import { settingsLink } from "@/lib/links/links";
+import { useWorkspace } from "@/lib/links/use-scope";
 
 export function UserMenu() {
   const { status, user } = useAuth();
+  const workspace = useWorkspace();
   if (status !== "signed-in" || !user) return null;
   const label = user.email ?? user.name ?? user.sub;
 
@@ -26,6 +29,15 @@ export function UserMenu() {
           </div>
         </div>
         <div className="my-1 border-t" />
+        {workspace && (
+          <Link
+            to={settingsLink(workspace, "notifications")}
+            className="flex items-center gap-2 rounded-sm px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          >
+            <Bell className="size-4" />
+            Notifications
+          </Link>
+        )}
         <Link
           to="/logout"
           className="flex items-center gap-2 rounded-sm px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"

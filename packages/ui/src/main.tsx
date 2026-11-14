@@ -16,6 +16,9 @@ import ProjectsSettings from "@/routes/settings/projects";
 import AwsAccounts from "@/routes/settings/aws/page";
 import AwsAccountPage from "@/routes/settings/aws/account";
 import UsagePage from "@/routes/settings/usage/page";
+import AlertsSettings from "@/routes/settings/alerts";
+import DigestSettings from "@/routes/settings/digest";
+import NotificationsSettings from "@/routes/settings/notifications";
 import InvitePage from "@/routes/invite/page";
 import WelcomePage from "@/routes/welcome/page";
 import { LegacyRedirect, ProjectLayout, WorkspaceIndex } from "@/routes/scope/redirects";
@@ -73,6 +76,10 @@ const router = createBrowserRouter([
               { path: "aws", element: <AwsAccounts /> },
               { path: "aws/:id", element: <AwsAccountPage /> },
               { path: "usage", element: <UsagePage /> },
+              { path: "alerts", element: <AlertsSettings /> },
+              { path: "alerts/:project", element: <AlertsSettings /> },
+              { path: "digest", element: <DigestSettings /> },
+              { path: "notifications", element: <NotificationsSettings /> },
             ],
           },
           {
