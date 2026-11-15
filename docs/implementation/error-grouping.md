@@ -99,7 +99,7 @@ The view used to store `error_fingerprint`; the column is dropped by the schema 
 - API: `error_template`, `variants` (distinct raw messages in the range) and `top_messages` (up to 5, most frequent
   first, each with its count, latest trace and last seen) on every error group; `group=<fingerprint>` on the
   invocations list (`api.md`).
-- Dashboard errors page: one row per group with the template (placeholders muted), variants, occurrences, first and
+- Dashboard errors page: one row per group with the template (placeholders muted; the message itself when the group has one), variants, occurrences, first and
   last seen; groups with several messages expand to their top messages, each linking to its trace. "Invocations"
   opens the list filtered to the group.
 - MCP `list_error_groups` and the text format: the template, `N variants` and the most frequent message

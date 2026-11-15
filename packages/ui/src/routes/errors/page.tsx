@@ -4,7 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { ChevronRight } from "lucide-react";
 
 import { DataTable } from "@/components/tables/data-table";
-import { ErrorTemplate, GroupMessages, variantsLabel } from "@/components/errors/error-template";
+import { GroupMessage, GroupMessages, variantsLabel } from "@/components/errors/error-template";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
 import { FailureBadge } from "@/components/common/status";
 import { Button } from "@/components/ui/button";
@@ -62,7 +62,7 @@ function columnsFor(scope: Scope): ColumnDef<ErrorGroup, unknown>[] {
             {g.failure_kind && <FailureBadge kind={g.failure_kind} hint={false} />}
             <span className="font-semibold text-red-400">{g.error_type}</span>
           </span>
-          <ErrorTemplate template={g.error_template} className="mt-0.5 block line-clamp-2 text-muted-foreground" />
+          <GroupMessage group={g} className="mt-0.5 block line-clamp-2 text-muted-foreground" />
         </Link>
       );
     },
@@ -175,7 +175,7 @@ function ErrorCard({ scope, group: g }: { scope: Scope; group: ErrorGroup }) {
           {throttle ? (
             <span className="mt-0.5 block line-clamp-2 text-sm text-muted-foreground">{g.error_message}</span>
           ) : (
-            <ErrorTemplate template={g.error_template} className="mt-0.5 block line-clamp-2 text-sm text-muted-foreground" />
+            <GroupMessage group={g} className="mt-0.5 block line-clamp-2 text-sm text-muted-foreground" />
           )}
           <span className="mt-1 flex min-w-0 gap-2 text-xs text-muted-foreground">
             <span className="shrink-0 tabular-nums text-foreground">{formatNumber(g.count)}×</span>

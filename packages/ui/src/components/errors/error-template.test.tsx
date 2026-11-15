@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import type { ErrorGroup } from "@/lib/api/types";
-import { ErrorTemplate, GroupMessages, variantsLabel } from "./error-template";
+import { ErrorTemplate, GroupMessage, GroupMessages, variantsLabel } from "./error-template";
 
 const text = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'");
 const scope = { workspace: "acme", project: "checkout-prod" };
@@ -26,6 +26,17 @@ const group: ErrorGroup = {
   kind: "error",
   failure_kind: null,
 };
+
+describe("GroupMessage", () => {
+  it("shows the template when the group has several messages", () => {
+    expect(text(renderToStaticMarkup(<GroupMessage group={group} />))).toBe("Upload not found for ID: {path}");
+  });
+
+  it("shows the message itself when every occurrence has the same one", () => {
+    const one = { ...group, variants: 1, error_message: "flushed 100ms before the deadline", error_template: "flushed {num}ms before the deadline" };
+    expect(text(renderToStaticMarkup(<GroupMessage group={one} />))).toBe("flushed 100ms before the deadline");
+  });
+});
 
 describe("ErrorTemplate", () => {
   it("mutes the placeholders and keeps the text", () => {

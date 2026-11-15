@@ -147,7 +147,8 @@ live in `docs/implementation/`.
   account is connected, and never listing functions excluded in the dashboard or tagged `ivy:trace=false`.
 - Errors with the same type, code location and message pattern are grouped; variable parts of the message (IDs,
   paths, numbers) don't split groups. The errors page shows the pattern with the number of distinct messages and the
-  most frequent ones; alerts and the digest show the pattern too. Implementation:
+  most frequent ones; alerts and the digest show the pattern too. A group whose occurrences all have the same message
+  shows that message instead of the pattern, everywhere. Implementation:
   `docs/implementation/error-grouping.md`.
 - Self-hosters get the `on-error-group-created` hook for their own integrations. Implementation:
   `docs/implementation/alerts.md`.

@@ -22,6 +22,12 @@ export function ErrorTemplate({ template, className }: { template: string; class
   );
 }
 
+/** A group's message: the template when its occurrences have several distinct messages, else the one message. */
+export function GroupMessage({ group, className }: { group: Pick<ErrorGroup, "variants" | "error_message" | "error_template">; className?: string }) {
+  if (group.variants > 1) return <ErrorTemplate template={group.error_template} className={className} />;
+  return <span className={className}>{group.error_message}</span>;
+}
+
 export const variantsLabel = (n: number) => `${formatNumber(n)} ${n === 1 ? "variant" : "variants"}`;
 
 /** The most frequent raw messages of a group, each with its count and latest trace. */
