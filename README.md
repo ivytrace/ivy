@@ -58,21 +58,6 @@ pnpm up         # full production-like stack in Docker (http://localhost:3000)
 pnpm down       # stop containers (data is kept in volumes)
 ```
 
-## Layout
-
-```
-packages/layer      Lambda layer + extension (Node.js auto-instrumentation)
-packages/api        Hono API and the OTLP ingest router (only components that talk to ClickHouse)
-packages/ui         React dashboard
-packages/spans      Span types and service-aware span descriptions (shared by UI and format)
-packages/format     Traces and invocation lists as compact text for LLMs
-packages/mcp        Remote MCP server (mounted at /mcp by the API)
-deploy/             docker-compose, collector config, ClickHouse schema
-tools/loadgen       Synthetic span generator
-docs/spec/           Specs (human-written)
-docs/implementation/ Implementation decisions, span conventions, API contract
-```
-
 ## For agents
 
 Ivy has no CLI; agents use MCP or the HTTP API:

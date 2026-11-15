@@ -3,6 +3,18 @@
 - Prefer clean, simple code over clever code. Only add comments where genuinely needed.
 - Document implementation decisions in `docs/implementation/*.md`, not in code comments. Product decisions and requirements the user gives go into `docs/spec/`: add or extend a numbered spec (`002-product-decisions.md` collects decisions made after the v1 plan) in the same piece of work as the change. Keep both up to date as decisions change.
 - pnpm monorepo. Packages live in `packages/*` and `tools/*`; `deploy/` holds docker-compose, collector config and the ClickHouse schema.
+  ```
+  packages/layer      Lambda layer: Node.js tracer (TypeScript) + extension (Rust, in extension/)
+  packages/api        Hono API and the OTLP ingest router (only components that talk to ClickHouse)
+  packages/ui         React dashboard
+  packages/spans      Span types and service-aware span descriptions (shared by UI and format)
+  packages/format     Traces and invocation lists as compact text for LLMs
+  packages/mcp        Remote MCP server (mounted at /mcp by the API)
+  deploy/             docker-compose, collector config, ClickHouse schema
+  tools/loadgen       Synthetic span generator
+  docs/spec/          Specs (human-written)
+  docs/implementation Implementation decisions, span conventions, API contract
+  ```
 - Inside a package: `src/routes/<group>/<method>.ts` for API routes (e.g. `GET /api/invocations` → `src/routes/invocations/get.ts`), `src/lib/<folder>/*.ts` for helpers (always in a folder: `clickhouse/`, `services/`, `utils/`, or a feature name), `scripts/` for manually run scripts.
 - Vitest, with tests next to the source files they cover.
 - Deviations from the usual stack are deliberate (see `docs/spec/001-ivy-trace-v1.md`): pnpm instead of Yarn, ClickHouse instead of DynamoDB, docker compose instead of CDK/Lambda for the backend.
