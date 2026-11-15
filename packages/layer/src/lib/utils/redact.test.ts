@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_REDACT_KEYS } from '../config/config.js';
-import { capString, createKeyMatcher, redactHeaders, redactText, redactUrl, serialize, serializeBody } from './redact.js';
+import { capString, createKeyMatcher, redactHeaders, redactText, redactUrl, serialize, serializeBody, stringLimit } from './redact.js';
 
 const isSecret = createKeyMatcher(DEFAULT_REDACT_KEYS.split(','));
 
@@ -86,6 +86,39 @@ describe('serialize', () => {
     expect(r.truncated).toBe(true);
     expect(r.text).toMatch(/…\[truncated 58 bytes\]$/);
     expect(Buffer.byteLength(r.text.split('…')[0])).toBe(50);
+  });
+
+  it('shrinks long strings so an oversized event stays valid JSON', () => {
+    const body = JSON.stringify({ cartId: 'cart_91', items: Array.from({ length: 400 }, (_, i) => ({ sku: `SKU-${i}`, qty: 1 })) });
+    const event = {
+      version: '2.0',
+      headers: { host: 'api.example.com', authorization: 'Bearer x', 'user-agent': 'a'.repeat(300) },
+      requestContext: { http: { method: 'POST', path: '/orders' } },
+      body,
+      isBase64Encoded: false,
+    };
+    const r = serialize(event, 4096, isSecret);
+    expect(r.truncated).toBe(true);
+    const [json, note] = r.text.split(/(?=…\[truncated \d+ bytes\]$)/);
+    expect(Buffer.byteLength(json)).toBeLessThanOrEqual(4096);
+    expect(note).toMatch(/^…\[truncated \d+ bytes\]$/);
+    const parsed = JSON.parse(json);
+    expect(parsed).toMatchObject({ version: '2.0', requestContext: event.requestContext, isBase64Encoded: false });
+    expect(parsed.headers).toMatchObject({ host: 'api.example.com', authorization: '[redacted]', 'user-agent': 'a'.repeat(300) });
+    expect(parsed.body).toMatch(/^\{"cartId":"cart_91","items":\[.*…\[\+\d+ chars\]$/);
+  });
+
+  it('caps long arrays when cutting strings is not enough', () => {
+    const r = serialize({ items: Array.from({ length: 2000 }, (_, i) => ({ id: i })) }, 2048, isSecret);
+    const parsed = JSON.parse(r.text.replace(/…\[truncated \d+ bytes\]$/, ''));
+    expect(parsed.items).toHaveLength(21);
+    expect(parsed.items[20]).toBe('…[+1980 items]');
+  });
+
+  it('picks the largest string limit that saves enough', () => {
+    expect(stringLimit([1000, 500, 100], 300)).toBe(1000 - 300 - 16);
+    expect(stringLimit([1000, 900], 300)).toBe(Math.floor((1900 - 300) / 2) - 16);
+    expect(stringLimit([100], 300)).toBe(64);
   });
 
   it('does not split multi-byte characters', () => {

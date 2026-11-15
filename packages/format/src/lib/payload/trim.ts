@@ -1,7 +1,9 @@
-import { parsePayload } from "@ivy/spans";
+import { CUT_KEY, CUT_VALUE, parsePayload } from "@ivy/spans";
 import { oneLine } from "../text/text.js";
 
 const SOURCE_TRUNCATION = /…\[truncated (\d+) bytes\]$/;
+const CUT_ITEM = JSON.stringify(CUT_VALUE);
+const CUT_ENTRY = `${JSON.stringify(CUT_KEY)}:${CUT_ITEM}`;
 const MAX_STRING = 120;
 const MAX_ITEMS = 5;
 const MAX_DEPTH = 5;
@@ -36,6 +38,7 @@ export function trimPayload(raw: string | undefined, budget: number): string | u
     typeof value === "string"
       ? oneLine(value.replace(SOURCE_TRUNCATION, ""), Number.MAX_SAFE_INTEGER)
       : JSON.stringify(shrink(value));
+  if (sourceCut) text = text.replaceAll(CUT_ENTRY, "…").replaceAll(CUT_ITEM, "…");
   if (text === "{}" || text === '""') return text;
   if (text.length > budget) text = `${text.slice(0, budget)}…(+${text.length - budget} chars)`;
   if (sourceCut) text += ` [cut at source, ${sourceCut[1]} bytes dropped]`;

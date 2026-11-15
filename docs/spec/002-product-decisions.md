@@ -113,6 +113,9 @@ live in `docs/implementation/`.
   customer). What is left out is said on the trace ("N spans omitted") and in one line in the function's logs.
 - Each invocation has a payload budget (1 MB): the invocation's own event and response first, then failing spans,
   then the slowest; spans past it keep their timing and attributes but not their bodies.
+- A payload over the per-payload cap is still shown as a JSON tree: the layer shortens long strings and arrays
+  so what it stores stays valid JSON, and payloads cut mid-text (older layers, the MCP views' cap) are repaired
+  when read, with a muted "… truncated" where the cut was.
 - Long-running invocations appear as in progress while they run. After 5 s (`IVY_INPROGRESS_AFTER_MS`, 0 turns it
   off) the extension sends one small provisional record, refreshed every minute; the final invocation always
   replaces it and it is never counted or billed as a trace. Without a final record past the deadline it shows as

@@ -20,6 +20,11 @@ describe("trimPayload", () => {
 
   it("keeps redaction markers and flags payloads cut at the source", () => {
     const raw = `${JSON.stringify({ password: "[redacted]", data: "abc" }).slice(0, 30)}…[truncated 512 bytes]`;
-    expect(trimPayload(raw, 200)).toBe('{"password":"[redacted]","data [cut at source, 512 bytes dropped]');
+    expect(trimPayload(raw, 200)).toBe('{"password":"[redacted]",…} [cut at source, 512 bytes dropped]');
+  });
+
+  it("repairs JSON cut at the source and shrinks it like any other payload", () => {
+    const raw = `${JSON.stringify({ items: ["a", "b", "c"], note: "x".repeat(300) }).slice(0, 200)}…[truncated 99 bytes]`;
+    expect(trimPayload(raw, 500)).toBe(`{"items":["a","b","c"],"note":"${"x".repeat(120)}…",…} [cut at source, 99 bytes dropped]`);
   });
 });

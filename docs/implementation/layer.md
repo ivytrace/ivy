@@ -170,7 +170,16 @@ Payloads are kept as references and serialized at flush time (after the response
 result, SDK input/output and HTTP bodies go through one `JSON.stringify` with a replacer that
 redacts matching keys at any depth, decodes `Uint8Array` payloads that are UTF-8/JSON (Lambda
 `Invoke`), replaces streams/binaries with placeholders, and breaks cycles. Then a UTF-8-safe byte
-cap with the `…[truncated N bytes]` suffix. Unparseable bodies (truncated JSON, forms) get a
+cap with the `…[truncated N bytes]` suffix. A JSON object or array over the cap (and under 1 MB
+serialized) is first shrunk structurally so the text before the suffix stays valid JSON: the first
+pass records the lengths of long strings, a string limit is picked that saves enough (longest strings
+first, each cut to `…[+N chars]`), and the value is serialized again with it; if that is not enough,
+two more passes also cap arrays at 20, then 5 items (`…[+N items]`). Only then is the text cut by
+bytes. The extra passes only run for oversized payloads, after the response (about 2–3× one
+`JSON.stringify` of the value). Text cut mid-way (by this fallback, by older layers or by the MCP
+views' 8 KB cap) is repaired when read: `repairTruncatedJson` in `@ivy/spans` closes open strings and
+containers, drops a dangling key or partial token, and adds a `"…": "[truncated]"` entry to every
+container that was open; the dashboard renders it as a muted "… truncated", the text formatter as `…`. Unparseable bodies (truncated JSON, forms) get a
 regex-based redaction pass. A key matches `IVY_REDACT_KEYS` if, lowercased with `-`/`_` removed,
 it contains one of the entries (so `x-api-key` matches `api_key`).
 

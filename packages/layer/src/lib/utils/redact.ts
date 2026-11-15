@@ -86,33 +86,109 @@ function isStream(v: any): boolean {
   return typeof v.pipe === 'function' || typeof v.getReader === 'function' || typeof v.on === 'function';
 }
 
-/** JSON-serializes a value with key redaction at any depth, then caps it. */
+interface Limits {
+  /** Strings longer than this are cut to it, with a `…[+N chars]` note. */
+  chars: number;
+  /** Arrays longer than this keep that many items, plus a `…[+N items]` note. */
+  items: number;
+}
+
+const NO_LIMITS: Limits = { chars: Infinity, items: Infinity };
+const MIN_CHARS = 64;
+const NOTE_CHARS = 16;
+const MAX_SHRINK_BYTES = 1024 * 1024;
+
+function shorten(s: string, chars: number): string {
+  let end = chars;
+  const c = s.charCodeAt(end - 1);
+  if (c >= 0xd800 && c <= 0xdbff) end--;
+  return `${s.slice(0, end)}…[+${s.length - end} chars]`;
+}
+
+/**
+ * `JSON.stringify` with key redaction at any depth and the given limits. `longStrings` collects the
+ * lengths of strings over `MIN_CHARS`, for picking a string limit afterwards.
+ */
+function toJson(value: unknown, isSecret: KeyMatcher, limits: Limits, longStrings?: number[]): string {
+  const seen = new WeakSet<object>();
+  try {
+    return (
+      JSON.stringify(value, function (this: any, key: string, v: unknown) {
+        if (key !== '' && isSecret(key, v)) return REDACTED;
+        const original = key === '' ? value : this[key];
+        if (original !== null && typeof original === 'object') {
+          if (original instanceof Uint8Array) return decodeBinary(original);
+          if (original instanceof ArrayBuffer) return decodeBinary(new Uint8Array(original));
+          if (original instanceof Error) {
+            return { name: original.name, message: original.message };
+          }
+          if (seen.has(original)) return '[circular]';
+          seen.add(original);
+          if (Array.isArray(original)) {
+            if (original.length > limits.items) {
+              return [...original.slice(0, limits.items), `…[+${original.length - limits.items} items]`];
+            }
+          } else if (!(original instanceof Date) && isStream(original)) return '[stream]';
+        }
+        if (typeof v === 'string' && v.length > MIN_CHARS) {
+          longStrings?.push(v.length);
+          if (v.length > limits.chars) return shorten(v, limits.chars);
+        }
+        if (typeof v === 'bigint') return v.toString();
+        if (typeof v === 'function' || typeof v === 'symbol') return undefined;
+        return v;
+      }) ?? ''
+    );
+  } catch (err) {
+    return JSON.stringify(`[unserializable: ${(err as Error)?.message}]`);
+  }
+}
+
+/**
+ * The largest string limit that saves `excess` characters when the longest strings are cut to it
+ * (each cut adds a short note), or `MIN_CHARS` when cutting strings alone cannot save enough.
+ */
+export function stringLimit(lengths: number[], excess: number): number {
+  const sorted = lengths.sort((a, b) => b - a);
+  let sum = 0;
+  for (let k = 0; k < sorted.length; k++) {
+    sum += sorted[k];
+    const limit = Math.floor((sum - excess) / (k + 1)) - NOTE_CHARS;
+    if (limit >= (sorted[k + 1] ?? MIN_CHARS)) return limit;
+  }
+  return MIN_CHARS;
+}
+
+/**
+ * JSON-serializes a value with key redaction at any depth, then caps it. A JSON object or array over
+ * the cap is shrunk structurally (long strings first, then long arrays) so the stored text stays
+ * valid JSON before the `…[truncated N bytes]` suffix; only if that is not enough is the text cut.
+ */
 export function serialize(value: unknown, maxBytes: number, isSecret: KeyMatcher): Capped {
   if (value === undefined) return { text: '', truncated: false };
-  const seen = new WeakSet<object>();
-  let json: string | undefined;
-  try {
-    json = JSON.stringify(value, function (this: any, key: string, v: unknown) {
-      if (key !== '' && isSecret(key, v)) return REDACTED;
-      const original = key === '' ? value : this[key];
-      if (original !== null && typeof original === 'object') {
-        if (original instanceof Uint8Array) return decodeBinary(original);
-        if (original instanceof ArrayBuffer) return decodeBinary(new Uint8Array(original));
-        if (original instanceof Error) {
-          return { name: original.name, message: original.message };
-        }
-        if (seen.has(original)) return '[circular]';
-        seen.add(original);
-        if (!Array.isArray(original) && !(original instanceof Date) && isStream(original)) return '[stream]';
-      }
-      if (typeof v === 'bigint') return v.toString();
-      if (typeof v === 'function' || typeof v === 'symbol') return undefined;
-      return v;
-    });
-  } catch (err) {
-    json = JSON.stringify(`[unserializable: ${(err as Error)?.message}]`);
+  const longStrings: number[] = [];
+  const json = toJson(value, isSecret, NO_LIMITS, longStrings);
+  const first = json.charCodeAt(0);
+  if (json.length <= maxBytes / 3 || (first !== 123 /* { */ && first !== 91) /* [ */) return capString(json, maxBytes);
+  const bytes = Buffer.byteLength(json, 'utf8');
+  if (bytes <= maxBytes) return { text: json, truncated: false };
+  if (bytes > MAX_SHRINK_BYTES) return capString(json, maxBytes);
+
+  const excess = Math.ceil((bytes - maxBytes) * 1.05) + 64;
+  const chars = stringLimit(longStrings, excess);
+  let shrunk = json;
+  for (const limits of [
+    { chars, items: Infinity },
+    { chars: Math.min(chars, 4 * MIN_CHARS), items: 20 },
+    { chars: MIN_CHARS, items: 5 },
+  ]) {
+    shrunk = toJson(value, isSecret, limits);
+    const size = Buffer.byteLength(shrunk, 'utf8');
+    if (size <= maxBytes) return { text: `${shrunk}…[truncated ${bytes - size} bytes]`, truncated: true };
   }
-  return capString(json ?? '', maxBytes);
+  const capped = capString(shrunk, maxBytes);
+  const kept = capped.text.slice(0, capped.text.lastIndexOf('…[truncated '));
+  return { text: `${kept}…[truncated ${bytes - Buffer.byteLength(kept, 'utf8')} bytes]`, truncated: true };
 }
 
 /** Serializes a raw body: JSON bodies are parsed so keys can be redacted. */

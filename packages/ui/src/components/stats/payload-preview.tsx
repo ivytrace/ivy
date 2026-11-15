@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { JSONTree } from "react-json-tree";
+import { CUT_KEY, CUT_VALUE } from "@ivy/spans";
 import { ChevronRight, Clipboard, ClipboardCheck, Maximize2, Minimize2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -76,6 +77,14 @@ export function JsonValue({ value }: { value: unknown }) {
         invertTheme={false}
         hideRoot
         shouldExpandNodeInitially={(_keyPath, _data, level) => expandAll || level < 2}
+        labelRenderer={([key]) => (key === CUT_KEY ? null : `${key}:`)}
+        valueRenderer={(text, raw, key) =>
+          raw === CUT_VALUE && (key === CUT_KEY || typeof key === "number") ? (
+            <span className="italic text-muted-foreground">… truncated</span>
+          ) : (
+            (text as ReactNode)
+          )
+        }
       />
     </div>
   );

@@ -10,7 +10,7 @@ trace 6af84d4577aa88bb99cc00dd11ee22ff · request c0ffee00-1111-4222-8333-444455
                         at de_UpdateItemCommand (/var/task/node_modules/@aws-sdk/client-dynamodb/dist-cjs/index.js:2241:21)
                         at async markPaid (/var/task/src/orders.js:31:5)
                         at async processRecord (/var/task/src/queue.js:19:3)
-                      req: {"Records":[{"messageId":"m-0","body":"{\\"type\\":\\"order.created\\",\\"orderId\\":\\"ord_0\\",\\"customer\\":{\\"email\\":\\"ada@example.com\\",\\"apiKey\\":\\"[redacted]\\"}}","eventSource":"aws:sqs"},{"messageId":"m-1","body":"{\\"type\\":\\"order.created\\",\\"orderId\\":\\"ord_1\\",\\"customer\\":{\\"email\\":\\"ada@exampl…(+400 chars) [cut at source, 2214 bytes dropped]
+                      req: {"Records":[{"messageId":"m-0","body":"{\\"type\\":\\"order.created\\",\\"orderId\\":\\"ord_0\\",\\"customer\\":{\\"email\\":\\"ada@example.com\\",\\"apiKey\\":\\"[redacted]\\"}}","eventSource":"aws:sqs"},{"messageId":"m-1","body":"{\\"type\\":\\"order.created\\",\\"orderId\\":\\"ord_1\\",\\"customer\\":{\\"email\\":\\"ada@exampl…(+395 chars) [cut at source, 2214 bytes dropped]
    +1.0ms             log info: Processing 8 records
    +3.0ms   74.1ms    DynamoDB.GetItem checkout-orders ×8 (each 6.2ms–11.1ms)  ok
   +80.0ms             log warn: Order ord_7 is not pending (status=paid); skipping is not allowed for this event type

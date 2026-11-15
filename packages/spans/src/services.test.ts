@@ -31,7 +31,9 @@ describe("parsePayload", () => {
     expect(parsePayload('{"a":1}')).toEqual({ a: 1 });
     expect(parsePayload('"abc"')).toBe("abc");
     expect(parsePayload('{"a":1}…[truncated 120 bytes]')).toEqual({ a: 1 });
-    expect(parsePayload('{"a":"long…[truncated 9 bytes]')).toBe('{"a":"long…[truncated 9 bytes]');
+    expect(parsePayload('{"a":"long…[truncated 9 bytes]')).toEqual({ a: "long…", "…": "[truncated]" });
+    expect(parsePayload('{"a":"long')).toBe('{"a":"long');
+    expect(parsePayload("plain text…[truncated 9 bytes]")).toBe("plain text…[truncated 9 bytes]");
     expect(parsePayload("")).toBeUndefined();
     expect(parsePayload(undefined)).toBeUndefined();
   });

@@ -8,3 +8,4 @@ export * from "./collapsed.js";
 export * from "./bedrock.js";
 export * from "./in-progress.js";
 export * from "./error-template.js";
+export * from "./repair-json.js";

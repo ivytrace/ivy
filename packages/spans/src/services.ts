@@ -1,6 +1,7 @@
 import { collapsedBaseName, collapsedInfo, type CollapsedInfo } from "./collapsed.js";
 import { failureLabel, invocationResources, spanFailureKind } from "./failures.js";
 import { describeLlm, formatTokens, llmNote, type LlmSpan } from "./llm.js";
+import { repairTruncatedJson } from "./repair-json.js";
 import type { Span } from "./types.js";
 
 export type ServiceIcon =
@@ -59,7 +60,7 @@ export function parsePayload(value: string | undefined): unknown {
   try {
     return JSON.parse(stripped);
   } catch {
-    return value;
+    return (stripped !== value && repairTruncatedJson(stripped)) || value;
   }
 }
 

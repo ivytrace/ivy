@@ -748,6 +748,53 @@ function triggerEvent(inv: MockInvocation): unknown {
   }
 }
 
+/**
+ * A large API Gateway v2 event cut by an older layer: the serialized JSON sliced mid-body, followed by
+ * the `…[truncated N bytes]` marker. Shown on every third checkout invocation.
+ */
+function truncatedCheckoutEvent(inv: MockInvocation): string {
+  const items = Array.from({ length: 120 }, (_, i) => ({
+    sku: `SKU-${1000 + i}`,
+    name: `Example product ${i + 1}`,
+    quantity: 1 + (i % 3),
+    unitPrice: { amount: 1299 + i * 10, currency: "EUR" },
+    note: "Gift wrap, deliver to the reception desk \"front door\"",
+  }));
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "content-type": "application/json",
+    authorization: "[redacted]",
+    host: "api.example.com",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    "x-amzn-trace-id": `Root=1-${inv.trace_id.slice(0, 8)}-${inv.trace_id.slice(8)}`,
+    "x-forwarded-for": "203.0.113.7",
+    "x-forwarded-port": "443",
+    "x-forwarded-proto": "https",
+  };
+  const event = {
+    version: "2.0",
+    routeKey: "POST /orders",
+    rawPath: "/orders",
+    rawQueryString: "",
+    headers,
+    requestContext: {
+      accountId: "123456789012",
+      apiId: "a1b2c3d4e5",
+      domainName: "api.example.com",
+      http: { method: "POST", path: "/orders", protocol: "HTTP/1.1", sourceIp: "203.0.113.7", userAgent: headers["user-agent"] },
+      requestId: inv.request_id,
+      routeKey: "POST /orders",
+      stage: "$default",
+      time: inv.ts,
+    },
+    body: JSON.stringify({ cartId: "cart_91", customer: { email: "buyer@example.com" }, items }),
+    isBase64Encoded: false,
+  };
+  const json = JSON.stringify(event);
+  const kept = 6000;
+  return `${json.slice(0, kept)}…[truncated ${json.length - kept} bytes]`;
+}
+
 /** Lambda report figures (billed duration, memory, init) as the API returns them after merging the update span. */
 function reportAttributes(inv: MockInvocation): Record<string, string> {
   return {
@@ -880,7 +927,9 @@ export function buildTrace(inv: MockInvocation): Span[] {
             "http.response.status_code": String(inv.http_status),
           }
         : {}),
-      "ivy.payload.request": JSON.stringify(triggerEvent(inv)),
+      ...(fn.name === "checkout-createOrder" && inv.seed % 3 === 0
+        ? { "ivy.payload.request": truncatedCheckoutEvent(inv), "ivy.payload.truncated": "true" }
+        : { "ivy.payload.request": JSON.stringify(triggerEvent(inv)) }),
       "ivy.payload.response": failed
         ? ""
         : JSON.stringify(
