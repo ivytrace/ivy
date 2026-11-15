@@ -121,7 +121,7 @@ renaming never changes it. Settings show the URL read-only, with "Change URL" un
 **Settings.** General (name, URL, delete with the slug typed to confirm; owners only, not for the default workspace or
 in single-workspace mode), Members (multi-workspace mode only: roles, remove/leave, invitations with the link shown
 once to copy, "email sent" when SMTP is configured, pending list with revoke), Projects (create, rename, change URL,
-archive/unarchive; archiving any project, the last active one too, asks once: keys created for it stop working, its
+archive/unarchive, archived projects in a collapsed "Archived (N)" section at the bottom; archiving any project, the last active one too, asks once: keys created for it stop working, its
 data stays until retention, it can be unarchived; per-project ingest keys: create (shown once, with the
 environment variables), list, revoke), AWS
 accounts (below). The AWS entry shows the number of new untraced functions.

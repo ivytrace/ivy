@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { Archive, ArchiveRestore, KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronRight, KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { SectionHeader } from "@/components/common/section-header";
 import { ErrorState, LoadingState } from "@/components/common/states";
@@ -58,17 +58,21 @@ export default function ProjectsSettings() {
       ) : !projects.data ? (
         <LoadingState className="rounded-md border" />
       ) : (
-        <div className="grid gap-3">
-          {projects.data.items.map((p) => (
-            <ProjectCard
-              key={p.id}
-              workspace={workspace}
-              project={p}
-              onEdit={() => setEditing(p)}
-              onArchive={(archived) => setArchived(p, archived)}
-            />
-          ))}
-        </div>
+        <>
+          <div className="grid gap-3">
+            {projects.data.items
+              .filter((p) => !p.archived)
+              .map((p) => (
+                <ProjectCard key={p.id} workspace={workspace} project={p} onEdit={() => setEditing(p)} onArchive={(archived) => setArchived(p, archived)} />
+              ))}
+          </div>
+          <ArchivedProjects
+            projects={projects.data.items.filter((p) => p.archived)}
+            render={(p) => (
+              <ProjectCard key={p.id} workspace={workspace} project={p} onEdit={() => setEditing(p)} onArchive={(archived) => setArchived(p, archived)} />
+            )}
+          />
+        </>
       )}
 
       {archiving && projects.data ? (
@@ -241,5 +245,18 @@ function ProjectKeys({ workspace, project }: { workspace: string; project: strin
       {created && <KeyReveal created={created} />}
       {error && <p className="text-sm text-red-400">{error}</p>}
     </div>
+  );
+}
+
+function ArchivedProjects({ projects, render }: { projects: Project[]; render: (p: Project) => React.ReactNode }) {
+  if (projects.length === 0) return null;
+  return (
+    <details className="group mt-6">
+      <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-sm text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-4 transition-transform group-open:rotate-90" />
+        Archived ({projects.length})
+      </summary>
+      <div className="mt-3 grid gap-3">{projects.map(render)}</div>
+    </details>
   );
 }
