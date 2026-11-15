@@ -350,9 +350,8 @@ secret). Without `account` only the trusted principal is filled in. `download=1`
 `content-disposition: attachment`.
 
 ### `POST /api/w/:workspace/aws/accounts` (connect)
-Body: `{ "account_id": "123456789012", "name"?: "Production", "regions": ["eu-west-1"], "all_regions"?: false, "stack_region"?: "eu-west-1", "default_project"?: "checkout-prod" }`.
-The stack region is added to `regions`. `default_project` (slug or ID) is only the project the UI offers first when
-tracing this account's functions; it never causes tracing and is not a fallback. 201 with the account (status `pending`), shaped as below. With the
+Body: `{ "account_id": "123456789012", "name"?: "Production", "regions": ["eu-west-1"], "all_regions"?: false, "stack_region"?: "eu-west-1" }`.
+The stack region is added to `regions`. Accounts have no preselected project (a `default_project` sent is ignored). 201 with the account (status `pending`), shaped as below. With the
 `publish-cfn-template` hook, its `quick_create_url` opens the CloudFormation quick-create page for the connection's
 pre-filled template; without it (or when it fails) `quick_create_url` is null and the UI offers
 `template_download_url` plus upload steps. 409 if the
@@ -364,7 +363,6 @@ AWS account is already connected to this workspace.
   "id": "7695fb70-…", "name": "Production", "account_id": "123456789012",
   "role_arn": "arn:aws:iam::123456789012:role/IvyTrace-7695fb70", "external_id": "ivy-…",
   "stack_name": "ivy-trace-7695fb70", "stack_region": "eu-west-1",
-  "default_project_id": "prj_…" | null, "default_project": "checkout-prod" | null,
   "regions": ["eu-west-1"], "all_regions": false,
   "status": "pending" | "connected" | "error", "error": "…" | null,
   "created_at": "…", "verified_at": "…" | null, "last_sync_at": "…" | null, "reviewed_at": "…" | null, "syncing": false,
@@ -383,7 +381,7 @@ throttle poll; `missing_permission` means the stack's role predates `cloudwatch:
 `"throttle_metrics"?: true`.
 
 ### `PATCH /api/w/:workspace/aws/accounts/:id`
-Body: any of `name`, `regions`, `all_regions`, `default_project` (slug, ID or null), `throttle_metrics` (boolean), `reviewed`
+Body: any of `name`, `regions`, `all_regions`, `throttle_metrics` (boolean), `reviewed`
 (`true` sets `reviewed_at` to now, clearing `counts.new`). Changing regions starts a sync for connected accounts. Returns the account.
 
 ### `POST /api/w/:workspace/aws/accounts/:id/verify`

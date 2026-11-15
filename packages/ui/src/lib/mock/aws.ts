@@ -148,8 +148,6 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
       role_arn: `arn:aws:iam::${fields.account_id}:role/IvyTrace-${short}`,
       external_id: `ivy-${short.padEnd(32, "0")}`,
       stack_name: `ivy-trace-${short}`,
-      default_project_id: null,
-      default_project: null,
       all_regions: false,
       status: "connected",
       error: null,
@@ -186,7 +184,6 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
         now,
       ),
     );
-    accounts[0].default_project_id = p("checkout-prod");
     functions = [...makeFunctions("123456789012", PROD, now), ...makeFunctions("210987654321", STAGING, now)];
     rules = [
       { id: "rul_checkout_prod", matcher: { account_id: null, region: null, stack: "checkout-prod", name: null, tag: null }, project_id: p("checkout-prod"), enabled: true, created_at: new Date(now - 20 * DAY).toISOString() },
@@ -289,10 +286,8 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
           param_ExternalId: a.external_id,
           param_RoleName: a.role_arn.split("/").pop()!,
         })}`;
-    const dp = projects().find((p) => p.id === a.default_project_id);
     return {
       ...rest,
-      default_project: dp?.slug ?? null,
       template_download_url: `/api/w/${workspaceSlug()}/aws/template.yaml?account=${a.id}&download=1`,
       syncing: Date.now() < sync_until,
       counts,
@@ -389,7 +384,6 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
           regions: Array.isArray(body.regions) ? (body.regions as string[]) : [stackRegion],
           all_regions: body.all_regions === true,
           stack_region: stackRegion,
-          default_project_id: projectBy(body.default_project as string)?.id ?? null,
           status: "pending",
           created_at: new Date().toISOString(),
           verified_at: null,
@@ -496,7 +490,6 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
       if (Array.isArray(body.regions)) account.regions = body.regions as string[];
       if (typeof body.all_regions === "boolean") account.all_regions = body.all_regions;
       if (typeof body.name === "string" && body.name) account.name = body.name;
-      if (body.default_project !== undefined) account.default_project_id = projectBy(body.default_project as string)?.id ?? null;
       if (body.reviewed === true) account.reviewed_at = new Date().toISOString();
       if (typeof body.throttle_metrics === "boolean") account.throttle_metrics = body.throttle_metrics;
       if (regionsChanged) startSync(account);

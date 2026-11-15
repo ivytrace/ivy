@@ -3,7 +3,6 @@ import path from 'node:path';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { startAlertLoop } from './lib/alerts/loop.js';
-import { keepTagTracedFunctions } from './lib/aws/keep-tagged.js';
 import { startSyncLoop } from './lib/aws/scheduler.js';
 import { readAuthConfig } from './lib/auth/config.js';
 import { hookStats } from './lib/hooks/run.js';
@@ -18,7 +17,6 @@ const uiDir = process.env.IVY_UI_DIR ?? path.resolve(process.cwd(), '../ui/dist'
 await retry('projects for keys without one', () => assignProjectlessKeys());
 await retry('bootstrap of the default tenant', () => ensureDefaultTenant());
 await retry('workspace slugs', () => ensureWorkspaceSlugs());
-await retry('projects for tag-traced functions', () => keepTagTracedFunctions());
 
 serve({ fetch: createApp({ uiDir }).fetch, port }, (info) => {
   console.log(`Ivy API listening on :${info.port} (UI from ${uiDir})`);

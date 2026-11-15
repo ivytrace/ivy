@@ -8,8 +8,7 @@ account traces nothing. Code lives in `packages/api/src/lib/aws/` and `packages/
 
 ## Flow
 
-1. **Connect.** The user enters the 12-digit account ID, a stack region, the regions to scan and optionally the project
-   to preselect. `POST /api/w/:ws/aws/accounts` creates a *pending* connection with a random external ID
+1. **Connect.** The user enters the 12-digit account ID, a stack region and the regions to scan. `POST /api/w/:ws/aws/accounts` creates a *pending* connection with a random external ID
    (`ivy-<32 hex>`), an event secret, and a deterministic role name `IvyTrace-<8 hex>` (so the role ARN is known before
    the stack exists).
 2. **Deploy.** With the `publish-cfn-template` hook (`hooks.md`), the account has a quick-create link: the user opens it
@@ -52,13 +51,15 @@ otherwise the manual choice's project or the rule's project. `ivy:project` alone
 skipped (a rule pointing at one matches nothing).
 
 **There is no default project** (`workspaces-projects.md`): every rule and every manual "trace" names a project (the
-API answers 400 without one; the UI always asks, preselecting the stack's suggested project or the project last used
-for tracing in this browser, then the account's preselected project). A function selected without an active project
+API answers 400 without one; the UI always asks, preselecting the stack's suggested project, else the project last used
+for tracing in this browser (`ivy.lastTraceProject.<ws>`, also set when the wizard or onboarding creates a project),
+else nothing). A function selected without an active project
 gets the state **`needs_project`** and is not traced (detached if it was): `ivy:trace=true` without an `ivy:project`
 naming an active project and without a manual choice or rule that gives one, or a manual choice whose project was
 archived. The account page lists it as "Needs a project" with the reason and a project picker that saves a manual
-choice. On upgrade, functions that were traced by `ivy:trace=true` alone into the old default project got that project
-as a manual choice (`keepTagTracedFunctions`), so they kept tracing.
+choice. On upgrade, functions that were traced by `ivy:trace=true` alone into the old default project became
+`needs_project` and were detached at the next sync (the Ivy layer and Ivy's variables removed, the function's own
+layers and variables kept); picking a project in the dashboard or adding `ivy:project` traces them again.
 
 A **rule** is a matcher plus a project plus `enabled`. Every non-empty matcher field must match: `account_id` and
 `region` exactly, `stack` (the CloudFormation stack name) and `name` (the function name) as globs (`*`, `?`;
@@ -67,7 +68,8 @@ functions**: a stack is usually one app in one environment, which is one project
 project `checkout-prod`). Serverless Framework, SAM, CDK and SST all set the stack tag. A stack rule is just a
 rule whose matcher has only `stack` (the account page shows it on the stack's group).
 
-The account's `default_project_id` is only the project the UI offers first; it never causes tracing and is not a fallback.
+Accounts have no preselected project. The `aws_accounts.default_project_id` column (it held one) stays in the table,
+written as '' and never read; dropping it would need a table rebuild for no gain.
 
 Each traced function gets its **project's** ingest key as `IVY_API_KEY` (one auto-trace key per project, `tenancy.md`).
 When a function moves to another project, the next sync rewrites `IVY_API_KEY`; spans already ingested stay in the
@@ -94,7 +96,7 @@ No new datastore. `deploy/clickhouse/schema.sql` adds, in the control-plane data
 
 | table | engine | key | |
 |---|---|---|---|
-| `aws_accounts` | `ReplacingMergeTree(updated_at)` | `(tenant_id, id)` | one row per connection: role ARN, external ID, event secret, regions, preselected project, `reviewed_at`, status, last error, timestamps, `deleted` flag |
+| `aws_accounts` | `ReplacingMergeTree(updated_at)` | `(tenant_id, id)` | one row per connection: role ARN, external ID, event secret, regions, `reviewed_at`, status, last error, timestamps, `deleted` flag |
 | `aws_functions` | `ReplacingMergeTree(updated_at)` | `(tenant_id, account_id, region, function_name)` | last known state per function: `traced`/`available`/`opted_out`/`unsupported`/`conflict`/`error`/`pending` + reason, project and what decided it (`tag`/`manual`/`rule` + rule ID), stack, tags, last modified, `first_seen_at` |
 | `aws_function_settings` | `ReplacingMergeTree(updated_at)` | `(tenant_id, account_id, region, function_name)` | the manual choice: `mode` (`''`/`trace`/`exclude`) and its project; older rows' `tracing_enabled = false` reads as `exclude` |
 | `aws_project_rules` | `ReplacingMergeTree(updated_at)` | `(tenant_id, id)` | the workspace's rules: position, matcher fields, project, enabled, `deleted`. Reordering writes all rows in one insert |
@@ -281,7 +283,7 @@ See `api.md` (`/api/w/:workspace/aws/*`).
   matching functions traced on the next sync; detach when a function stops matching; key rewritten when a function
   moves project; layer reuse/publish, conflict retry, revision conflicts, unreadable tags, disabled regions, removed
   functions, manual exclude, detach on disconnect, `needs_project` not attached and detached until a manual choice,
-  `keepTagTracedFunctions` on upgrade) and `routes/aws/aws.test.ts` (all routes end to end with in-memory
+  the clean detach of a function traced by `ivy:trace=true` alone on upgrade) and `routes/aws/aws.test.ts` (all routes end to end with in-memory
   stores: connect without/with the publish hook, hook failure, grouped list and new counts, dry run, rule
   create/patch/reorder/delete with re-sync, manual choices, bulk, EventBridge), all with `aws-sdk-client-mock`; no AWS
   account involved.

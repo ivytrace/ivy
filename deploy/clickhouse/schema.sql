@@ -385,7 +385,8 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_accounts
     `event_secret` String,
     `stack_name` String,
     `stack_region` LowCardinality(String),
-    -- The project the UI preselects; `reviewed_at`: functions first seen after it count as "new".
+    -- `default_project_id`: legacy (the UI's preselected project, removed), written as '' and unused.
+    -- `reviewed_at`: functions first seen after it count as "new".
     `default_project_id` String DEFAULT '',
     `reviewed_at` DateTime64(3, 'UTC') DEFAULT 0,
     `regions` Array(LowCardinality(String)),

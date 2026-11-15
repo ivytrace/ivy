@@ -14,6 +14,7 @@ import { refreshAws } from "@/lib/api/aws";
 import { useAwsAccount, useAwsAccountFunctions, useInvocations, useMultiWorkspace, useProjects, useWorkspaceInfo } from "@/lib/api/hooks";
 import type { CreatedKey } from "@/lib/api/types";
 import { createKey, createProject, refreshWorkspace, updateWorkspace } from "@/lib/api/workspaces";
+import { rememberTraceProject } from "@/lib/aws/last-project";
 import { useAuth } from "@/lib/auth/provider";
 import { ALL_PROJECTS, pageLink, traceLink } from "@/lib/links/links";
 import { ScopeProvider } from "@/lib/links/use-scope";
@@ -193,6 +194,7 @@ function ProjectStep({ state, onDone }: { state: WelcomeState; onDone: (project:
         submitLabel="Create project"
         onSubmit={async (name) => {
           const p = await createProject(state.ws, { name });
+          rememberTraceProject(state.ws, p.slug);
           await refreshWorkspace(state.ws);
           onDone(p.slug);
         }}
@@ -210,7 +212,7 @@ function AwsStep({ state, go }: { state: Required<Pick<WelcomeState, "ws" | "pro
         <ConnectedAccount state={state} onDone={() => go("listen")} />
       ) : (
         <div className="max-w-xl">
-          <Details bare defaultProject={state.project} onCreated={(a) => go("aws", { account: a.id })} />
+          <Details bare onCreated={(a) => go("aws", { account: a.id })} />
         </div>
       )}
       <p className="mt-8 text-sm">

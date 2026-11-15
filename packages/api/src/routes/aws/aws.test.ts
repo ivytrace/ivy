@@ -133,17 +133,19 @@ describe('AWS account routes', () => {
     expect(a).toMatchObject({ quick_create_url: null, quick_create_error: null });
     expect((await req('/api/config')).aws).toEqual({ quick_create: false });
     const b = await req(`${W}/accounts`, json({ account_id: '210987654321', all_regions: true, stack_region: 'us-east-1', default_project: 'default' }));
-    expect(a).toMatchObject({ status: 'pending', account_id: ACCOUNT_ID, regions: ['eu-west-1'], stack_region: 'eu-west-1', name: 'Prod', default_project: null });
+    expect(a).toMatchObject({ status: 'pending', account_id: ACCOUNT_ID, regions: ['eu-west-1'], stack_region: 'eu-west-1', name: 'Prod' });
+    // The account has no preselected project any more: a sent `default_project` is ignored.
+    expect(b).not.toHaveProperty('default_project');
+    expect(b).not.toHaveProperty('default_project_id');
     expect(a.external_id).toMatch(/^ivy-[0-9a-f]{32}$/);
     expect(a.external_id).not.toBe(b.external_id);
     expect(a.role_arn).toMatch(new RegExp(`^arn:aws:iam::${ACCOUNT_ID}:role/IvyTrace-[0-9a-f]{8}$`));
-    expect(b).toMatchObject({ all_regions: true, regions: [], stack_region: 'us-east-1', default_project: 'default', default_project_id: DEFAULT_PROJECT });
+    expect(b).toMatchObject({ all_regions: true, regions: [], stack_region: 'us-east-1' });
   });
 
   it('validates input and rejects duplicate accounts', async () => {
     expect((await app.request(`${W}/accounts`, json({ account_id: '123' }))).status).toBe(400);
     expect((await app.request(`${W}/accounts`, json({ account_id: ACCOUNT_ID, regions: ['mars-1'] }))).status).toBe(400);
-    expect((await app.request(`${W}/accounts`, json({ account_id: ACCOUNT_ID, default_project: 'nope' }))).status).toBe(400);
     await connect();
     expect((await app.request(`${W}/accounts`, json({ account_id: ACCOUNT_ID }))).status).toBe(409);
   });

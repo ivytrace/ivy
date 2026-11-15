@@ -204,6 +204,7 @@ describe("mock API: workspaces and data", () => {
     const call = client();
     const fn = (name: string) => call<{ items: AwsFunction[] }>("GET", "/api/w/acme/aws/functions").body.items.find((f) => f.name === name)!;
     expect(fn("ops-healthcheck")).toMatchObject({ state: "needs_project", reason: "Tagged ivy:trace=true without ivy:project", project: null });
+    expect(call<{ items: AwsAccount[] }>("GET", "/api/w/acme/aws/accounts").body.items[0]).not.toHaveProperty("default_project");
     expect(call("POST", "/api/w/acme/aws/rules", { matcher: { name: "*" } }).status).toBe(400);
     expect(call("PUT", "/api/w/acme/aws/functions/123456789012/eu-west-1/ops-healthcheck", { mode: "trace" }).status).toBe(400);
     expect(call("PUT", "/api/w/acme/aws/functions/123456789012/eu-west-1/ops-healthcheck", { mode: "trace", project: "checkout-prod" }).status).toBe(200);

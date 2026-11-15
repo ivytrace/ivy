@@ -69,8 +69,8 @@ export function FunctionPicker({ account, groups, onError }: { account: AwsAccou
     .filter((g) => g.functions.length > 0);
   const all = groups.flatMap((g) => g.functions);
   const regions = [...new Set(all.map((f) => f.region))].sort();
-  // Always asked: preselects the project last used for tracing, else the account's preselected project.
-  const bulkTarget = bulkProject || preselectProject(projects.data?.items ?? [], readLastTraceProject(workspace), account.default_project);
+  // Always asked: preselects the project last used for tracing in this browser, else nothing.
+  const bulkTarget = bulkProject || preselectProject(projects.data?.items ?? [], readLastTraceProject(workspace));
 
   const toggle = (keys: string[], on: boolean) =>
     setSelected((prev) => {
@@ -136,7 +136,7 @@ export function FunctionPicker({ account, groups, onError }: { account: AwsAccou
               <Button
                 size="sm"
                 disabled={!preview?.count}
-                onClick={() => setTarget({ title: "Trace all matching functions", matcher, fallback: account.default_project })}
+                onClick={() => setTarget({ title: "Trace all matching functions", matcher })}
               >
                 Trace all matching
               </Button>
@@ -189,7 +189,6 @@ export function FunctionPicker({ account, groups, onError }: { account: AwsAccou
                   title: `Trace stack ${g.stack}`,
                   matcher: { account_id: account.account_id, stack: g.stack!, region: g.region ?? undefined },
                   suggested: g.suggested_project,
-                  fallback: account.default_project,
                 })
               }
               onRuleEnabled={(enabled) => g.rule && void ruleAction(() => updateRule(workspace, g.rule!.id, { enabled }))}

@@ -235,9 +235,6 @@ export interface AwsAccount {
   external_id: string;
   stack_name: string;
   stack_region: string;
-  /** The project the UI preselects for this account's functions; never causes tracing. */
-  default_project_id: string | null;
-  default_project: string | null;
   regions: string[];
   all_regions: boolean;
   status: AwsAccountStatus;

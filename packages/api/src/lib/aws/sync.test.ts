@@ -14,7 +14,6 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetAwsClientsForTests } from './clients.js';
 import { applyUpdate, ensureLayer, resetLayerCacheForTests, setLayerZipForTests, sleep } from './lambda.js';
-import { keepTagTracedFunctions } from './keep-tagged.js';
 import { memoryStore } from './memory-store.js';
 import { setAwsStore } from './store.js';
 import { setThrottleSinkForTests } from './throttles.js';
@@ -381,19 +380,14 @@ describe('opt-in tracing with rules', () => {
     expect(await stateOf()).toMatchObject({ fresh: ['traced', DEFAULT_PROJECT, 'tag', ''] });
   });
 
-  it('keeps functions traced by ivy:trace=true alone in their project when upgrading (a manual choice)', async () => {
-    const other = await createProject('default', { name: 'other' });
-    const row = (function_name: string, tags: Record<string, string>, project_id = DEFAULT_PROJECT) => ({
-      tenant_id: 'default', account_id: ACCOUNT_ID, region: 'eu-west-1', function_name, function_arn: arn(function_name), runtime: 'nodejs22.x',
-      state: 'traced' as const, reason: '', project_id, project_source: 'tag' as const, rule_id: '', stack: '', tags, last_modified: '', first_seen_at: 1, updated_at: 1,
+  it('on upgrade, detaches a function traced by ivy:trace=true alone cleanly, keeping its own layers and variables', async () => {
+    const OTHER_LAYER = 'arn:aws:lambda:eu-west-1:123456789012:layer:other:3';
+    lambda.on(ListFunctionsCommand).resolves({
+      Functions: [traced('legacy', { Layers: [{ Arn: OTHER_LAYER }, { Arn: LAYER_V2 }], Environment: { Variables: { ...IVY_ENV, IVY_REDACT_KEYS: 'card', TABLE: 'orders' } } })],
     });
-    await mem.store.saveFunction(row('alone', { 'ivy:trace': 'true' }));
-    await mem.store.saveFunction(row('named', { 'ivy:trace': 'true', 'ivy:project': 'other' }, other.id));
-    await mem.store.saveFunction({ ...row('untraced', { 'ivy:trace': 'true' }), state: 'available', project_id: '' });
-    expect(await keepTagTracedFunctions()).toBe(1);
-    expect(await mem.store.listSettings('default')).toEqual([
-      { account_id: ACCOUNT_ID, region: 'eu-west-1', function_name: 'alone', mode: 'trace', project_id: DEFAULT_PROJECT },
-    ]);
-    expect(await keepTagTracedFunctions()).toBe(0);
+    tagging.on(GetResourcesCommand).resolves({ ResourceTagMappingList: [{ ResourceARN: arn('legacy'), Tags: [{ Key: 'ivy:trace', Value: 'true' }] }] });
+    await syncAccount(account);
+    expect(updatesByName().legacy).toMatchObject({ Layers: [OTHER_LAYER], Environment: { Variables: { IVY_REDACT_KEYS: 'card', TABLE: 'orders' } } });
+    expect(await stateOf()).toMatchObject({ legacy: ['needs_project', '', 'tag', ''] });
   });
 });

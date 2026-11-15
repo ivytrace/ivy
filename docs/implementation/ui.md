@@ -137,7 +137,7 @@ Functions" after the first trace goes to the project that received it, since tha
 1. `workspace`: the name, prefilled from a work email's domain (`erin@acme.io` → "Acme") or the user's name. Only
    for owners in multi-workspace mode, and skipped after joining through an invitation.
 2. `project`: creates the first project (workspaces start without one). Hint: environments are separate projects.
-3. `aws`: the connect form (the project preselected) → the quick-create link, or the template download with upload
+3. `aws`: the connect form (the new project is remembered as the last used one, so the function picker preselects it) → the quick-create link, or the template download with upload
    steps when there's none → "I've deployed it" (verify, polled every 10 s) → the stack-grouped function picker to trace
    stacks or patterns into the project. Or "set it up by hand": an ingest key with `AWS_LAMBDA_EXEC_WRAPPER`,
    `IVY_ENDPOINT`, `IVY_API_KEY`, and a note for other OTLP senders.
@@ -172,7 +172,7 @@ Paths below are relative to `/w/:workspace/:project`.
   or "N variants") to its most frequent messages with counts, each linking to its trace. Buttons: the sample trace, and
   `invocations?function=…&group=<fingerprint>` (the list shows a removable "One error group" filter).
 - `/w/:workspace/settings/aws`: AWS accounts (see `auto-trace.md`). A "Connect AWS account" dialog (account ID, stack
-  region, regions, the project to preselect → quick-create link opened in a new tab, or template download + upload
+  region, regions → quick-create link opened in a new tab, or template download + upload
   instructions when there is no link → verify, polled every 10 s), one card per account (status, regions, last sync,
   function counts by state, "N new", sync errors, Sync / Regions / Disconnect; pending accounts get "Finish setup"),
   and the workspace's tracing rules in evaluation order (enable, delete, move up/down).

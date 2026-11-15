@@ -20,8 +20,6 @@ export interface TraceTarget {
   matcher: RuleMatcher;
   /** Project slug to suggest, e.g. derived from the stack name. */
   suggested?: string | null;
-  /** The account's preselected project. */
-  fallback?: string | null;
 }
 
 /** Summary of what a dry run would do, in words. */
@@ -56,14 +54,14 @@ export function TraceDialog({ target, onOpenChange }: { target: TraceTarget | nu
     setError(null);
     setPreview(null);
     // Every rule names a project, so the dialog always asks; it preselects the stack's suggestion,
-    // else the project last used for tracing, else the account's preselected project.
+    // else the project last used for tracing in this browser, else nothing (the user picks).
     const suggested = target.suggested ?? "";
     if ((suggested && !list.some((p) => p.slug === suggested)) || !list.length) {
       setMode("new");
       setName(suggested);
     } else {
       setMode("existing");
-      setExisting(preselectProject(list, suggested, readLastTraceProject(workspace), target.fallback));
+      setExisting(preselectProject(list, suggested, readLastTraceProject(workspace)));
     }
     // Initialise when a new target opens; the project list is read once.
   }, [target]);

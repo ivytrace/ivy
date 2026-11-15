@@ -10,7 +10,7 @@ export interface AwsAccount {
   event_secret: string;
   stack_name: string;
   stack_region: string;
-  /** The project the UI preselects when tracing functions of this account ('' = none). Never causes tracing. */
+  /** Legacy (the UI's preselected project, removed): kept in the table, always written as '' and never read. */
   default_project_id: string;
   /** Functions first seen after this count as "new" (the UI sets it when the list is viewed). */
   reviewed_at: number;

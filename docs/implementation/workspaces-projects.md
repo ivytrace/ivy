@@ -108,17 +108,17 @@ variable, the `default` workspace starts empty like any other.
 `assignProjectlessKeys()`: every key with an empty `project_id` (keys from before projects, bootstrap keys that
 followed the default, the hosted service's ingest key) gets its workspace's then-current default project written
 explicitly: `tenants.default_project_id`, or the derived ID when that was empty. It is idempotent and reads all such keys
-in one cross-tenant query. The API also runs `keepTagTracedFunctions()` before the sync loop: a function currently traced
-only because of `ivy:trace=true` (no `ivy:project`, rule or manual choice) gets a manual choice for the project it is
-traced into, so it keeps sending there instead of becoming `needs_project` and being detached.
+in one cross-tenant query. Functions traced only because of `ivy:trace=true` (no `ivy:project`, rule or manual choice)
+are not migrated: they become `needs_project` and are detached at the next sync, until someone picks a project.
 
 **The column stays.** `tenants.default_project_id` is left in the schema and only read by that migration; nothing
 writes it. Dropping it is a one-line `ALTER TABLE … DROP COLUMN IF EXISTS`, but then a node upgraded later than the
 column drop would find nothing to migrate, so it stays until every install has run the migration.
 
 Removed from the API: `default_project_id` on workspaces, `PATCH /api/w/:workspace { default_project }`, `default` on
-projects and `new_default` when archiving (both ignored if sent). The AWS account's `default_project` is unrelated:
-only the project the UI offers first, never a fallback.
+projects, `new_default` when archiving, and the AWS account's preselected project (`default_project` on accounts;
+its column stays, unused). All are ignored if sent. The UI preselects the stack's suggested project, else the project
+last used for tracing in this browser, else nothing.
 
 ### Ingest stamps the project server-side
 
@@ -212,7 +212,7 @@ The app's own paths that a proxy in front of Ivy must send to the app (in additi
   and auto-trace keys), `routes/projects/projects.test.ts` (no `default` on projects or workspaces, archiving every
   project including the last one, no fallback through the key cache, archiving the bootstrap project disables the key,
   `targetProject` without a project, `ivy:trace=true` alone → `needs_project`), `lib/aws/sync.test.ts`
-  (`needs_project` isn't attached and is detached; `keepTagTracedFunctions`), `lib/aws/throttles.test.ts` (functions
+  (`needs_project` isn't attached and is detached cleanly), `lib/aws/throttles.test.ts` (functions
   without a project dropped), the UI's `components/workspaces/archive-project.test.tsx` (the archive dialog),
   `lib/aws/last-project.test.ts` (preselection) and `lib/mock/server.test.ts` (the mock API mirrors it), `routes/tenant-scope.test.ts` and `lib/clickhouse/scoped.test.ts` (project guard),
   keys and auto-trace keys), `routes/tenant-scope.test.ts` and `lib/clickhouse/scoped.test.ts` (project guard; workspace-wide invocations and

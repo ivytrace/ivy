@@ -1,12 +1,11 @@
 import type { Context } from 'hono';
 import { jsonBody, loadAccount, parseRegions, presentAccounts } from '../../../lib/aws/requests.js';
-import { targetProject } from '../../../lib/aws/rules.js';
 import { triggerSync } from '../../../lib/aws/scheduler.js';
 import { awsStore } from '../../../lib/aws/store.js';
 import { badRequest } from '../../../lib/utils/http-error.js';
 
 /**
- * Changes the name, the regions to scan, the preselected project, the throttle polling setting, or marks the
+ * Changes the name, the regions to scan, the throttle polling setting, or marks the
  * function list as reviewed. A connected account is synced right away when its regions change.
  */
 export async function patchAwsAccount(c: Context) {
@@ -24,9 +23,6 @@ export async function patchAwsAccount(c: Context) {
     next.throttle_metrics = body.throttle_metrics;
   }
   if (!next.all_regions && !next.regions.length) throw badRequest('Pick at least one region, or all_regions');
-  if (body.default_project !== undefined) {
-    next.default_project_id = body.default_project === null ? '' : await targetProject(account.tenant_id, body.default_project);
-  }
   if (body.reviewed === true) next.reviewed_at = Date.now();
 
   await awsStore().saveAccount(next);

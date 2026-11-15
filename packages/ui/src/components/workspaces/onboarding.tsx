@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { useProjects } from "@/lib/api/hooks";
 import type { CreatedKey } from "@/lib/api/types";
 import { createKey, createProject, refreshWorkspace } from "@/lib/api/workspaces";
+import { rememberTraceProject } from "@/lib/aws/last-project";
 import { awsAccountsLink, pageLink } from "@/lib/links/links";
 import { cn } from "@/lib/utils/cn";
 
@@ -51,6 +52,7 @@ export function Onboarding({ workspace }: { workspace: string }) {
     setError(null);
     try {
       const next = await createProject(workspace, { name: name.trim() });
+      rememberTraceProject(workspace, next.slug);
       await refreshWorkspace(workspace);
       navigate(pageLink({ workspace, project: next.slug }, "functions"), { replace: true });
     } catch (err) {

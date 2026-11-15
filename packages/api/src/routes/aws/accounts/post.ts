@@ -5,7 +5,6 @@ import { roleArnFor } from '../../../lib/aws/clients.js';
 import { defaultRegion } from '../../../lib/aws/config.js';
 import { isRegion } from '../../../lib/aws/regions.js';
 import { jsonBody, parseRegions, presentAccounts } from '../../../lib/aws/requests.js';
-import { targetProject } from '../../../lib/aws/rules.js';
 import { awsStore } from '../../../lib/aws/store.js';
 import type { AwsAccount } from '../../../lib/aws/types.js';
 import { tenantOf } from '../../../lib/tenancy/context.js';
@@ -40,7 +39,7 @@ export async function postAwsAccount(c: Context) {
     event_secret: randomBytes(24).toString('base64url'),
     stack_name: `ivy-trace-${short}`,
     stack_region: stackRegion,
-    default_project_id: body.default_project ? await targetProject(tenant, body.default_project) : '',
+    default_project_id: '',
     reviewed_at: 0,
     regions,
     all_regions: allRegions,

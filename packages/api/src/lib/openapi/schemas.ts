@@ -205,7 +205,6 @@ export const schemas = {
   }),
   AwsAccount: object({
     id: str, name: str, account_id: str, role_arn: str, external_id: str, stack_name: str, stack_region: str,
-    default_project_id: nstr, default_project: nstr,
     regions: strs, all_regions: bool,
     status: { type: 'string', enum: ['pending', 'connected', 'error'] },
     error: { ...nstr, description: 'On a connected account: per-region sync errors, one per line.' },
@@ -228,13 +227,12 @@ export const schemas = {
       regions: strs,
       all_regions: bool,
       stack_region: str,
-      default_project: { type: 'string', description: 'Project the UI offers first (slug or ID); never causes tracing and is not a fallback.' },
       throttle_metrics: { type: 'boolean', default: true },
     },
     ['account_id', 'regions'],
   ),
   AwsAccountUpdate: object(
-    { name: str, regions: strs, all_regions: bool, default_project: nstr, throttle_metrics: bool, reviewed: { type: 'boolean', description: '`true` marks the function list as seen.' } },
+    { name: str, regions: strs, all_regions: bool, throttle_metrics: bool, reviewed: { type: 'boolean', description: '`true` marks the function list as seen.' } },
     [],
   ),
   AwsVerifyResult: object({ verified: bool, account: ref('AwsAccount') }),

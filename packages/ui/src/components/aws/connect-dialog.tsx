@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { createAwsAccount, refreshAws, verifyAwsAccount } from "@/lib/api/aws";
 import { downloadFile } from "@/lib/api/client";
-import { useAwsSetup, useProjects } from "@/lib/api/hooks";
+import { useAwsSetup } from "@/lib/api/hooks";
 import { useWorkspace } from "@/lib/links/use-scope";
 import type { AwsAccount } from "@/lib/api/types";
 import { accountLink } from "@/lib/links/links";
@@ -69,11 +69,9 @@ function Header({ bare, title, children }: { bare?: boolean; title: string; chil
   );
 }
 
-export function Details({ onCreated, bare, defaultProject }: { onCreated: (account: AwsAccount) => void; bare?: boolean; defaultProject?: string }) {
+export function Details({ onCreated, bare }: { onCreated: (account: AwsAccount) => void; bare?: boolean }) {
   const workspace = useWorkspace();
   const { data: setup } = useAwsSetup();
-  const projects = useProjects(workspace);
-  const [project, setProject] = useState(defaultProject ?? "");
   const [accountId, setAccountId] = useState("");
   const [name, setName] = useState("");
   const [stackRegion, setStackRegion] = useState<string>("");
@@ -95,7 +93,6 @@ export function Details({ onCreated, bare, defaultProject }: { onCreated: (accou
         stack_region: region,
         regions,
         all_regions: selection.all_regions,
-        default_project: project || undefined,
       });
       await refreshAws();
       onCreated(account);
@@ -146,21 +143,6 @@ export function Details({ onCreated, bare, defaultProject }: { onCreated: (accou
           <RegionPicker value={selection} onChange={setSelection} options={setup?.regions ?? []} locked={region} />
         </Field>
       </div>
-      <Field label="Preselected project" htmlFor="account-project" hint="Offered first when you pick functions to trace; you always choose">
-        <Select value={project || "__none"} onValueChange={(v) => setProject(v === "__none" ? "" : v)}>
-          <SelectTrigger id="account-project" className="h-9">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none">None</SelectItem>
-            {projects.data?.items.map((p) => (
-              <SelectItem key={p.id} value={p.slug}>
-                {p.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
       {error && <p className="text-sm text-red-400">{error}</p>}
       <DialogFooter className={bare ? "sm:justify-start" : undefined}>
         <Button type="submit" disabled={!validId || busy}>

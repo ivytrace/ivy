@@ -39,8 +39,6 @@ export function presentAccount(account: AwsAccount, quick: QuickCreate, basePath
     external_id: account.external_id,
     stack_name: account.stack_name,
     stack_region: account.stack_region,
-    default_project_id: account.default_project_id || null,
-    default_project: account.default_project_id ? (slugs.get(account.default_project_id) ?? null) : null,
     regions: account.regions,
     all_regions: account.all_regions,
     status: account.status,
