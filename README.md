@@ -3,7 +3,48 @@
 Open-source observability for AWS Lambda (Node.js first). One `docker compose up`
 runs everything: OpenTelemetry Collector → ClickHouse → API (Hono) → UI (React).
 
-**Status: early v1, under active development.**
+## Self-hosting
+
+Ivy runs on one machine with Docker. It is sized for about 300k invocations a day on 2 vCPU / 8 GB.
+
+```sh
+git clone https://github.com/ivytrace/ivy.git && cd ivy
+touch deploy/.env           # then fill in the variables below
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+The dashboard and API listen on port 3000, OTLP ingest on 4318. Put both behind a reverse proxy with TLS (Caddy,
+nginx, a load balancer), for example `ivy.example.com` → `:3000` and `ingest.ivy.example.com` → `:4318`.
+Instead of building, you can use the published image: replace the `build:` entries with
+`image: ghcr.io/ivytrace/ivy-api:main`.
+
+A minimal `deploy/.env`:
+
+```sh
+IVY_PUBLIC_URL=https://ivy.example.com
+IVY_INGEST_PUBLIC_URL=https://ingest.ivy.example.com
+IVY_SECRET_KEY=…              # openssl rand -base64 32
+IVY_COLLECTOR_TOKEN=…         # openssl rand -hex 32
+IVY_CLICKHOUSE_PASSWORD=…
+IVY_INGEST_API_KEY=…          # a first ingest key, created on startup (the default, dev-ingest-key, is public)
+
+# Sign-in with any OIDC provider. Without it, the dashboard and API have no auth (only run it behind
+# an authenticating proxy then).
+IVY_OIDC_ISSUER=https://auth.example.com
+IVY_OIDC_CLIENT_ID=…
+
+# Auto-tracing: the AWS identity Ivy uses to assume the role in each connected account.
+AWS_ACCESS_KEY_ID=…
+AWS_SECRET_ACCESS_KEY=…
+AWS_REGION=eu-west-1
+```
+
+Then open the dashboard, create a project and connect an AWS account (Settings → AWS accounts): Ivy adds its
+layer to the functions you pick. Email (invitations, weekly digest) and Slack alerts are optional. All variables,
+upgrading an existing install and stopping it: [`deploy/README.md`](deploy/README.md).
+
+To upgrade, `git pull` and run the same `up` command again, then apply schema changes:
+`docker compose -f deploy/docker-compose.yml exec -T clickhouse /docker-entrypoint-initdb.d/init.sh`.
 
 ## Development
 
