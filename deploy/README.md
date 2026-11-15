@@ -1,4 +1,4 @@
-# Running Ivy locally
+# Running Ivy
 
 ```sh
 docker compose -f deploy/docker-compose.yml up --build      # or: pnpm up
@@ -73,8 +73,9 @@ curl -i -X POST localhost:4318/v1/traces -H 'content-type: application/json' -H 
 
 ## Workspaces, projects and keys
 
-The `default` workspace, its `default` project and that project's key (`IVY_INGEST_API_KEY`) are created on
-startup. Projects and their ingest keys are managed in the dashboard (Settings → Projects) or the API. From the
+The `default` workspace is created on startup. With `IVY_INGEST_API_KEY` set, that key is created too, in a project
+called "Default" the first time; it's an ordinary project you can rename or archive. There is no project that
+data falls back to: every key, rule and traced function names its project. Projects and their ingest keys are managed in the dashboard (Settings → Projects) or the API. From the
 command line:
 
 ```sh
@@ -124,8 +125,8 @@ weekly email digest. Each is only on when its variables are set; the dashboard e
 4. In Ivy: *Settings → Alerts*, pick a project, *Add to Slack*, choose a channel, then *Send test message*.
 
 **Email digest**: set `IVY_SMTP_URL`, `IVY_EMAIL_FROM` and `IVY_PUBLIC_URL`. It goes to the workspace's members
-(or, without sign-in, to `IVY_DIGEST_TO`) on Mondays at 08:00 UTC; owners switch it off under *Settings → Email
-digest*, everyone can unsubscribe from the email or under *Notifications*.
+(or, without sign-in, to `IVY_DIGEST_TO`) on Mondays at 08:00 UTC. Owners switch it off and everyone manages their own subscription under
+*Settings → Notifications*; the email also has a one-click unsubscribe link.
 
 ## Updating an existing volume
 
