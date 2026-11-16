@@ -1,5 +1,6 @@
 import http from 'node:http';
 import type { FailureLimiter } from './failure-limiter.js';
+import { forward, type Forwarded } from './forward.js';
 import type { QuotaGate } from '../limits/quota-gate.js';
 import type { KeyCache } from './key-cache.js';
 import { countTraffic, decode, formatOf, GrpcCode, PayloadTooLargeError, statusBody, type OtlpFormat } from './otlp.js';
@@ -148,7 +149,7 @@ export function createIngestHandler(opts: IngestOptions): http.RequestListener {
         throw new HttpError(400, GrpcCode.INVALID_ARGUMENT, `Malformed request: ${(err as Error).message}`);
       }
 
-      let upstream: Response;
+      let upstream: Forwarded;
       try {
         const headers: Record<string, string> = {
           'content-type': req.headers['content-type']!,
@@ -157,19 +158,14 @@ export function createIngestHandler(opts: IngestOptions): http.RequestListener {
           [PROJECT_HEADER]: tenant.projectId,
         };
         if (encoding) headers['content-encoding'] = encoding;
-        upstream = await fetch(`${opts.collectorUrl(tenant.shardId)}/v1/traces`, {
-          method: 'POST',
-          headers,
-          body: body as Uint8Array<ArrayBuffer>,
-          signal: AbortSignal.timeout(timeoutMs),
-        });
+        upstream = await forward(`${opts.collectorUrl(tenant.shardId)}/v1/traces`, headers, body, timeoutMs);
       } catch (err) {
         opts.log?.(`collector ${tenant.shardId} unreachable: ${(err as Error).message}`);
         throw new HttpError(503, GrpcCode.UNAVAILABLE, 'Ingest temporarily unavailable', RETRY_AFTER_S);
       }
 
-      const out = Buffer.from(await upstream.arrayBuffer());
-      if (upstream.ok) {
+      const ok = upstream.status >= 200 && upstream.status < 300;
+      if (ok) {
         opts.usage.add(tenant.tenantId, traffic.spans, body.length);
         opts.quota?.add(tenant.tenantId, traffic.invocations);
       }
@@ -177,12 +173,13 @@ export function createIngestHandler(opts: IngestOptions): http.RequestListener {
       // The collector only ever sees our token: its 401/403 is our misconfiguration, not the client's.
       const status = upstream.status === 401 || upstream.status === 403 ? 503 : upstream.status;
       const headers: Record<string, string | number> = {
-        'content-type': upstream.headers.get('content-type') ?? (format === 'json' ? 'application/json' : 'application/x-protobuf'),
-        'content-length': out.length,
+        'content-type': upstream.headers['content-type'] ?? (format === 'json' ? 'application/json' : 'application/x-protobuf'),
+        'content-length': upstream.body.length,
       };
-      const retryAfter = upstream.headers.get('retry-after') ?? (status === 429 || status === 503 ? String(RETRY_AFTER_S) : null);
+      const upstreamRetryAfter = upstream.headers['retry-after'];
+      const retryAfter = upstreamRetryAfter ?? (status === 429 || status === 503 ? String(RETRY_AFTER_S) : null);
       if (retryAfter) headers['retry-after'] = retryAfter;
-      res.writeHead(status, headers).end(out);
+      res.writeHead(status, headers).end(upstream.body);
     } catch (err) {
       if (err instanceof HttpError) {
         send(res, format, err, !bodyRead);

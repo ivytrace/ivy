@@ -109,6 +109,17 @@ walking each body (a small protobuf field walker, or `JSON.parse`); the walk als
 quota with `over_quota = block`, and whose traces this month (ClickHouse, refreshed every minute, plus this process's
 count since) reached it, gets 429 with `Retry-After`. Without a row a tenant is unlimited.
 
+### Decision: forward with `node:http`, not `fetch`
+
+The router forwards to the collector with a plain `http.request` on a keep-alive agent (`lib/ingest/forward.ts`).
+With `fetch` (undici), forwarding was 45% of the router's CPU per request: web streams, `Request`/`Headers` objects
+and body copies, plus the garbage they leave. One OTLP request per Lambda invocation (what the layer sends) makes
+per-request overhead the router's cost, and the router is a single process. Replacing `fetch` took the router from
+~345 to ~158 µs of CPU per request in a local benchmark (stub collector, realistic gzipped JSON invocations).
+On a 2-vCPU instance running the whole stack, per-invocation ingest with p99 under 100 ms went from ~450/s to ~700/s, and the
+hard ceiling (throughput stops growing, requests time out) from ~690/s to over 1,000/s, where the whole box is CPU-bound.
+What remains is mostly Node's HTTP server and the span count (`countTraffic`), which quotas depend on.
+
 ### Decision: no public gRPC (4317)
 
 Ingest is OTLP/HTTP only. The Ivy layer and loadgen use OTLP/HTTP; every OTel SDK and the Collector's `otlphttp`
