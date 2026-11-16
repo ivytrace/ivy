@@ -148,6 +148,75 @@ describe('serialize', () => {
   });
 });
 
+describe('serialize: JSON string bodies', () => {
+  const tokens = { accessToken: 'eyJhbGciOi.example', refreshToken: 'ses_example', idToken: 'eyJ.id', user: { id: 'u_1', email: 'jane@example.com' } };
+  const redactedTokens = { accessToken: '[redacted]', refreshToken: '[redacted]', idToken: '[redacted]', user: tokens.user };
+  const parse = (value: unknown) => JSON.parse(serialize(value, 16384, isSecret).text);
+
+  it('redacts token keys on plain objects, camelCase and snake_case', () => {
+    expect(parse({ ...tokens, access_token: 'a', refresh_token: 'r', id_token: 'i', expires_in: 3600 })).toEqual({
+      ...redactedTokens,
+      access_token: '[redacted]',
+      refresh_token: '[redacted]',
+      id_token: '[redacted]',
+      expires_in: 3600,
+    });
+  });
+
+  it('redacts keys inside a JSON body of an API Gateway event', () => {
+    const event = {
+      version: '2.0',
+      routeKey: 'POST /auth/refresh',
+      headers: { host: 'api.example.com', 'content-type': 'application/json' },
+      requestContext: { http: { method: 'POST', path: '/auth/refresh' } },
+      body: '{"refreshToken":"ses_example","client":"acme-web"}',
+      isBase64Encoded: false,
+    };
+    const parsed = parse(event);
+    expect(typeof parsed.body).toBe('string');
+    expect(JSON.parse(parsed.body)).toEqual({ refreshToken: '[redacted]', client: 'acme-web' });
+    expect(parsed).toMatchObject({ version: '2.0', isBase64Encoded: false, headers: event.headers });
+  });
+
+  it('redacts keys inside a JSON body of a return value', () => {
+    const result = { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify(tokens) };
+    const parsed = parse(result);
+    expect(parsed.statusCode).toBe(200);
+    expect(JSON.parse(parsed.body)).toEqual(redactedTokens);
+  });
+
+  it('redacts snake_case keys at any depth inside the body', () => {
+    const body = JSON.stringify({ data: { session: { access_token: 'a', refresh_token: 'r', expires_in: 3600 } }, items: [{ id_token: 'i' }] });
+    expect(JSON.parse(parse({ statusCode: 200, body }).body)).toEqual({
+      data: { session: { access_token: '[redacted]', refresh_token: '[redacted]', expires_in: 3600 } },
+      items: [{ id_token: '[redacted]' }],
+    });
+  });
+
+  it('leaves bodies without secrets byte-for-byte unchanged', () => {
+    const body = '{ "orderId": "ord_1",\n  "total": 12.5 }';
+    expect(parse({ statusCode: 200, body }).body).toBe(body);
+  });
+
+  it('leaves non-JSON bodies untouched', () => {
+    for (const body of ['accessToken=abc', 'hello accessToken', '{"accessToken": "abc"', '<html>{"accessToken":"x"}</html>']) {
+      expect(parse({ statusCode: 200, body }).body).toBe(body);
+    }
+  });
+
+  it('leaves base64-encoded bodies untouched', () => {
+    const body = Buffer.from(JSON.stringify(tokens)).toString('base64');
+    expect(parse({ statusCode: 200, body, isBase64Encoded: true }).body).toBe(body);
+    const jsonLooking = '{"accessToken":"abc"}';
+    expect(parse({ body: jsonLooking, isBase64Encoded: true }).body).toBe(jsonLooking);
+  });
+
+  it('applies to SQS record bodies', () => {
+    const event = { Records: [{ messageId: 'm1', body: '{"apiToken":"t","orderId":"ord_1"}' }] };
+    expect(JSON.parse(parse(event).Records[0].body)).toEqual({ apiToken: '[redacted]', orderId: 'ord_1' });
+  });
+});
+
 describe('serializeBody', () => {
   it('parses JSON bodies to redact', () => {
     expect(serializeBody('{"token":"t","a":1}', 'application/json', 1000, isSecret).text).toBe('{"token":"[redacted]","a":1}');

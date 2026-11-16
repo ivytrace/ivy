@@ -126,6 +126,13 @@ live in `docs/implementation/`.
   replaces it and it is never counted or billed as a trace. Without a final record past the deadline it shows as
   "No completion recorded". Shorter invocations cost nothing extra. Implementation: `docs/implementation/layer.md`.
 
+## Redaction
+- Credentials are redacted inside JSON-string request and response bodies too: the `body` string of API Gateway, ALB and
+  Function URL events and return values (and SQS records) is parsed, and `accessToken`, `refreshToken`, `idToken`,
+  `access_token` and other matching keys become `"[redacted]"`, in the tracer before data leaves the function. The
+  body stays a JSON string; base64-encoded and non-JSON bodies are left as they are.
+  Implementation: `docs/implementation/span-conventions.md`.
+
 ## LLM spans
 - Ivy captures OpenTelemetry spans from libraries such as the Vercel AI SDK and renders LLM calls (messages,
   tool calls, tokens, time to first token). This replaces 001's "LLM-call instrumentation: not in v1".

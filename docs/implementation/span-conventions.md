@@ -192,6 +192,11 @@ long hex and long mixed segments become `{id}`); otherwise the span name.
 - Keys matching `IVY_REDACT_KEYS` (comma-separated, case-insensitive, default
   `password,secret,token,authorization,cookie,apikey,api_key,accesskey,secretaccesskey,sessiontoken,creditcard,cardnumber,cvv`)
   are replaced with `"[redacted]"` at any depth before serialization.
+- A string under a `body` key that parses as JSON (API Gateway, ALB and Function URL events and return
+  values, SQS records) is redacted the same way: `{"body":"{\"accessToken\":\"[redacted]\"}"}`. It stays a
+  string of compact JSON, re-serialized only when something was redacted (otherwise kept byte for byte).
+  Bodies with `isBase64Encoded: true` on the same object, non-JSON bodies and bodies over 1 MB are left as is.
+  Credential keys such as `accessToken`, `refresh_token` and `idToken` match through the default `token` entry.
 - Token counts are exempt, although they contain `token`: a key whose normalized form (lowercase, `-`/`_`
   removed) ends in `tokens`, `tokencount(s)`, `tokensdetails` or `tokenusage` is a count, unless the part
   before names a credential (`access`, `refresh`, `session`, `id`, `api`, `auth`, `bearer`, `oauth`, `csrf`,
