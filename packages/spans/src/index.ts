@@ -9,3 +9,4 @@ export * from "./bedrock.js";
 export * from "./in-progress.js";
 export * from "./error-template.js";
 export * from "./repair-json.js";
+export * from "./custom-attributes.js";

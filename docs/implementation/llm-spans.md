@@ -39,9 +39,32 @@ library needs:
   final, UNSET ignored), `recordException` adds an `exception` event, and `error.type` is set on error.
 - **Payload rules** (`attributes.ts`). Applied in the span's `finalize` hook, i.e. at flush time after the
   response: JSON strings are parsed, redacted by key and re-serialized; all strings are capped per attribute.
-  Attributes whose own key matches `IVY_REDACT_KEYS` are replaced, except token counts
+  The same rules apply to event attributes. Attributes (and string arrays) whose own key matches `IVY_REDACT_KEYS` are replaced, except token counts
   (`ai.usage.promptTokens`, `gen_ai.usage.input_tokens`) and numbers of keys that only match `token`
   (`span-conventions.md`, "Payload capping and redaction").
+- **The invocation as active span** (`invocation-span.ts`). Outside library spans, `trace.getActiveSpan()`
+  returns an `InvocationSpan`, so apps can tag the invocation itself
+  (`trace.getActiveSpan()?.setAttribute('user.id', id)`). The bridge's context manager takes a `base` context:
+  when its storage holds no context (no `startActiveSpan`/`context.with` around the caller) `active()` returns
+  that, which while an invocation runs is a context whose span key holds the invocation's wrapper. Outside an
+  invocation (module init, between invocations) it is the empty root context, so the result stays `undefined`.
+  The wrapper and its context are created on the first `active()` call of an invocation and cached for it;
+  nothing happens at invocation start and the `AsyncLocalStorage` stays lazy. A library span started under it
+  hangs off the invocation span exactly as before (the wrapper is not a `BridgeSpan`), and the layer's own
+  spans are not reparented. Writes go to the invocation span only while that invocation is the active one and
+  not ended, so a wrapper (or a context holding it) kept from an earlier invocation writes nothing.
+  - `setAttribute`/`setAttributes` write to the invocation span's attributes, except keys in the reserved
+    namespaces (`span-conventions.md`, "Invocation (root) span"), which are ignored; at most 128 keys. The
+    span's `finalize` hook applies the bridge's payload rules (`capAttributes`) to these keys and events only,
+    not to the layer's own attributes or the `log` events.
+  - `addEvent` and `recordException` add events to the invocation span (at most 128). `setStatus(ERROR)` marks
+    the invocation as failed, like an HTTP 5xx response (status ERROR with the message, no `error.type`); a
+    thrown error later replaces it. OK and UNSET are ignored: the layer decides.
+  - `end`, `updateName`, `addLink(s)` do nothing (the layer owns the invocation's lifecycle).
+    `spanContext()` is the invocation's trace and span ID. `isRecording()` is true while the invocation runs.
+  - Only with the bridge's context manager. An app that registers its own context manager (or tracer
+    provider, e.g. an OpenTelemetry SDK) gets its own behaviour: `getActiveSpan()` is `undefined` outside its
+    spans.
 - **Nesting the layer's spans.** After registration `tracer.startChild` is wrapped: when the active context
   holds a bridge span of the current invocation, new fetch/http/AWS SDK spans become its children, so the
   provider's `POST api.openai.com` sits under the model-call span and a tool's DynamoDB call under the tool.
@@ -71,7 +94,9 @@ gave medians of 19.9/18.7 ms vs. 18.6/18.8 ms, i.e. within noise. Not yet measur
 `ai-sdk.test.ts` runs the real `ai` packages (6 as the `ai-v6` alias, and 7 with `@ai-sdk/otel`) with
 their mock language models (`MockLanguageModelV3`/`V4`) through the bridge: generateText with a tool call,
 then streamText. `bridge.test.ts` covers nesting, exceptions, caps and redaction, layer-span nesting,
-non-recording spans, an existing provider and the off switch. The e2e harness runs both AI SDK versions in
+non-recording spans, an existing provider and the off switch; `invocation-span.test.ts` the invocation as
+active span (attributes, redaction and caps, reserved keys, events and status, `undefined` outside an
+invocation, precedence of library spans, no writes into a later invocation). The e2e harness runs both AI SDK versions in
 the Lambda image (`example/ai/v6.mjs` fully bundled, `v7.mjs` with `@opentelemetry/api` left in
 `node_modules`), with the tool's DynamoDB lookup going through the bundled AWS SDK. No LLM API is called.
 
@@ -148,6 +173,10 @@ fix are `[redacted]`; the describer then falls back to the token-count headers w
 
 - Apps that register their own tracer provider while loading but don't install `@opentelemetry/sdk-trace-base`
   (e.g. a vendor SDK bundling it) lose their registration to the bridge; `IVY_CAPTURE_OTEL=false` fixes it.
+- `trace.getActiveSpan()` outside library spans is `undefined` when the app registers its own context manager.
+- An `exception` event recorded on the invocation with `recordException` comes before the one of an error the
+  handler throws later, so the error group's code location is taken from the recorded one (the first
+  `exception` event, `error-grouping.md`).
 - A bundled `@opentelemetry/api` newer than 1.10 ignores the bridge's global (its minor is higher).
 - Messages over `IVY_MAX_PAYLOAD_BYTES` are cut, so their JSON no longer parses; the UI then shows the raw
   text as one "prompt" message. Long conversations may need a higher limit.
