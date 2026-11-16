@@ -317,8 +317,8 @@ export const openApiDocument = {
     },
     '/api/w/{workspace}/alerts/apply': {
       post: {
-        tags: ['Alerts'], summary: 'Apply one alert rule to several projects (owner)', operationId: 'applyAlerts',
-        description: 'Sets all four alert settings on every listed project in one write: all of them or, on any invalid or unknown project, none (400). Slack channels are not copied; they are connected per project.',
+        tags: ['Alerts'], summary: 'Copy a project\'s alerts to several projects (owner)', operationId: 'applyAlerts',
+        description: 'Sets all four alert settings on every listed project and adds the source project\'s working Slack channels (the same webhooks, connected now; channels a project already has are skipped). Any invalid or unknown project is a 400 and nothing is written.',
         parameters: [ws], requestBody: body('AlertsApply'), responses: { 200: json(ref('AlertsApplyResult')), ...bad, ...owner, ...notFound },
       },
     },

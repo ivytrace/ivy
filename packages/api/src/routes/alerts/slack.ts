@@ -154,11 +154,14 @@ export async function postSlackTest(c: Context) {
   });
   const wasBroken = integration.status !== 'ok';
   const delivery = await deliver(integration, message, config.secret, (url, m) => postWebhook(url, m));
-  // A successful test revives a channel marked broken (e.g. after it was unarchived).
+  // A successful test revives a channel marked broken (e.g. after it was unarchived), and its copies (same webhook).
   if (delivery.ok && wasBroken) {
+    const copies = (await alertStore().listWorkspaceIntegrations(integration.tenant_id)).filter(
+      (i) => i.id !== integration.id && i.status === 'broken' && i.encrypted_webhook_url === integration.encrypted_webhook_url,
+    );
     integration.status = 'ok';
     integration.error = '';
-    await alertStore().saveIntegration(integration);
+    await alertStore().saveIntegrations([integration, ...copies.map((i) => ({ ...i, status: 'ok' as const, error: '' }))]);
   }
   return c.json({ ok: delivery.ok, error: delivery.ok ? null : delivery.error, integration: presentIntegration(integration) });
 }

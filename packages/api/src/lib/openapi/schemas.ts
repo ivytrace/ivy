@@ -317,13 +317,15 @@ export const schemas = {
     [],
   ),
   AlertsApply: object({
+    source: { type: 'string', description: 'The project (prj_…) whose alerts are copied: its working Slack channels are added to every listed project.' },
     projects: { type: 'array', items: str, minItems: 1, maxItems: 500, description: 'IDs (prj_…) of active projects of the workspace.' },
     settings: ref('AlertSettings'),
   }),
   AlertsApplyResult: object({
     updated: int,
-    projects: { type: 'array', items: object({ id: str, slug: str, name: str }) },
+    projects: { type: 'array', items: object({ id: str, slug: str, name: str, channels_added: int }) },
     settings: ref('AlertSettings'),
+    channels_added: { type: 'integer', description: 'Slack channels added in all; channels a project already had (same webhook or same Slack channel) are skipped.' },
   }),
   SlackChannel: object({
     id: str,

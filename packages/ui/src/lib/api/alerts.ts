@@ -9,9 +9,9 @@ const alerts = (ws: string, project: string) => `/api${wsPath(ws)}/p/${enc(proje
 export const updateAlertSettings = (ws: string, project: string, body: Partial<AlertSettings>) =>
   sendJson<AlertSettings>("PUT", alerts(ws, project), body);
 
-/** Sets the whole rule on several projects at once (all or none); then refetches every project's alerts. */
-export async function applyAlertSettings(ws: string, projects: string[], settings: AlertSettings) {
-  const result = await sendJson<ApplyAlertsResult>("POST", `/api${wsPath(ws)}/alerts/apply`, { projects, settings });
+/** Copies the rule and `source`'s Slack channels to several projects at once (all or none); then refetches every project's alerts. */
+export async function applyAlertSettings(ws: string, source: string, projects: string[], settings: AlertSettings) {
+  const result = await sendJson<ApplyAlertsResult>("POST", `/api${wsPath(ws)}/alerts/apply`, { source, projects, settings });
   await mutate((key) => typeof key === "string" && key.includes(`${wsPath(ws)}/p/`) && key.endsWith("/alerts"));
   return result;
 }

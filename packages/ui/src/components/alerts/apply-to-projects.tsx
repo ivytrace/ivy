@@ -5,7 +5,7 @@ import { errorMessage } from "@/components/workspaces/name-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { applyAlertSettings } from "@/lib/api/alerts";
-import type { AlertSettings, ApplyAlertsResult, Project } from "@/lib/api/types";
+import type { AlertSettings, ApplyAlertsResult, Project, SlackChannel } from "@/lib/api/types";
 
 const plural = (n: number, word: string) => `${n.toLocaleString("en-US")} ${word}${n === 1 ? "" : "s"}`;
 
@@ -15,11 +15,16 @@ export function describeRule(s: AlertSettings): string {
   return `Slack messages ${s.slack_enabled ? "on" : "off"}. First seen, ${limits}. Throttles ${s.include_throttles ? "on" : "off"}`;
 }
 
-/** The project checklist with "Select all", the rule being copied, and the note about channels. */
+/** The Slack channels that will be copied, by name (`#alerts, #oncall`). */
+export const channelList = (channels: SlackChannel[]) => channels.map((c) => `#${c.channel.replace(/^#/, "")}`).join(", ");
+
+/** The project checklist with "Select all", and what is copied: the rule and the Slack channels. */
 export function ApplyToProjectsForm(props: {
   projects: Project[];
   selected: Set<string>;
   settings: AlertSettings;
+  /** The source's working channels. */
+  channels: SlackChannel[];
   source: string;
   unsaved: boolean;
   disabled?: boolean;
@@ -38,6 +43,12 @@ export function ApplyToProjectsForm(props: {
       <div className="rounded-md border bg-muted/20 p-3">
         <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Copied from {props.source}</div>
         <p className="mt-1">{describeRule(props.settings)}.</p>
+        <p className="mt-1">Slack channels: {props.channels.length ? channelList(props.channels) : "none"}.</p>
+        {props.channels.length > 0 && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            The channels are shared, not reconnected: removing the app or a channel in Slack affects every project that uses it.
+          </p>
+        )}
         {props.unsaved && <p className="mt-1 text-xs text-amber-300">Includes changes not saved to {props.source} yet; save them there separately.</p>}
       </div>
       <div className="rounded-md border">
@@ -73,12 +84,15 @@ export function ApplyToProjectsForm(props: {
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        Replaces the selected projects' "When to post" settings. Slack channels are not copied: each channel is connected to one project in Slack,
-        so add channels per project with "Add to Slack".
+        Replaces the selected projects' "When to post" settings and adds the Slack channels. Channels a project already has are skipped, and
+        its existing errors aren't posted as new.
       </p>
     </div>
   );
 }
+
+export const resultText = (r: ApplyAlertsResult) =>
+  `Updated ${plural(r.updated, "project")}${r.channels_added ? `, added ${plural(r.channels_added, "Slack channel")}` : ""}.`;
 
 /** What happened, after applying. */
 export function ApplyResult({ result }: { result: ApplyAlertsResult }) {
@@ -86,7 +100,7 @@ export function ApplyResult({ result }: { result: ApplyAlertsResult }) {
     <div className="grid gap-2 text-sm">
       <div className="flex items-center gap-2">
         <CheckCircle2 className="size-4 text-emerald-400" />
-        <span>Updated {plural(result.updated, "project")}.</span>
+        <span>{resultText(result)}</span>
       </div>
       <p className="text-muted-foreground">{result.projects.map((p) => p.name).join(", ")}</p>
     </div>
@@ -99,6 +113,7 @@ export function ApplyToProjectsDialog(props: {
   source: Project;
   projects: Project[];
   settings: AlertSettings;
+  channels: SlackChannel[];
   unsaved: boolean;
   onClose: () => void;
 }) {
@@ -111,7 +126,7 @@ export function ApplyToProjectsDialog(props: {
     setBusy(true);
     setError(null);
     try {
-      setResult(await applyAlertSettings(props.workspace, [...selected], props.settings));
+      setResult(await applyAlertSettings(props.workspace, props.source.id, [...selected], props.settings));
     } catch (err) {
       setError(`${errorMessage(err)} No project was changed.`);
     } finally {
@@ -124,7 +139,7 @@ export function ApplyToProjectsDialog(props: {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Apply to other projects</DialogTitle>
-          <DialogDescription>Use the same alert rule for several projects at once.</DialogDescription>
+          <DialogDescription>Use the same alert rule and Slack channels for several projects at once.</DialogDescription>
         </DialogHeader>
         {result ? (
           <ApplyResult result={result} />
@@ -133,6 +148,7 @@ export function ApplyToProjectsDialog(props: {
             projects={props.projects}
             selected={selected}
             settings={props.settings}
+            channels={props.channels}
             source={props.source.name}
             unsaved={props.unsaved}
             disabled={busy}

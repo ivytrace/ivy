@@ -68,7 +68,11 @@ export interface AlertStore {
   listIntegrations(tenant: string, project: string): Promise<SlackIntegration[]>;
   /** Every working integration of every workspace (the evaluator's work list). */
   listAllIntegrations(): Promise<SlackIntegration[]>;
+  /** Every channel of every project of one workspace. */
+  listWorkspaceIntegrations(tenant: string): Promise<SlackIntegration[]>;
   saveIntegration(integration: SlackIntegration): Promise<void>;
+  /** Several channels in one insert (all or nothing); `deleted` removes them instead. */
+  saveIntegrations(integrations: SlackIntegration[], deleted?: boolean): Promise<void>;
   deleteIntegration(integration: SlackIntegration): Promise<void>;
   listStates(tenant: string, project: string): Promise<AlertState[]>;
   saveState(state: AlertState): Promise<void>;
@@ -124,7 +128,14 @@ export const clickhouseAlertStore: AlertStore = {
       control(),
       `SELECT ${INTEGRATION_COLUMNS} FROM slack_integrations FINAL WHERE NOT deleted AND status = 'ok' ORDER BY tenant_id, project_id, created_at`,
     ),
+  listWorkspaceIntegrations: (tenant) =>
+    tenantQuery<SlackIntegration>(
+      control(),
+      tenant,
+      `SELECT ${INTEGRATION_COLUMNS} FROM slack_integrations FINAL WHERE tenant_id = {tenant:String} AND NOT deleted ORDER BY project_id, created_at`,
+    ),
   saveIntegration: (i) => insertRows(control(), 'slack_integrations', [integrationRow(i)]),
+  saveIntegrations: (list, deleted = false) => insertRows(control(), 'slack_integrations', list.map((i) => integrationRow(i, deleted ? 1 : 0))),
   deleteIntegration: (i) => insertRows(control(), 'slack_integrations', [integrationRow(i, 1)]),
   listStates: (tenant, project) =>
     tenantQuery<AlertState>(
@@ -202,8 +213,17 @@ export function memoryAlertStore(): AlertStore {
     async listAllIntegrations() {
       return [...integrations.values()].filter((i) => i.status === 'ok').map(copy);
     },
+    async listWorkspaceIntegrations(tenant) {
+      return [...integrations.values()].filter((i) => i.tenant_id === tenant).map(copy);
+    },
     async saveIntegration(i) {
       integrations.set(`${i.tenant_id}/${i.project_id}/${i.id}`, copy(i));
+    },
+    async saveIntegrations(list, deleted = false) {
+      for (const i of list) {
+        if (deleted) integrations.delete(`${i.tenant_id}/${i.project_id}/${i.id}`);
+        else integrations.set(`${i.tenant_id}/${i.project_id}/${i.id}`, copy(i));
+      }
     },
     async deleteIntegration(i) {
       integrations.delete(`${i.tenant_id}/${i.project_id}/${i.id}`);

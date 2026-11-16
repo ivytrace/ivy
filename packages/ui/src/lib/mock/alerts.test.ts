@@ -31,25 +31,27 @@ describe("mock API: alerts", () => {
     expect(call("DELETE", `${P}/alerts/slack/${after[1].id}`).body).toEqual({ removed: true });
   });
 
-  it("applies one rule to other projects, all or nothing, without copying channels", () => {
+  it("copies the rule and the channels to other projects, all or nothing", () => {
     const call = client();
     const projects = call<{ items: { id: string; slug: string; archived: boolean }[] }>("GET", "/api/w/acme/projects?archived=1").body.items;
     const id = (slug: string) => projects.find((p) => p.slug === slug)!.id;
     const rule = { slack_enabled: true, interval_minutes: 15, every_occurrences: 10, include_throttles: true };
 
-    const res = call<{ updated: number; projects: { slug: string }[] }>("POST", "/api/w/acme/alerts/apply", {
-      projects: [id("checkout-staging"), id("support-api-prod")],
-      settings: rule,
-    });
+    const apply = (projects: string[], settings: unknown = rule) =>
+      call<{ updated: number; channels_added: number; error: string }>("POST", "/api/w/acme/alerts/apply", { source: id("checkout-prod"), projects, settings });
+    const res = apply([id("checkout-staging"), id("support-api-prod")]);
     expect(res.status).toBe(200);
-    expect(res.body.updated).toBe(2);
-    expect(call("GET", "/api/w/acme/p/support-api-prod/alerts").body).toMatchObject({ settings: rule, integrations: [] });
+    expect(res.body).toMatchObject({ updated: 2, channels_added: 2 });
+    const support = call<{ settings: unknown; integrations: { channel: string }[] }>("GET", "/api/w/acme/p/support-api-prod/alerts").body;
+    expect(support.settings).toEqual(rule);
+    expect(support.integrations.map((c) => c.channel)).toEqual(["#checkout-alerts"]);
+    expect(apply([id("support-api-prod")]).body.channels_added).toBe(0);
     expect(call<{ settings: unknown }>("GET", `${P}/alerts`).body.settings).toMatchObject({ interval_minutes: 60 });
 
-    const archived = call<{ error: string }>("POST", "/api/w/acme/alerts/apply", { projects: [id("billing-api-staging"), id("legacy-reports")], settings: rule });
-    expect(archived.status).toBe(400);
+    expect(apply([id("billing-api-staging"), id("legacy-reports")]).status).toBe(400);
     expect(call<{ settings: unknown }>("GET", "/api/w/acme/p/billing-api-staging/alerts").body.settings).toMatchObject({ interval_minutes: 60 });
-    expect(call("POST", "/api/w/acme/alerts/apply", { projects: [id("checkout-staging")], settings: { interval_minutes: 5 } }).status).toBe(400);
+    expect(call<{ integrations: unknown[] }>("GET", "/api/w/acme/p/billing-api-staging/alerts").body.integrations).toEqual([]);
+    expect(apply([id("checkout-staging")], { interval_minutes: 5 }).status).toBe(400);
   });
 
   it("explains what is missing when the server has neither Slack nor email", () => {

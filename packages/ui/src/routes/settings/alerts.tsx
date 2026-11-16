@@ -359,6 +359,7 @@ function Frequency(props: { workspace: string; project: string; projects: Projec
           source={source}
           projects={others}
           settings={{ ...form, interval_minutes: intervalN, every_occurrences: everyN }}
+          channels={data.integrations.filter((c) => c.status === "ok")}
           unsaved={dirty}
           onClose={() => setApplying(false)}
         />

@@ -49,7 +49,8 @@ export function createAlertsMock(options: { configured: boolean }) {
     return entry;
   };
 
-  // Like the API: every project must be an active project of the workspace, or nothing changes.
+  // Like the API: every project must be an active project of the workspace, or nothing changes. The source's working
+  // channels are added, connected now; a channel a project already has (here: same team and name) is skipped.
   const applyRule = (ws: MockWorkspace, body: Record<string, unknown>) => {
     if (ws.role !== "owner") return { status: 403, body: { error: "Only workspace owners can do this" } };
     const ids = Array.isArray(body.projects) ? (body.projects as unknown[]) : [];
@@ -59,6 +60,8 @@ export function createAlertsMock(options: { configured: boolean }) {
       return { status: 400, body: { error: "settings needs slack_enabled, interval_minutes, every_occurrences, include_throttles" } };
     }
     const active = new Map(ws.projects.filter((p) => !p.archived).map((p) => [p.id, p]));
+    const source = active.get(body.source as string);
+    if (!source) return { status: 400, body: { error: "source must be an active project of this workspace" } };
     const unknown = ids.filter((id) => !active.has(id as string));
     if (unknown.length) return { status: 400, body: { error: `Not an active project of this workspace: ${unknown.join(", ")}` } };
     const targets = [...new Set(ids as string[])].map((id) => active.get(id)!);
@@ -68,8 +71,19 @@ export function createAlertsMock(options: { configured: boolean }) {
       every_occurrences: settings.every_occurrences,
       include_throttles: settings.include_throttles,
     };
-    for (const p of targets) of(ws, p.slug).settings = { ...rule };
-    return { status: 200, body: { updated: targets.length, projects: targets.map((p) => ({ id: p.id, slug: p.slug, name: p.name })), settings: rule } };
+    const channels = of(ws, source.slug).integrations.filter((c) => c.status === "ok");
+    const added = new Map<string, number>();
+    for (const p of targets) {
+      const entry = of(ws, p.slug);
+      entry.settings = { ...rule };
+      if (p.id === source.id) continue;
+      const fresh = channels.filter((c) => !entry.integrations.some((i) => i.team_name === c.team_name && i.channel === c.channel));
+      entry.integrations.push(...fresh.map((c) => channel(c.channel, 0, { team_name: c.team_name, configuration_url: c.configuration_url })));
+      added.set(p.id, fresh.length);
+    }
+    const projectsOut = targets.map((p) => ({ id: p.id, slug: p.slug, name: p.name, channels_added: added.get(p.id) ?? 0 }));
+    const total = projectsOut.reduce((n, p) => n + p.channels_added, 0);
+    return { status: 200, body: { updated: targets.length, projects: projectsOut, settings: rule, channels_added: total } };
   };
 
   const missingSlack = options.configured ? [] : ["IVY_SLACK_CLIENT_ID", "IVY_SLACK_CLIENT_SECRET"];

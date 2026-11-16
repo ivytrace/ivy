@@ -331,8 +331,9 @@ export interface AlertSettings {
 
 export interface ApplyAlertsResult {
   updated: number;
-  projects: { id: string; slug: string; name: string }[];
+  projects: { id: string; slug: string; name: string; channels_added: number }[];
   settings: AlertSettings;
+  channels_added: number;
 }
 
 export interface SlackChannel {
