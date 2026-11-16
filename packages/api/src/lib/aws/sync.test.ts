@@ -237,6 +237,41 @@ describe('syncAccount', () => {
     expect((await mem.store.getAccount('default', 'conn-1'))?.error).toContain('ap-east-1: The security token');
   });
 
+  describe('right after connecting', () => {
+    const denied = () =>
+      Object.assign(
+        new Error(`User: arn:aws:sts::${ACCOUNT_ID}:assumed-role/IvyTrace-abc/ivy-trace is not authorized to perform: lambda:ListFunctions on resource: *`),
+        { name: 'AccessDeniedException' },
+      );
+
+    it('retries a region denied while the new role propagates', async () => {
+      lambda.on(ListFunctionsCommand).rejectsOnce(denied()).rejectsOnce(denied()).resolves({ Functions: [config('a')] });
+      await syncAccount({ ...account, verified_at: Date.now() });
+      expect(lambda.commandCalls(ListFunctionsCommand)).toHaveLength(3);
+      expect(vi.mocked(sleep.wait).mock.calls).toEqual([[5_000], [10_000]]);
+      expect((await mem.store.getAccount('default', 'conn-1'))?.error).toBe('');
+      expect((await mem.store.listFunctions('default', ACCOUNT_ID)).map((f) => f.function_name)).toEqual(['a']);
+    });
+
+    it('gives up after about 30 seconds and reports the region', async () => {
+      lambda.on(ListFunctionsCommand).rejects(denied());
+      await syncAccount({ ...account, verified_at: Date.now() });
+      expect(lambda.commandCalls(ListFunctionsCommand)).toHaveLength(4);
+      expect((await mem.store.getAccount('default', 'conn-1'))?.error).toContain('eu-west-1: User: arn:aws:sts::');
+    });
+
+    it('does not retry denials for an account connected earlier, or other errors', async () => {
+      lambda.on(ListFunctionsCommand).rejects(denied());
+      await syncAccount({ ...account, verified_at: Date.now() - 10 * 60_000 });
+      expect(lambda.commandCalls(ListFunctionsCommand)).toHaveLength(1);
+
+      lambda.on(ListFunctionsCommand).rejects(Object.assign(new Error('Rate exceeded'), { name: 'TooManyRequestsException' }));
+      await syncAccount({ ...account, verified_at: Date.now() });
+      expect(lambda.commandCalls(ListFunctionsCommand)).toHaveLength(2);
+      expect(sleep.wait).not.toHaveBeenCalled();
+    });
+  });
+
   it('polls throttles after the function sync, and only when the account allows it', async () => {
     lambda.on(ListFunctionsCommand).resolves({ Functions: [config('a')] });
     await syncAccount({ ...account, throttle_metrics: false });
