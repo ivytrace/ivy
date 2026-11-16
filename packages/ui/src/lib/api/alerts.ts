@@ -1,12 +1,20 @@
 import { fetchJson, sendJson } from "./client";
 import { wsPath } from "./hooks";
-import type { AlertSettings, DigestPreview, NotificationItem, SlackChannel } from "./types";
+import { mutate } from "swr";
+import type { AlertSettings, ApplyAlertsResult, DigestPreview, NotificationItem, SlackChannel } from "./types";
 
 const enc = encodeURIComponent;
 const alerts = (ws: string, project: string) => `/api${wsPath(ws)}/p/${enc(project)}/alerts`;
 
 export const updateAlertSettings = (ws: string, project: string, body: Partial<AlertSettings>) =>
   sendJson<AlertSettings>("PUT", alerts(ws, project), body);
+
+/** Sets the whole rule on several projects at once (all or none); then refetches every project's alerts. */
+export async function applyAlertSettings(ws: string, projects: string[], settings: AlertSettings) {
+  const result = await sendJson<ApplyAlertsResult>("POST", `/api${wsPath(ws)}/alerts/apply`, { projects, settings });
+  await mutate((key) => typeof key === "string" && key.includes(`${wsPath(ws)}/p/`) && key.endsWith("/alerts"));
+  return result;
+}
 
 /** Slack's authorize URL; the browser then goes there (and comes back to the alert settings). */
 export const connectSlack = (ws: string, project: string) => sendJson<{ url: string }>("POST", `${alerts(ws, project)}/slack/connect`);

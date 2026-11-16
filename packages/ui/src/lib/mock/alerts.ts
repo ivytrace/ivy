@@ -49,6 +49,29 @@ export function createAlertsMock(options: { configured: boolean }) {
     return entry;
   };
 
+  // Like the API: every project must be an active project of the workspace, or nothing changes.
+  const applyRule = (ws: MockWorkspace, body: Record<string, unknown>) => {
+    if (ws.role !== "owner") return { status: 403, body: { error: "Only workspace owners can do this" } };
+    const ids = Array.isArray(body.projects) ? (body.projects as unknown[]) : [];
+    const settings = body.settings as AlertSettings | undefined;
+    if (!ids.length) return { status: 400, body: { error: "projects must be an array of 1–500 project IDs" } };
+    if (!settings || Object.keys(DEFAULTS).some((k) => settings[k as keyof AlertSettings] === undefined)) {
+      return { status: 400, body: { error: "settings needs slack_enabled, interval_minutes, every_occurrences, include_throttles" } };
+    }
+    const active = new Map(ws.projects.filter((p) => !p.archived).map((p) => [p.id, p]));
+    const unknown = ids.filter((id) => !active.has(id as string));
+    if (unknown.length) return { status: 400, body: { error: `Not an active project of this workspace: ${unknown.join(", ")}` } };
+    const targets = [...new Set(ids as string[])].map((id) => active.get(id)!);
+    const rule: AlertSettings = {
+      slack_enabled: settings.slack_enabled,
+      interval_minutes: settings.interval_minutes,
+      every_occurrences: settings.every_occurrences,
+      include_throttles: settings.include_throttles,
+    };
+    for (const p of targets) of(ws, p.slug).settings = { ...rule };
+    return { status: 200, body: { updated: targets.length, projects: targets.map((p) => ({ id: p.id, slug: p.slug, name: p.name })), settings: rule } };
+  };
+
   const missingSlack = options.configured ? [] : ["IVY_SLACK_CLIENT_ID", "IVY_SLACK_CLIENT_SECRET"];
   const missingEmail = options.configured ? [] : ["IVY_SMTP_URL", "IVY_EMAIL_FROM"];
 
@@ -89,6 +112,7 @@ export function createAlertsMock(options: { configured: boolean }) {
     },
     workspaceRoutes(ws: MockWorkspace, rest: string, method: string, body: Record<string, unknown>, week: () => { groups: ErrorGroup[]; untraced: string[] }) {
       const owner = ws.role === "owner";
+      if (rest === "/alerts/apply" && method === "POST") return applyRule(ws, body);
       if (rest === "/digest" && method === "GET") {
         return {
           status: 200,

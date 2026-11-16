@@ -24,6 +24,7 @@ import { postRule } from './routes/aws/rules/post.js';
 import { getAwsSetup } from './routes/aws/setup.js';
 import { getAwsTemplate } from './routes/aws/template.js';
 import { getAlerts } from './routes/alerts/get.js';
+import { postAlertsApply } from './routes/alerts/post.js';
 import { putAlerts } from './routes/alerts/put.js';
 import { deleteSlackIntegration, getSlackCallback, postSlackConnect, postSlackTest } from './routes/alerts/slack.js';
 import { getConfig } from './routes/config/get.js';
@@ -121,6 +122,7 @@ export function createApp(options: { uiDir: string; access?: WorkspaceAccess }) 
   app.post(`${prj}/alerts/slack/connect`, postSlackConnect);
   app.delete(`${prj}/alerts/slack/:id`, deleteSlackIntegration);
   app.post(`${prj}/alerts/slack/:id/test`, postSlackTest);
+  app.post(`${ws}/alerts/apply`, postAlertsApply);
   app.get(`${ws}/digest`, getDigest);
   app.put(`${ws}/digest`, putDigest);
   app.get(`${ws}/digest/preview`, getDigestPreview);

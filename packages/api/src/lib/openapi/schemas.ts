@@ -316,6 +316,15 @@ export const schemas = {
     { slack_enabled: bool, interval_minutes: int, every_occurrences: int, include_throttles: bool },
     [],
   ),
+  AlertsApply: object({
+    projects: { type: 'array', items: str, minItems: 1, maxItems: 500, description: 'IDs (prj_…) of active projects of the workspace.' },
+    settings: ref('AlertSettings'),
+  }),
+  AlertsApplyResult: object({
+    updated: int,
+    projects: { type: 'array', items: object({ id: str, slug: str, name: str }) },
+    settings: ref('AlertSettings'),
+  }),
   SlackChannel: object({
     id: str,
     team_name: str,

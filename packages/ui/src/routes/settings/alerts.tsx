@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router";
-import { AlertTriangle, CheckCircle2, Hash, Loader2, Send, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, Hash, Loader2, Send, Trash2 } from "lucide-react";
 
+import { ApplyToProjectsDialog } from "@/components/alerts/apply-to-projects";
 import { SectionHeader } from "@/components/common/section-header";
 import { ErrorState, LoadingState } from "@/components/common/states";
 import { errorMessage } from "@/components/workspaces/name-dialog";
@@ -14,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { connectSlack, removeSlackChannel, testSlackChannel, updateAlertSettings } from "@/lib/api/alerts";
 import { useAlerts, useProjects } from "@/lib/api/hooks";
-import type { AlertSettings, AlertsResponse, SlackChannel } from "@/lib/api/types";
+import type { AlertSettings, AlertsResponse, Project, SlackChannel } from "@/lib/api/types";
 import { alertsLink, readLastScope } from "@/lib/links/links";
 import { useWorkspace } from "@/lib/links/use-scope";
 import { formatAgo } from "@/lib/utils/format";
@@ -54,12 +55,12 @@ export default function AlertsSettings() {
           </SelectContent>
         </Select>
       </SectionHeader>
-      <ProjectAlerts key={project} workspace={workspace} project={project} />
+      <ProjectAlerts key={project} workspace={workspace} project={project} projects={active} />
     </div>
   );
 }
 
-function ProjectAlerts({ workspace, project }: { workspace: string; project: string }) {
+function ProjectAlerts({ workspace, project, projects }: { workspace: string; project: string; projects: Project[] }) {
   const alerts = useAlerts(workspace, project);
   if (alerts.error) return <ErrorState error={alerts.error} onRetry={() => void alerts.mutate()} className="rounded-md border" />;
   if (!alerts.data) return <LoadingState className="rounded-md border" />;
@@ -69,7 +70,7 @@ function ProjectAlerts({ workspace, project }: { workspace: string; project: str
       {alerts.data.available.slack ? (
         <>
           <Channels workspace={workspace} project={project} data={alerts.data} onChange={() => void alerts.mutate()} />
-          <Frequency workspace={workspace} project={project} data={alerts.data} onSaved={() => void alerts.mutate()} />
+          <Frequency workspace={workspace} project={project} projects={projects} data={alerts.data} onSaved={() => void alerts.mutate()} />
         </>
       ) : (
         <NotConfigured
@@ -243,13 +244,15 @@ function SlackMark({ className }: { className?: string }) {
   );
 }
 
-function Frequency({ workspace, project, data, onSaved }: { workspace: string; project: string; data: AlertsResponse; onSaved: () => void }) {
+function Frequency(props: { workspace: string; project: string; projects: Project[]; data: AlertsResponse; onSaved: () => void }) {
+  const { workspace, project, data, onSaved } = props;
   const [form, setForm] = useState<AlertSettings>(data.settings);
   const [intervalText, setIntervalText] = useState(String(data.settings.interval_minutes));
   const [every, setEvery] = useState(String(data.settings.every_occurrences));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [applying, setApplying] = useState(false);
   useEffect(() => {
     setForm(data.settings);
     setIntervalText(String(data.settings.interval_minutes));
@@ -265,6 +268,8 @@ function Frequency({ workspace, project, data, onSaved }: { workspace: string; p
     form.include_throttles !== data.settings.include_throttles ||
     intervalN !== data.settings.interval_minutes ||
     everyN !== data.settings.every_occurrences;
+  const source = props.projects.find((p) => p.slug === project);
+  const others = props.projects.filter((p) => p.slug !== project);
 
   async function save() {
     setBusy(true);
@@ -339,8 +344,24 @@ function Frequency({ workspace, project, data, onSaved }: { workspace: string; p
             {busy && <Loader2 className="mr-2 size-4 animate-spin" />}
             Save
           </Button>
+          {others.length > 0 && source && (
+            <Button variant="outline" onClick={() => setApplying(true)} disabled={!valid}>
+              <Copy className="mr-2 size-4" />
+              Apply to other projects…
+            </Button>
+          )}
           {saved && !dirty && <span className="text-sm text-emerald-400">Saved</span>}
         </div>
+      )}
+      {applying && source && (
+        <ApplyToProjectsDialog
+          workspace={workspace}
+          source={source}
+          projects={others}
+          settings={{ ...form, interval_minutes: intervalN, every_occurrences: everyN }}
+          unsaved={dirty}
+          onClose={() => setApplying(false)}
+        />
       )}
     </section>
   );

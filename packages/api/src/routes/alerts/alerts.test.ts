@@ -110,6 +110,75 @@ describe('alert settings', () => {
   });
 });
 
+describe('apply to other projects', () => {
+  const rule = { slack_enabled: false, interval_minutes: 15, every_occurrences: 10, include_throttles: true };
+  const W = '/api/w/acme';
+
+  async function projectsOf(slug: string) {
+    const tenant = (await store.findTenantBySlug(slug))!;
+    const [checkout, billing, archived] = await Promise.all(
+      ['Checkout', 'Billing', 'Old'].map((name) => call(owner, 'POST', `/api/w/${slug}/projects`, { name }).then((r) => r.body.id as string)),
+    );
+    await call(owner, 'PATCH', `/api/w/${slug}/p/${archived}`, { archived: true });
+    return { tenant, checkout, billing, archived };
+  }
+
+  it('sets the whole rule on every listed project in one write, and leaves the others and the channels alone', async () => {
+    const { tenant, checkout, billing } = await projectsOf('acme');
+    const before = (await call(owner, 'GET', `${P}/alerts`)).body.settings;
+    const res = await call(owner, 'POST', `${W}/alerts/apply`, { projects: [checkout, billing, checkout], settings: rule });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      updated: 2,
+      projects: [expect.objectContaining({ id: checkout, name: 'Checkout' }), expect.objectContaining({ id: billing, name: 'Billing' })],
+      settings: rule,
+    });
+    expect(await alertStore().getSettings(tenant.id, checkout)).toEqual(rule);
+    expect(await alertStore().getSettings(tenant.id, billing)).toEqual(rule);
+    expect((await call(owner, 'GET', `${P}/alerts`)).body.settings).toEqual(before);
+    expect(await alertStore().listIntegrations(tenant.id, checkout)).toEqual([]);
+  });
+
+  it('is for owners only', async () => {
+    const { tenant, checkout } = await projectsOf('acme');
+    expect((await call(erin, 'POST', `${W}/alerts/apply`, { projects: [checkout], settings: rule })).status).toBe(403);
+    expect((await alertStore().getSettings(tenant.id, checkout)).interval_minutes).toBe(60);
+  });
+
+  it('writes nothing when a project is unknown, archived or in another workspace', async () => {
+    const { tenant, checkout, archived } = await projectsOf('acme');
+    const stranger: TestUser = { sub: 'idn_other', email: 'other@example.com', email_verified: true };
+    await call(stranger, 'POST', '/api/workspaces', { name: 'Other', slug: 'other' });
+    const foreign = (await call(stranger, 'POST', '/api/w/other/projects', { name: 'Theirs' })).body.id as string;
+
+    for (const id of [foreign, archived, 'prj_missing']) {
+      const res = await call(owner, 'POST', `${W}/alerts/apply`, { projects: [checkout, id], settings: rule });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain(id);
+    }
+    expect((await alertStore().getSettings(tenant.id, checkout)).interval_minutes).toBe(60);
+    const other = (await store.findTenantBySlug('other'))!;
+    expect((await alertStore().getSettings(other.id, foreign)).interval_minutes).toBe(60);
+    // Not a member of the other workspace: the same 404 as a workspace that doesn't exist.
+    expect((await call(owner, 'POST', '/api/w/other/alerts/apply', { projects: [foreign], settings: rule })).status).toBe(404);
+  });
+
+  it('validates the project list and requires the whole rule', async () => {
+    const { checkout } = await projectsOf('acme');
+    const apply = (body: unknown) => call(owner, 'POST', `${W}/alerts/apply`, body);
+    expect((await apply({ projects: [], settings: rule })).status).toBe(400);
+    expect((await apply({ projects: checkout, settings: rule })).status).toBe(400);
+    expect((await apply({ projects: [42], settings: rule })).status).toBe(400);
+    expect((await apply({ projects: Array.from({ length: 501 }, () => checkout), settings: rule })).status).toBe(400);
+    expect((await apply({ projects: [checkout] })).body.error).toBe('settings must be an object');
+    expect((await apply({ projects: [checkout], settings: { interval_minutes: 5 } })).body.error).toBe(
+      'settings needs slack_enabled, every_occurrences, include_throttles',
+    );
+    expect((await apply({ projects: [checkout], settings: { ...rule, interval_minutes: 0 } })).status).toBe(400);
+    expect((await apply({ projects: [checkout], settings: { ...rule, include_throttles: 'yes' } })).status).toBe(400);
+  });
+});
+
 describe('Slack OAuth', () => {
   beforeEach(() => configureSlack());
 

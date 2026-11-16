@@ -165,5 +165,9 @@ live in `docs/implementation/`.
   most frequent ones; alerts and the digest show the pattern too. A group whose occurrences all have the same message
   shows that message instead of the pattern, everywhere. Implementation:
   `docs/implementation/error-grouping.md`.
+- Owners can copy a project's "When to post" rule (Slack on/off, the minutes and occurrences limits, throttles) to
+  any of the workspace's other active projects in one step ("Apply to other projects…" on Settings → Alerts), all or
+  nothing. Slack channels are not copied: each project connects its own channels, because a channel connection is a
+  Slack webhook issued for one project's install. A default rule for new projects is not part of this.
 - Self-hosters get the `on-error-group-created` hook for their own integrations. Implementation:
   `docs/implementation/alerts.md`.

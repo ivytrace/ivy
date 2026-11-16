@@ -63,6 +63,8 @@ export interface Lease {
 export interface AlertStore {
   getSettings(tenant: string, project: string): Promise<AlertSettings>;
   saveSettings(tenant: string, project: string, settings: AlertSettings): Promise<void>;
+  /** The same settings for several projects of one workspace, in one insert (all or nothing). */
+  saveSettingsForProjects(tenant: string, projects: string[], settings: AlertSettings): Promise<void>;
   listIntegrations(tenant: string, project: string): Promise<SlackIntegration[]>;
   /** Every working integration of every workspace (the evaluator's work list). */
   listAllIntegrations(): Promise<SlackIntegration[]>;
@@ -103,8 +105,11 @@ export const clickhouseAlertStore: AlertStore = {
     );
     return rows[0] ? { ...rows[0], slack_enabled: !!rows[0].slack_enabled, include_throttles: !!rows[0].include_throttles } : { ...DEFAULT_ALERT_SETTINGS };
   },
-  saveSettings: (tenant, project, s) =>
-    insertRows(control(), 'alert_settings', [{ tenant_id: tenant, project_id: project, ...s, updated_at: version() }]),
+  saveSettings: (tenant, project, s) => clickhouseAlertStore.saveSettingsForProjects(tenant, [project], s),
+  saveSettingsForProjects: (tenant, projects, s) => {
+    const updated_at = version();
+    return insertRows(control(), 'alert_settings', projects.map((project) => ({ tenant_id: tenant, project_id: project, ...s, updated_at })));
+  },
   listIntegrations: (tenant, project) =>
     tenantQuery<SlackIntegration>(
       control(),
@@ -187,6 +192,9 @@ export function memoryAlertStore(): AlertStore {
     },
     async saveSettings(tenant, project, s) {
       settings.set(`${tenant}/${project}`, copy(s));
+    },
+    async saveSettingsForProjects(tenant, projects, s) {
+      for (const project of projects) settings.set(`${tenant}/${project}`, copy(s));
     },
     async listIntegrations(tenant, project) {
       return [...integrations.values()].filter((i) => i.tenant_id === tenant && i.project_id === project).map(copy);

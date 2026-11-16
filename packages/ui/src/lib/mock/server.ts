@@ -399,7 +399,7 @@ export function createMockHandler(options: MockOptions = {}) {
       return json(200, { deleted: true });
     }
     if (rest === "/members" && method === "GET") return json(200, { items: ws.members });
-    if (rest.startsWith("/digest")) {
+    if (rest.startsWith("/digest") || rest.startsWith("/alerts")) {
       const sevenDays = new URLSearchParams({ since: "7d" });
       const res = alerts.workspaceRoutes(ws, rest, method, body, () => ({
         groups: errors(poolOf(ws, null), throttlePoolOf(ws, null), sevenDays, true, ids(ws)),

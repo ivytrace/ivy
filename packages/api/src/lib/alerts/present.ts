@@ -40,3 +40,14 @@ export function parseSettings(body: Record<string, unknown>, current: AlertSetti
   }
   return next;
 }
+
+const SETTING_KEYS = ['slack_enabled', 'interval_minutes', 'every_occurrences', 'include_throttles'] as const;
+
+/** A complete rule (all four settings), as copied to other projects; 400 when one is missing or malformed. */
+export function parseFullSettings(body: unknown): AlertSettings {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw badRequest('settings must be an object');
+  const fields = body as Record<string, unknown>;
+  const missing = SETTING_KEYS.filter((key) => fields[key] === undefined);
+  if (missing.length) throw badRequest(`settings needs ${missing.join(', ')}`);
+  return parseSettings(fields, { slack_enabled: true, interval_minutes: 1, every_occurrences: 1, include_throttles: false });
+}

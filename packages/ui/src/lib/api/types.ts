@@ -329,6 +329,12 @@ export interface AlertSettings {
   include_throttles: boolean;
 }
 
+export interface ApplyAlertsResult {
+  updated: number;
+  projects: { id: string; slug: string; name: string }[];
+  settings: AlertSettings;
+}
+
 export interface SlackChannel {
   id: string;
   team_name: string;

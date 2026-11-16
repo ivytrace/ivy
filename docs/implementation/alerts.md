@@ -151,6 +151,20 @@ restart over Monday morning still sends it.
   "Send test message", remove), and "When an error group is first seen (always), then at most every [60] minutes or
   every [100] occurrences, whichever comes first", the Slack on/off switch and "Also alert on throttles". Owners edit;
   members see it read-only.
+- **Apply to other projects…** (owners, next to Save, outline button; shown when the workspace has other active
+  projects): a dialog with the rule in words, the form's current values (unsaved changes included, with a note that
+  they are not saved to this project), a checklist of the other active projects with "Select all", and "Apply to N
+  projects". One `POST /api/w/:ws/alerts/apply` (`api.md`): every project is checked first and the settings go in one
+  ClickHouse insert, so the result is all or nothing; the dialog then shows "Updated N projects" with their names, or
+  the error and "No project was changed". Every cached project's alerts are refetched afterwards.
+  - *Channels are not copied.* A channel is an `incoming-webhook` URL that Slack issued to one OAuth install, for the
+    channel picked there (not a bot token plus channel ID). Copying the encrypted URL to other projects would work
+    technically, but the rows would share one webhook: removing it in Slack breaks every project at once while each
+    shows its own "Remove" and "Broken" state, the configuration URL and `created_by` describe one install, and the
+    evaluator's "first seen after the first channel was connected" baseline would treat old errors in the target
+    projects as new and flood the channel. The dialog says channels are added per project with "Add to Slack".
+    If Ivy moves to a bot token (`chat:write` plus a channel ID), copying channels becomes a clean option.
+  - Not done (possible follow-up): a workspace "default for new projects" rule.
 - **Settings → Notifications** (`/w/<ws>/settings/notifications`), one page per workspace for everything that
   notifies:
   - *Weekly email digest*: the workspace's on/off switch (owners; members see it disabled with "Only workspace owners
@@ -215,7 +229,11 @@ If `IVY_SECRET_KEY` changes, stored webhooks can't be decrypted: the channels sh
   settings and validation, the authorize URL and cookie, the callback storing the webhook encrypted (`v1.…`, decrypts
   to the URL, never returned by the API), reconnecting the same channel, a second channel, missing/forged/expired
   state and a missing cookie (400, no code exchange), cancelled, Slack refusing the code, an owner demoted mid-flow,
-  test message, broken on `invalid_token`, remove.
+  test message, broken on `invalid_token`, remove; "apply to other projects": the whole rule on every listed project
+  and no other, channels untouched, owners only, nothing written for an unknown, archived or other-workspace project,
+  validation of the list and of the rule.
+- UI: `components/alerts/apply-to-projects.test.tsx` (rule wording, checklist and "Select all", unsaved-changes note,
+  result), and the dialog checked in Chrome on the mock API.
 - `lib/alerts/slack.test.ts`: message content and trimming, escaping, no payloads or logs whatever the input,
   throttle links, first-frame extraction, signed tokens (tamper, purpose, secret, expiry), cron.
 - `routes/digest/digest.test.ts`, against an SMTP catcher (`lib/email/testing.ts`, the real nodemailer transport):

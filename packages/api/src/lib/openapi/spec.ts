@@ -315,6 +315,13 @@ export const openApiDocument = {
         parameters: [ws, prj], requestBody: body('AlertSettingsUpdate'), responses: { 200: json(ref('AlertSettings')), ...bad, ...owner, ...notFound },
       },
     },
+    '/api/w/{workspace}/alerts/apply': {
+      post: {
+        tags: ['Alerts'], summary: 'Apply one alert rule to several projects (owner)', operationId: 'applyAlerts',
+        description: 'Sets all four alert settings on every listed project in one write: all of them or, on any invalid or unknown project, none (400). Slack channels are not copied; they are connected per project.',
+        parameters: [ws], requestBody: body('AlertsApply'), responses: { 200: json(ref('AlertsApplyResult')), ...bad, ...owner, ...notFound },
+      },
+    },
     '/api/w/{workspace}/p/{project}/alerts/slack/connect': {
       post: {
         tags: ['Alerts'], summary: 'Start "Add to Slack" (owner)', operationId: 'connectSlack',
