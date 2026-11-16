@@ -5,7 +5,9 @@ runs everything: OTLP ingest (Rust) → ClickHouse → API (Hono) → UI (React)
 
 ## Self-hosting
 
-Ivy runs on one machine with Docker. It is sized for about 300k invocations a day on 2 vCPU / 8 GB.
+Ivy runs on one machine with Docker. On 2 vCPU / 8 GB, ingest keeps up with about 1,000 Lambda invocations a
+second, roughly 85 million a day (measured in `docs/implementation/ingest.md`); how much history stays quick to
+query depends on your traffic and `IVY_RETENTION_DAYS`.
 
 ```sh
 git clone https://github.com/ivytrace/ivy.git && cd ivy
