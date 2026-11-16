@@ -248,6 +248,13 @@ export const schemas = {
     manual: {
       oneOf: [object({ mode: { type: 'string', enum: ['trace', 'exclude'] }, project_id: nstr, project: nstr }), { type: 'null' }],
     },
+    force: { type: 'boolean', description: "Force install: replace another tracer's AWS_LAMBDA_EXEC_WRAPPER when traced." },
+    conflict: {
+      type: ['string', 'null'], enum: ['wrapper', 'layers', 'reapplied', null],
+      description: 'With state `conflict`: another exec wrapper, the layer limit, or another tracer that set its wrapper back after a force install.',
+    },
+    wrapper: { ...nstr, description: "Another tracer's exec wrapper: the one in the way, or the one a force install replaced." },
+    tracer: { ...nstr, description: 'The tracer behind `wrapper` (e.g. Lumigo), when recognisable.' },
     new: bool, first_seen_at: ntime, updated_at: time,
   }),
   AwsFunctionList: list('AwsFunction'),
@@ -267,6 +274,7 @@ export const schemas = {
     { mode: { type: 'string', enum: ['trace', 'exclude', 'rules'] }, project: { type: 'string', description: 'Slug or ID; required with mode `trace`.' } },
     ['mode'],
   ),
+  AwsFunctionForce: object({ force: { type: 'boolean', description: '`true` replaces the other exec wrapper (and retries after it was set back); `false` hands it back.' } }, ['force']),
   AwsFunctionUpdateResult: object({ applied: bool, error: nstr, function: { oneOf: [ref('AwsFunction'), { type: 'null' }] } }),
   AwsFunctionBulk: object(
     {

@@ -97,8 +97,8 @@ No new datastore. `deploy/clickhouse/schema.sql` adds, in the control-plane data
 | table | engine | key | |
 |---|---|---|---|
 | `aws_accounts` | `ReplacingMergeTree(updated_at)` | `(tenant_id, id)` | one row per connection: role ARN, external ID, event secret, regions, `reviewed_at`, status, last error, timestamps, `deleted` flag |
-| `aws_functions` | `ReplacingMergeTree(updated_at)` | `(tenant_id, account_id, region, function_name)` | last known state per function: `traced`/`available`/`opted_out`/`unsupported`/`conflict`/`error`/`pending` + reason, project and what decided it (`tag`/`manual`/`rule` + rule ID), stack, tags, last modified, `first_seen_at` |
-| `aws_function_settings` | `ReplacingMergeTree(updated_at)` | `(tenant_id, account_id, region, function_name)` | the manual choice: `mode` (`''`/`trace`/`exclude`) and its project; older rows' `tracing_enabled = false` reads as `exclude` |
+| `aws_functions` | `ReplacingMergeTree(updated_at)` | `(tenant_id, account_id, region, function_name)` | last known state per function: `traced`/`available`/`opted_out`/`unsupported`/`conflict`/`error`/`pending` + reason, project and what decided it (`tag`/`manual`/`rule` + rule ID), `conflict` kind and the other tracer's `wrapper` (below), stack, tags, last modified, `first_seen_at` |
+| `aws_function_settings` | `ReplacingMergeTree(updated_at)` | `(tenant_id, account_id, region, function_name)` | the manual choice: `mode` (`''`/`trace`/`exclude`) and its project, plus `force` (force install, below); older rows' `tracing_enabled = false` reads as `exclude` |
 | `aws_project_rules` | `ReplacingMergeTree(updated_at)` | `(tenant_id, id)` | the workspace's rules: position, matcher fields, project, enabled, `deleted`. Reordering writes all rows in one insert |
 
 - Every update inserts a full row; reads use `FINAL` and `NOT deleted`. Deleting inserts a row with `deleted = 1`.
@@ -189,10 +189,47 @@ In order:
    when it is `/opt/ivy-wrapper`. Other variables (including other `IVY_*` such as `IVY_REDACT_KEYS`) and layers stay.
 4. Environment unreadable (`Environment.Error`, e.g. a KMS key the role can't use) → `error`; never write variables Ivy
    couldn't read, since `UpdateFunctionConfiguration` replaces them all.
-5. `AWS_LAMBDA_EXEC_WRAPPER` set to something else → `conflict`. Five non-Ivy layers already → `conflict`.
+5. `AWS_LAMBDA_EXEC_WRAPPER` set to something else → `conflict` (`conflict = 'wrapper'`), unless force-installed
+   (below). Five non-Ivy layers already → `conflict` (`'layers'`; force doesn't help there).
 6. No ingest config → `pending`. Otherwise: desired layers = existing non-Ivy layers + the current Ivy layer version
    (older Ivy versions replaced), desired env = existing + `AWS_LAMBDA_EXEC_WRAPPER=/opt/ivy-wrapper`,
    `IVY_ENDPOINT=$IVY_INGEST_PUBLIC_URL`, `IVY_API_KEY=<the function's project's auto-trace key>`. Equal to current → no call. → `traced`.
+
+### Force install over another tracer
+
+Another tracer's exec wrapper (Lumigo's `/opt/lumigo_wrapper`, Datadog's `/opt/datadog_wrapper`, …) makes a selected
+function a `conflict`. The user can choose to **force install** from the conflict's tooltip.
+
+- **Stored** as `force` on the function's row in `aws_function_settings`, next to the manual mode, so it is kept
+  apart from sync results and survives syncs (and reconnecting). `POST …/aws/functions/:accountId/:region/:name/force`
+  `{ "force": true | false }` writes it (keeping the mode) and applies it at once with `syncFunction`, like a manual
+  choice. A later manual "trace" or "follow rules" keeps it; a manual **exclude clears it** (handing the wrapper back
+  should be for good, not undone by the next trace). Force only matters when the function is selected: tags, manual
+  choices and rules decide that as before, so `ivy:trace=false` still wins.
+- **Attach.** With force, Ivy sets `AWS_LAMBDA_EXEC_WRAPPER=/opt/ivy-wrapper`, adds its layer and variables as usual,
+  and keeps the old value in **`IVY_PREVIOUS_EXEC_WRAPPER`** on the function. The other tracer's layer and variables
+  stay (least destructive, and nothing else has to be put back). With its wrapper gone, the other tracer most
+  likely stops tracing the function; the UI says so before the user confirms.
+- **Restore.** Every detach (not selected any more, `ivy:trace=false`, unsupported, disconnect) puts
+  `IVY_PREVIOUS_EXEC_WRAPPER` back into `AWS_LAMBDA_EXEC_WRAPPER` (if Ivy's wrapper is still the current one) and
+  removes it. Keeping the value on the function rather than in Ivy's store means the disconnect path, which doesn't
+  load settings, restores it too. `force: false` on a forced function restores the wrapper and reports the plain
+  conflict again.
+- **Set back (flapping).** If the function has `IVY_PREVIOUS_EXEC_WRAPPER` but a foreign wrapper is current again,
+  something (usually the other vendor's own auto-trace integration) re-applied it. Ivy would otherwise overwrite it
+  on every sync and the two would alternate. Instead the plan is `conflict` with `conflict = 'reapplied'`: Ivy
+  removes its layer, `IVY_ENDPOINT` and `IVY_API_KEY`, keeps the foreign wrapper, and keeps
+  `IVY_PREVIOUS_EXEC_WRAPPER` as the marker so later syncs stay put. The user can turn the other integration off and
+  press "Force install again", which calls the force route with `retryForce` and overwrites once more. If the other
+  integration also strips `IVY_PREVIOUS_EXEC_WRAPPER`, Ivy can't tell and forces again on each sync (see Gaps).
+- **What the API reports.** Each function has `conflict` (`wrapper`/`layers`/`reapplied`), `wrapper` (the other
+  tracer's wrapper: the one in the way, or the one replaced by a force install), `tracer` (a name inferred from the
+  wrapper path, `lib/aws/tracers.ts`, or null) and `force`.
+- **UI.** The "Conflict" label is a popover trigger (`components/aws/conflict-state.tsx`): it opens on hover and stays
+  open while the pointer moves into it, and opens on click or Enter with focus inside, so the button is reachable by
+  keyboard. "Force install" (outline) leads to a confirmation that names the tracer when known ("Lumigo will most
+  likely stop tracing this function"), otherwise generic wording, and the primary "Force install" button. A forced,
+  traced function's "Traced" tooltip names the replaced wrapper. Also on the Functions page's tracing column.
 
 Applying: `ResourceConflictException` (an update in progress) is retried after 2, 4, 8 and 16 s. If tags could not be
 read (`tag:GetResources` denied), Ivy does not attach to functions that would change, since one of them could carry
@@ -282,7 +319,9 @@ See `api.md` (`/api/w/:workspace/aws/*`).
   stack, tags and last modified recorded; a stack rule traces into its project with that project's own key; new
   matching functions traced on the next sync; detach when a function stops matching; key rewritten when a function
   moves project; layer reuse/publish, conflict retry, revision conflicts, unreadable tags, disabled regions, removed
-  functions, manual exclude, detach on disconnect, `needs_project` not attached and detached until a manual choice,
+  functions, manual exclude, detach on disconnect, force install (attach over a foreign wrapper, previous wrapper kept and
+  restored on detach and disconnect, `ivy:trace=false` wins, a wrapper set back is detected and only overwritten on
+  retry), `needs_project` not attached and detached until a manual choice,
   the clean detach of a function traced by `ivy:trace=true` alone on upgrade) and `routes/aws/aws.test.ts` (all routes end to end with in-memory
   stores: connect without/with the publish hook, hook failure, grouped list and new counts, dry run, rule
   create/patch/reorder/delete with re-sync, manual choices, bulk, EventBridge), all with `aws-sdk-client-mock`; no AWS
@@ -300,6 +339,9 @@ Not verified: a real AWS account (stack deploy, AssumeRole, PublishLayerVersion,
 - One EventBridge rule in the stack region only; other regions poll. Organizations / StackSets are not supported.
 - Opt-outs are applied immediately, but a sync that already planned the function may re-attach it once; the next sync
   (interval) corrects it.
+- Force install: if the other tracer's integration also removes `IVY_PREVIOUS_EXEC_WRAPPER` when it re-applies its
+  wrapper, Ivy can't see the earlier forced install and forces again on each sync. Tracer names are inferred from the
+  wrapper path only, not from layers.
 - Throttle counts lag by up to one poll (5 minutes) plus CloudWatch's own delay; they are per minute, not per request,
   and only for functions Ivy traces. No real-AWS run of the polling yet (aws-sdk-client-mock only).
 - Self-hosted Ivy on a laptop needs a public ingest URL (a tunnel) for Lambda to reach the ingest router.

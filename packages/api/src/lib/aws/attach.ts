@@ -1,11 +1,13 @@
 import type { FunctionConfiguration } from '@aws-sdk/client-lambda';
 import { EXEC_WRAPPER, LAYER_NAME, type IngestConfig } from './config.js';
-import type { TraceState } from './types.js';
+import type { ConflictKind, TraceState } from './types.js';
 
 export const MAX_LAYERS = 5;
 export const MIN_NODE_MAJOR = 18;
 export const OPT_OUT_TAG = 'ivy:trace';
 export const COMPONENT_TAG = 'ivy:component';
+/** The exec wrapper a forced install replaced; restored when Ivy detaches. */
+export const PREVIOUS_WRAPPER_ENV = 'IVY_PREVIOUS_EXEC_WRAPPER';
 const IVY_ENV = ['IVY_ENDPOINT', 'IVY_API_KEY'] as const;
 
 export interface LambdaFunction {
@@ -30,6 +32,10 @@ export interface Desired {
   offReason?: string;
   layerArn: string | null;
   ingest: IngestConfig | null;
+  /** Replace another tracer's exec wrapper (force install). */
+  force?: boolean;
+  /** Force again even though another tracer set its wrapper back after an earlier forced install. */
+  retryForce?: boolean;
 }
 
 export interface FunctionUpdate {
@@ -41,6 +47,9 @@ export interface Plan {
   state: TraceState;
   reason: string;
   update: FunctionUpdate | null;
+  conflict?: ConflictKind;
+  /** Another tracer's exec wrapper: the conflicting one, or the one a forced install replaced. */
+  wrapper?: string;
 }
 
 export function fromConfiguration(fn: FunctionConfiguration, tags: Record<string, string> = {}): LambdaFunction {
@@ -69,22 +78,37 @@ export const isIvyLayer = (arn: string) => arn.includes(`:layer:${LAYER_NAME}:`)
 export const layerBaseArn = (arn: string) => arn.slice(0, arn.lastIndexOf(':'));
 
 function isAttached(fn: LambdaFunction): boolean {
-  return fn.layers.some(isIvyLayer) || fn.env?.AWS_LAMBDA_EXEC_WRAPPER === EXEC_WRAPPER;
+  return fn.layers.some(isIvyLayer) || fn.env?.AWS_LAMBDA_EXEC_WRAPPER === EXEC_WRAPPER || PREVIOUS_WRAPPER_ENV in (fn.env ?? {});
 }
 
-/** Removes the Ivy layer and the variables Ivy set, keeping everything else. */
+/**
+ * Removes the Ivy layer and the variables Ivy set, keeping everything else. Puts back the exec wrapper a
+ * forced install replaced, unless another wrapper took Ivy's place meanwhile.
+ */
 export function detachUpdate(fn: LambdaFunction): FunctionUpdate {
   const env = { ...(fn.env ?? {}) };
-  for (const key of IVY_ENV) delete env[key];
-  if (env.AWS_LAMBDA_EXEC_WRAPPER === EXEC_WRAPPER) delete env.AWS_LAMBDA_EXEC_WRAPPER;
+  const previous = env[PREVIOUS_WRAPPER_ENV];
+  for (const key of [...IVY_ENV, PREVIOUS_WRAPPER_ENV]) delete env[key];
+  if (env.AWS_LAMBDA_EXEC_WRAPPER === EXEC_WRAPPER) {
+    if (previous) env.AWS_LAMBDA_EXEC_WRAPPER = previous;
+    else delete env.AWS_LAMBDA_EXEC_WRAPPER;
+  }
   return { layers: fn.layers.filter((arn) => !isIvyLayer(arn)), env };
 }
 
-function attachUpdate(fn: LambdaFunction, layerArn: string, ingest: IngestConfig): FunctionUpdate {
+/** Stops tracing but keeps the record of the replaced wrapper, so the next sync doesn't force again. */
+function standDownUpdate(fn: LambdaFunction): FunctionUpdate {
+  const env = { ...(fn.env ?? {}) };
+  for (const key of IVY_ENV) delete env[key];
+  return { layers: fn.layers.filter((arn) => !isIvyLayer(arn)), env };
+}
+
+function attachUpdate(fn: LambdaFunction, layerArn: string, ingest: IngestConfig, replaced: string): FunctionUpdate {
   return {
     layers: [...fn.layers.filter((arn) => !isIvyLayer(arn)), layerArn],
     env: {
       ...(fn.env ?? {}),
+      ...(replaced && { [PREVIOUS_WRAPPER_ENV]: replaced }),
       AWS_LAMBDA_EXEC_WRAPPER: EXEC_WRAPPER,
       IVY_ENDPOINT: ingest.endpoint,
       IVY_API_KEY: ingest.apiKey,
@@ -103,6 +127,12 @@ function sameUpdate(fn: LambdaFunction, update: FunctionUpdate): boolean {
 }
 
 const plan = (state: TraceState, reason: string, update: FunctionUpdate | null = null): Plan => ({ state, reason, update });
+
+const wrapperConflict = (wrapper: string, update: FunctionUpdate | null = null): Plan => ({
+  ...plan('conflict', `AWS_LAMBDA_EXEC_WRAPPER is already set to ${wrapper}`, update),
+  conflict: 'wrapper',
+  wrapper,
+});
 
 /** Lets a function leave tracing: detaches when needed, otherwise just reports the state. */
 function leave(fn: LambdaFunction, state: TraceState, reason: string): Plan {
@@ -124,21 +154,36 @@ export function planFunction(fn: LambdaFunction, desired: Desired): Plan {
   if (!desired.enabled) return leave(fn, desired.offState ?? 'opted_out', desired.offReason ?? 'Not selected for tracing');
 
   if (!fn.env) return plan('error', `Can't read environment variables: ${fn.envError}`);
-  const wrapper = fn.env.AWS_LAMBDA_EXEC_WRAPPER;
-  if (wrapper && wrapper !== EXEC_WRAPPER) return plan('conflict', `AWS_LAMBDA_EXEC_WRAPPER is already set to ${wrapper}`);
+  const current = fn.env.AWS_LAMBDA_EXEC_WRAPPER;
+  const foreign = current && current !== EXEC_WRAPPER ? current : '';
+  const previous = fn.env[PREVIOUS_WRAPPER_ENV] ?? '';
+  if (foreign && !desired.force) return wrapperConflict(foreign, isAttached(fn) ? detachUpdate(fn) : null);
+  if (foreign && previous && !desired.retryForce) {
+    // Ivy force-installed before, and something (usually the other vendor's own integration) set its wrapper back.
+    const traces = fn.layers.some(isIvyLayer) || IVY_ENV.some((key) => key in fn.env!);
+    return {
+      ...plan('conflict', `AWS_LAMBDA_EXEC_WRAPPER was set back to ${foreign} after Ivy replaced it; Ivy no longer replaces it`),
+      update: traces ? standDownUpdate(fn) : null,
+      conflict: 'reapplied',
+      wrapper: foreign,
+    };
+  }
+  if (!foreign && previous && !desired.force) return wrapperConflict(previous, detachUpdate(fn));
   const otherLayers = fn.layers.filter((arn) => !isIvyLayer(arn));
-  if (otherLayers.length >= MAX_LAYERS) return plan('conflict', `Already uses ${MAX_LAYERS} layers, the Lambda maximum`);
+  if (otherLayers.length >= MAX_LAYERS) {
+    return { ...plan('conflict', `Already uses ${MAX_LAYERS} layers, the Lambda maximum`), conflict: 'layers', wrapper: foreign };
+  }
 
   if (!desired.ingest) return plan('pending', 'IVY_INGEST_PUBLIC_URL and IVY_INGEST_API_KEY must be set on the Ivy server');
   if (!desired.layerArn) return plan('pending', 'Layer not published in this region yet');
 
-  const update = attachUpdate(fn, desired.layerArn, desired.ingest);
-  if (sameUpdate(fn, update)) return plan('traced', '');
-  return plan('traced', '', update);
+  const update = attachUpdate(fn, desired.layerArn, desired.ingest, foreign);
+  const traced = { ...plan('traced', ''), wrapper: foreign || previous || undefined };
+  return sameUpdate(fn, update) ? traced : { ...traced, update };
 }
 
 /** True when the plan for this function would attach the layer (so the region needs a published layer). */
-export function needsLayer(fn: LambdaFunction, enabled: boolean): boolean {
-  const probe = planFunction(fn, { enabled, layerArn: 'probe', ingest: { endpoint: 'probe', apiKey: 'probe' } });
+export function needsLayer(fn: LambdaFunction, options: Pick<Desired, 'force' | 'retryForce'> = {}): boolean {
+  const probe = planFunction(fn, { ...options, enabled: true, layerArn: 'probe', ingest: { endpoint: 'probe', apiKey: 'probe' } });
   return probe.state === 'traced';
 }

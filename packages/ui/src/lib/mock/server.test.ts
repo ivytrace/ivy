@@ -267,6 +267,24 @@ describe("mock AWS API", () => {
     vi.useRealTimers();
   });
 
+  it("force-installs over another tracer's wrapper, flags a re-applied wrapper, and hands it back on exclude", () => {
+    const call = client();
+    const fn = (name: string) => call<{ items: AwsFunction[] }>("GET", `${W}/functions`).body.items.find((f) => f.name === name)!;
+    const url = (name: string) => `${W}/functions/123456789012/eu-west-1/${name}`;
+    expect(fn("checkout-capturePayment")).toMatchObject({ state: "conflict", conflict: "wrapper", wrapper: "/opt/lumigo_wrapper", tracer: "Lumigo", force: false });
+    expect(fn("search-suggest")).toMatchObject({ state: "conflict", tracer: null });
+
+    const forced = call<{ function: AwsFunction }>("POST", `${url("checkout-capturePayment")}/force`, { force: true });
+    expect(forced.body.function).toMatchObject({ state: "traced", conflict: null, wrapper: "/opt/lumigo_wrapper", force: true });
+    expect(call("POST", `${url("checkout-capturePayment")}/force`, {}).status).toBe(400);
+
+    expect(fn("orders-notifyCustomer")).toMatchObject({ state: "conflict", conflict: "reapplied", force: true });
+    expect(call<{ function: AwsFunction }>("POST", `${url("orders-notifyCustomer")}/force`, { force: true }).body.function).toMatchObject({ state: "traced" });
+
+    const off = call<{ function: AwsFunction }>("PUT", url("checkout-capturePayment"), { mode: "exclude" });
+    expect(off.body.function).toMatchObject({ state: "opted_out", force: false });
+  });
+
   it("can start empty", () => {
     const call = client({ empty: true });
     expect(call<{ items: unknown[] }>("GET", "/api/w/personal/aws/accounts").body.items).toEqual([]);

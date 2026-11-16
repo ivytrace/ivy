@@ -422,6 +422,10 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_functions
     `project_id` String DEFAULT '',
     `project_source` LowCardinality(String) DEFAULT '',
     `rule_id` String DEFAULT '',
+    -- With state 'conflict': 'wrapper', 'layers' or 'reapplied' (another tracer set its wrapper back after a
+    -- forced install). `wrapper`: the other tracer's exec wrapper (in the way, or replaced by a forced install).
+    `conflict` LowCardinality(String) DEFAULT '',
+    `wrapper` String DEFAULT '',
     `stack` String DEFAULT '',
     `tags` Map(String, String) DEFAULT map(),
     `last_modified` String DEFAULT '',
@@ -432,6 +436,9 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_functions
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, account_id, region, function_name);
 
+ALTER TABLE ivy_control.aws_functions ADD COLUMN IF NOT EXISTS `conflict` LowCardinality(String) DEFAULT '' AFTER rule_id;
+ALTER TABLE ivy_control.aws_functions ADD COLUMN IF NOT EXISTS `wrapper` String DEFAULT '' AFTER conflict;
+
 CREATE TABLE IF NOT EXISTS ivy_control.aws_function_settings
 (
     `tenant_id` LowCardinality(String),
@@ -440,13 +447,17 @@ CREATE TABLE IF NOT EXISTS ivy_control.aws_function_settings
     `function_name` String,
     -- The manual choice: `mode` '' (follow the rules), 'trace' (into `project_id`) or 'exclude'.
     -- `tracing_enabled` (false = exclude) is kept for rows written before modes existed.
+    -- `force`: replace another tracer's AWS_LAMBDA_EXEC_WRAPPER when the function is traced.
     `tracing_enabled` Bool,
     `mode` LowCardinality(String) DEFAULT '',
     `project_id` String DEFAULT '',
+    `force` Bool DEFAULT false,
     `updated_at` DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (tenant_id, account_id, region, function_name);
+
+ALTER TABLE ivy_control.aws_function_settings ADD COLUMN IF NOT EXISTS `force` Bool DEFAULT false AFTER project_id;
 
 -- Auto-trace rules of a workspace (docs/implementation/auto-trace.md): which functions are traced,
 -- and into which project. Evaluated in `position` order, first enabled match wins. Every non-empty

@@ -406,6 +406,8 @@ Removes the layer from all functions first unless `detach=false` (or the account
   "project_id": "prj_…" | null, "project": "checkout-prod" | null,
   "source": "tag" | "manual" | "rule" | null, "rule_id": "rul_…" | null,
   "manual": { "mode": "trace" | "exclude", "project_id": "prj_…" | null, "project": "…" | null } | null,
+  "force": false, "conflict": "wrapper" | "layers" | "reapplied" | null,
+  "wrapper": "/opt/lumigo_wrapper" | null, "tracer": "Lumigo" | null,
   "new": false, "first_seen_at": "…", "updated_at": "…" }
 ```
 `state`: `traced`, `available` (nothing selects it), `opted_out` (tag `ivy:trace=false` or a manual exclude),
@@ -413,6 +415,9 @@ Removes the layer from all functions first unless `detach=false` (or the account
 giving one; or a manual choice whose project was archived: not traced until a project is picked), `unsupported`,
 `conflict`, `error`, `pending`. `project`/`project_id`: where the function sends spans (when the decision is to trace).
 `source`: what decided it.
+`conflict` (with state `conflict`): another exec wrapper, the 5-layer limit, or another tracer that set its wrapper
+back after a force install. `wrapper`: the other tracer's exec wrapper (in the way, or replaced by a force install);
+`tracer`: its name when the path gives it away. `force`: the function is set to force install (below).
 `stack`: the `aws:cloudformation:stack-name` tag (Serverless Framework, SAM, CDK and SST all set it). Function data
 reflects the last sync.
 
@@ -444,6 +449,14 @@ manual choice: follow tags and rules again). `project` (slug or ID) is required 
 choice, then applies it to that function right away:
 `{ "applied": true, "error": null, "function": <function> | null }`. If applying fails the choice is kept and the next
 sync retries. 404 if the AWS account isn't connected to the workspace.
+
+### `POST /api/w/:workspace/aws/functions/:accountId/:region/:name/force` (force install)
+Body `{ "force": true }` or `{ "force": false }`. Stored with the function's manual choice (its mode is kept), then
+applied right away; same response as the manual choice. With `true`, a traced function's foreign
+`AWS_LAMBDA_EXEC_WRAPPER` is replaced by Ivy's (the old value is kept in `IVY_PREVIOUS_EXEC_WRAPPER` and restored when
+Ivy detaches); `true` also retries after the other tracer set its wrapper back. `false` restores the wrapper. Tags,
+manual choices and rules still decide whether the function is traced. A manual `exclude` clears `force`. 400 without a
+boolean `force`, 404 if the AWS account isn't connected to the workspace. See `auto-trace.md`.
 
 ### `POST /api/w/:workspace/aws/functions/bulk` ("Trace selected")
 Body `{ "functions": [ { "account_id": "123456789012", "region": "eu-west-1", "name": "fn-a" } ], "mode": "trace" | "exclude" | "rules", "project"?: "…" }`

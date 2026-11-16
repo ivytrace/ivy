@@ -1,13 +1,11 @@
 import type { Context } from 'hono';
-import { HTTPException } from 'hono/http-exception';
-import { presentFunction } from '../../../lib/aws/present.js';
 import { isRegion } from '../../../lib/aws/regions.js';
-import { jsonBody, projectSlugs } from '../../../lib/aws/requests.js';
+import { connectedAccount, currentSetting, jsonBody, saveAndApply } from '../../../lib/aws/requests.js';
 import { targetProject } from '../../../lib/aws/rules.js';
 import { triggerSync } from '../../../lib/aws/scheduler.js';
 import { awsStore } from '../../../lib/aws/store.js';
-import { settingKey, syncFunction } from '../../../lib/aws/sync.js';
-import type { FunctionSetting, ManualMode } from '../../../lib/aws/types.js';
+import { settingKey } from '../../../lib/aws/sync.js';
+import type { ManualMode } from '../../../lib/aws/types.js';
 import { tenantOf } from '../../../lib/tenancy/context.js';
 import { badRequest } from '../../../lib/utils/http-error.js';
 
@@ -19,11 +17,8 @@ async function parseChoice(tenant: string, body: Record<string, unknown>): Promi
   return { mode, project_id: await targetProject(tenant, body.project) };
 }
 
-async function connectedAccount(tenant: string, accountId: string) {
-  const account = (await awsStore().listAccounts(tenant)).find((a) => a.account_id === accountId);
-  if (!account) throw new HTTPException(404, { message: `AWS account ${accountId} is not connected to this workspace` });
-  return account;
-}
+/** A new choice keeps a force install, except an exclude: that hands the other tracer's wrapper back for good. */
+const keepForce = (mode: ManualMode, force: boolean | undefined) => mode !== 'exclude' && !!force;
 
 /**
  * The manual choice for one function: trace into a project, exclude, or follow the rules again.
@@ -35,17 +30,8 @@ export async function putAwsFunction(c: Context) {
   if (!isRegion(region)) throw badRequest(`Invalid region: ${region}`);
   const choice = await parseChoice(tenant, await jsonBody(c));
   const account = await connectedAccount(tenant, accountId);
-
-  const setting: FunctionSetting = { account_id: accountId, region, function_name: name, ...choice };
-  await awsStore().saveSetting(tenant, setting);
-  if (account.status === 'pending') return c.json({ applied: false, error: 'Account not verified yet', function: null });
-  try {
-    const row = await syncFunction(account, region, name);
-    const fn = presentFunction(row, new Map([[settingKey(accountId, region, name), setting]]), await projectSlugs(tenant), account.reviewed_at);
-    return c.json({ applied: row.state !== 'error', error: row.state === 'error' ? row.reason : null, function: fn });
-  } catch (err) {
-    return c.json({ applied: false, error: (err as Error).message, function: null });
-  }
+  const force = keepForce(choice.mode, (await currentSetting(tenant, accountId, region, name))?.force);
+  return c.json(await saveAndApply(tenant, account, { account_id: accountId, region, function_name: name, ...choice, force }));
 }
 
 /** The same choice for many functions ("Trace selected"); applied by a sync of each affected account. */
@@ -64,9 +50,16 @@ export async function postAwsFunctionsBulk(c: Context) {
   });
   const accounts = new Map<string, Awaited<ReturnType<typeof connectedAccount>>>();
   for (const t of targets) if (!accounts.has(t.account_id)) accounts.set(t.account_id, await connectedAccount(tenant, t.account_id));
+  const existing = new Map((await awsStore().listSettings(tenant)).map((s) => [settingKey(s.account_id, s.region, s.function_name), s]));
   await awsStore().saveSettings(
     tenant,
-    targets.map((t) => ({ account_id: t.account_id, region: t.region, function_name: t.name, ...choice })),
+    targets.map((t) => ({
+      account_id: t.account_id,
+      region: t.region,
+      function_name: t.name,
+      ...choice,
+      force: keepForce(choice.mode, existing.get(settingKey(t.account_id, t.region, t.name))?.force),
+    })),
   );
   for (const account of accounts.values()) if (account.status !== 'pending') void triggerSync(account);
   return c.json({ updated: targets.length }, 202);

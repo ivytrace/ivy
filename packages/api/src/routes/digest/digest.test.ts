@@ -77,6 +77,8 @@ const lambdaFn = (tenant: string, name: string, firstSeen: number, state: TraceS
   project_id: '',
   project_source: '',
   rule_id: '',
+  conflict: '',
+  wrapper: '',
   stack: '',
   tags,
   last_modified: '',

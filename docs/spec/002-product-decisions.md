@@ -57,6 +57,15 @@ live in `docs/implementation/`.
   CloudFormation stack; the user picks stacks or name/tag patterns, and that choice is saved as a rule that also
   names the project. New functions matching a rule are traced automatically.
 - Lambda tags `ivy:trace=true|false` and `ivy:project=<slug>` override rules.
+- **Force install over another tracer.** A function whose `AWS_LAMBDA_EXEC_WRAPPER` belongs to another tracer is a
+  "Conflict". The user can force-install Ivy from the conflict's tooltip, after a confirmation that says the other
+  tracer (named when the wrapper path gives it away, e.g. Lumigo) will most likely stop tracing the function. Ivy
+  then replaces the wrapper and adds its layer, leaving the other tracer's layer and variables alone. The choice is
+  kept per function, so later syncs don't flip it back. When Ivy stops tracing the function (rule, tag, exclude,
+  disconnect), it restores the previous wrapper. Excluding the function also drops the force choice.
+  `ivy:trace=false` still wins over force. If the other tracer sets its wrapper back (e.g. its own auto-trace
+  integration), Ivy doesn't fight it: it removes its layer, shows a distinct "set back" conflict, and only forces
+  again when the user asks.
 - The CloudFormation quick-create link must not carry secrets. A deployment can publish each connection's template
   through a hook; without that hook Ivy offers a template download.
 

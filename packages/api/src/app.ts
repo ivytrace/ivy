@@ -14,6 +14,7 @@ import { syncAwsAccount } from './routes/aws/accounts/sync.js';
 import { verifyAwsAccount } from './routes/aws/accounts/verify.js';
 import { postAwsEvent } from './routes/aws/events.js';
 import { getAwsAccountFunctions, getAwsFunctions } from './routes/aws/functions/get.js';
+import { postAwsFunctionForce } from './routes/aws/functions/force.js';
 import { postAwsFunctionsBulk, putAwsFunction } from './routes/aws/functions/put.js';
 import { deleteRuleRoute } from './routes/aws/rules/delete.js';
 import { postRuleDryRun } from './routes/aws/rules/dry-run.js';
@@ -150,6 +151,7 @@ export function createApp(options: { uiDir: string; access?: WorkspaceAccess }) 
   app.get(`${ws}/aws/functions`, getAwsFunctions);
   app.post(`${ws}/aws/functions/bulk`, postAwsFunctionsBulk);
   app.put(`${ws}/aws/functions/:accountId/:region/:name`, putAwsFunction);
+  app.post(`${ws}/aws/functions/:accountId/:region/:name/force`, postAwsFunctionForce);
   app.get(`${ws}/aws/rules`, getRules);
   app.post(`${ws}/aws/rules`, postRule);
   app.post(`${ws}/aws/rules/dry-run`, postRuleDryRun);

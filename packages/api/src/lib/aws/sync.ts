@@ -26,6 +26,8 @@ export function accountRegions(account: AwsAccount): string[] {
 /** Everything a sync needs to decide where each function of a workspace goes. */
 export interface Assigner {
   assign(account: AwsAccount, region: string, fn: LambdaFunction): Assignment;
+  /** Whether the user chose to force-install over another tracer's exec wrapper. */
+  force(account: AwsAccount, region: string, fn: LambdaFunction): boolean;
   ingest(projectId: string): Promise<IngestConfig | null>;
 }
 
@@ -42,6 +44,7 @@ export async function loadAssigner(tenantId: string, accountId?: string): Promis
         { account_id: account.account_id, region, name: fn.name, tags: fn.tags },
         { ...base, manual: manual.get(settingKey(account.account_id, region, fn.name)) ?? null } satisfies AssignmentContext,
       ),
+    force: (account, region, fn) => !!manual.get(settingKey(account.account_id, region, fn.name))?.force,
     ingest(projectId) {
       let pending = ingest.get(projectId);
       if (!pending) ingest.set(projectId, (pending = ingestConfig(tenantId, projectId)));
@@ -61,9 +64,9 @@ interface FunctionContext {
   tagsKnown: boolean;
 }
 
-async function desiredFor(assigner: Assigner, assignment: Assignment): Promise<Desired> {
+async function desiredFor(assigner: Assigner, assignment: Assignment, force: boolean): Promise<Desired> {
   if (!assignment.traced) return { enabled: false, offState: assignment.state, offReason: assignment.reason, layerArn: null, ingest: null };
-  return { enabled: true, layerArn: null, ingest: await assigner.ingest(assignment.projectId) };
+  return { enabled: true, layerArn: null, ingest: await assigner.ingest(assignment.projectId), force };
 }
 
 /** Plans and applies one function, returning the status row to store. */
@@ -99,6 +102,8 @@ export async function processFunction(account: AwsAccount, region: string, fn: L
     project_id: ctx.assignment.traced ? ctx.assignment.projectId : '',
     project_source: ctx.assignment.source,
     rule_id: ctx.assignment.ruleId,
+    conflict: plan.state === 'conflict' ? (plan.conflict ?? '') : '',
+    wrapper: plan.wrapper ?? '',
     stack: stackOf(fn.tags),
     tags: fn.tags,
     last_modified: fn.lastModified,
@@ -136,10 +141,10 @@ async function syncRegion(account: AwsAccount, region: string, assigner: Assigne
   const planned = await Promise.all(
     fns.map(async (fn) => {
       const assignment = assigner.assign(account, region, fn);
-      return { fn, assignment, desired: await desiredFor(assigner, assignment) };
+      return { fn, assignment, desired: await desiredFor(assigner, assignment, assigner.force(account, region, fn)) };
     }),
   );
-  const layer = planned.some((p) => p.desired.ingest && needsLayer(p.fn, true)) ? await layerFor(lambda, account, region) : { arn: null };
+  const layer = planned.some((p) => p.desired.ingest && needsLayer(p.fn, p.desired)) ? await layerFor(lambda, account, region) : { arn: null };
 
   const rows = await mapLimit(planned, FUNCTION_CONCURRENCY, ({ fn, assignment, desired }) =>
     processFunction(account, region, fn, {
@@ -210,14 +215,20 @@ export async function syncAccount(account: AwsAccount, options: SyncOptions = {}
   });
 }
 
+export interface SyncFunctionOptions {
+  /** Force-install again although another tracer set its wrapper back after an earlier forced install. */
+  retryForce?: boolean;
+}
+
 /** Applies the current assignment to a single function right away (after a manual choice in the dashboard). */
-export async function syncFunction(account: AwsAccount, region: string, name: string): Promise<FunctionStatus> {
+export async function syncFunction(account: AwsAccount, region: string, name: string, options: SyncFunctionOptions = {}): Promise<FunctionStatus> {
   const { lambda, tagging } = await regionClients(account, region);
   const fn = await getFunction(lambda, tagging, name);
   const assigner = await loadAssigner(account.tenant_id, account.account_id);
   const assignment = assigner.assign(account, region, fn);
-  const desired = await desiredFor(assigner, assignment);
-  const layer = desired.ingest && needsLayer(fn, true) ? await layerFor(lambda, account, region) : { arn: null };
+  const force = assigner.force(account, region, fn);
+  const desired = { ...(await desiredFor(assigner, assignment, force)), retryForce: force && options.retryForce };
+  const layer = desired.ingest && needsLayer(fn, desired) ? await layerFor(lambda, account, region) : { arn: null };
   const row = await processFunction(account, region, fn, {
     lambda,
     tagging,

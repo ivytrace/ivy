@@ -1,6 +1,7 @@
 import type { QuickCreate } from './publish.js';
 import { isSyncing } from './scheduler.js';
 import { settingKey } from './sync.js';
+import { tracerName } from './tracers.js';
 import { TRACE_STATES, type AwsAccount, type FunctionSetting, type FunctionStatus, type ProjectRule, type TraceState } from './types.js';
 
 const isoOrNull = (ms: number) => (ms > 0 ? new Date(ms).toISOString() : null);
@@ -76,6 +77,10 @@ export function presentFunction(fn: FunctionStatus, settings: Map<string, Functi
     source: fn.project_source || null,
     rule_id: fn.rule_id || null,
     manual: mode ? { mode, project_id: setting?.project_id || null, project: setting?.project_id ? (slugs.get(setting.project_id) ?? null) : null } : null,
+    force: !!setting?.force,
+    conflict: fn.state === 'conflict' ? fn.conflict || null : null,
+    wrapper: fn.wrapper || null,
+    tracer: fn.wrapper ? tracerName(fn.wrapper) : null,
     new: fn.state === 'available' && fn.first_seen_at > reviewedAt,
     first_seen_at: isoOrNull(fn.first_seen_at),
     updated_at: new Date(fn.updated_at).toISOString(),
