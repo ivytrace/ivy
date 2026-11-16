@@ -43,6 +43,7 @@ const PROJECT_ROUTES = [
   '/functions?from=2026-11-14T10:20:00Z&to=2026-11-14T14:40:00Z',
   '/invocations',
   '/invocations?function=f&status=error&q=abc&limit=5&cursor=' + Buffer.from(JSON.stringify([1, 'x'])).toString('base64url'),
+  '/invocations?q=' + encodeURIComponent('job.id=abc123 job.reason="manual retry" timeout'),
   '/errors?function=f',
   '/stats/timeseries?since=24h',
   '/stats/timeseries?since=1h&bucket=1m&function=f',
@@ -68,7 +69,7 @@ describe('project scoping of data queries', () => {
     }
   });
 
-  it.each(['/invocations', '/invocations?function=f&status=error&q=abc&limit=5', '/stats/timeseries?since=24h', '/stats/timeseries?since=1h&bucket=1m&function=f'])(
+  it.each(['/invocations', '/invocations?function=f&status=error&q=abc&limit=5', '/invocations?q=job.id%3Dabc', '/stats/timeseries?since=24h', '/stats/timeseries?since=1h&bucket=1m&function=f'])(
     'workspace-wide %s reads all projects of the tenant, explicitly',
     async (route) => {
       const res = await (await appFor(workspace)).request(`/api/w/acme${route}`);
@@ -127,6 +128,27 @@ describe('project scoping of data queries', () => {
     expect((await app.request(`/api/w/acme/invocations?since=24h&limit=2&cursor=${body.next_cursor}`)).status).toBe(200);
     expect(captured[0].query_params).toMatchObject({ tenant: workspace.id, cursor_ts: t - 1000, cursor_span: 's2' });
     expect(captured[0].query_params.project).toBeUndefined();
+  });
+
+  it('invocations search splits key=value span attribute terms from the free text', async () => {
+    const q = encodeURIComponent('job.id=abc123 job.reason="manual retry" timeout');
+    expect((await (await appFor(workspace)).request(`/api/w/acme/p/checkout-prod/invocations?q=${q}`)).status).toBe(200);
+    const [query] = captured;
+    expect(query.query_params).toMatchObject({
+      q: 'timeout',
+      attr_key_0: 'job.id',
+      attr_value_0: 'abc123',
+      attr_key_1: 'job.reason',
+      attr_value_1: 'manual retry',
+    });
+    // Both branches (final and in progress) filter on the matching traces, each scoped to the tenant and project.
+    expect(query.query.match(/trace_id IN \(SELECT TraceId FROM otel_traces\s+WHERE TenantId = \{tenant:String\} AND ProjectId = \{project:String\}/g)).toHaveLength(2);
+  });
+
+  it('invocations search with only key=value terms has no free-text filter', async () => {
+    expect((await (await appFor(workspace)).request('/api/w/acme/p/checkout-prod/invocations?q=job.id%3Dabc')).status).toBe(200);
+    expect(captured[0].query_params.q).toBeUndefined();
+    expect(captured[0].query).not.toMatch(/positionCaseInsensitive/);
   });
 
   it("project invocations don't carry a project", async () => {

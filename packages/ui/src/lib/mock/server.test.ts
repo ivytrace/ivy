@@ -49,6 +49,9 @@ describe("mock API: workspaces and data", () => {
     expect(page2.items[0].ts <= page1.items[9].ts).toBe(true);
     const errors = call<InvocationsResponse>("GET", `${P}/invocations?since=7d&status=error&function=checkout-createOrder`).body;
     expect(errors.items.every((i) => i.status === "error" && i.function === "checkout-createOrder")).toBe(true);
+    const [one] = page1.items;
+    const byAttribute = call<InvocationsResponse>("GET", `${P}/invocations?since=7d&q=${encodeURIComponent(`faas.invocation_id=${one.request_id}`)}`).body;
+    expect(byAttribute.items.map((i) => i.span_id)).toEqual([one.span_id]);
 
     // Other projects don't see it; all projects do, labelled.
     expect(call<{ items: FunctionSummary[] }>("GET", "/api/w/acme/p/billing-api-prod/functions?since=7d").body.items.map((f) => f.name)).not.toContain(

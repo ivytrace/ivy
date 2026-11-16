@@ -282,7 +282,8 @@ export default function Invocations() {
         >
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Request ID, trace ID, error, path…"
+            placeholder="Request/trace ID, error, path, key=value…"
+            title='Matches a request ID, trace ID, error message or HTTP path. key=value matches a span attribute on any span of the invocation, e.g. job.id=abc123 or job.reason="manual retry".'
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onBlur={() => search.trim() !== (q ?? "") && update({ q: search.trim() || undefined })}
