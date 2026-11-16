@@ -32,7 +32,11 @@ describe('trace.getActiveSpan() in a handler', () => {
 
   it('is recording while the invocation runs', async () => {
     const { invoke } = setupBridge();
-    await invoke(() => expect(trace.getActiveSpan()?.isRecording()).toBe(true));
+    let recording: boolean | undefined;
+    await invoke(() => {
+      recording = trace.getActiveSpan()?.isRecording();
+    });
+    expect(recording).toBe(true);
   });
 
   it('applies redaction and caps to custom attributes and events only', async () => {
@@ -54,6 +58,22 @@ describe('trace.getActiveSpan() in a handler', () => {
     const event = root.events.find((e) => e.name === 'checkout.step')!;
     expect(String(attrs(event as any).detail)).toMatch(/…\[truncated 400 bytes\]$/);
     expect(a['ivy.payload.request']).toBe('{}');
+  });
+
+  it('redacts secret-named arrays and event fields', async () => {
+    const { invoke } = setupBridge({ IVY_MAX_PAYLOAD_BYTES: '100' });
+    const { root } = await invoke(() => {
+      const span = trace.getActiveSpan()!;
+      span.setAttribute('auth.token', ['secret-1', 'secret-2']);
+      span.setAttribute('usage.tokens', [12, 34]);
+      span.addEvent('checkout', { password: 'hunter2', 'session.token': ['s-1'], step: 'pay', lines: ['z'.repeat(500)] });
+    });
+    const a = attrs(root);
+    expect(a['auth.token']).toBe('[redacted]');
+    expect(a['usage.tokens']).toEqual([12, 34]);
+    const event = attrs(root.events.find((e) => e.name === 'checkout') as any);
+    expect(event).toMatchObject({ password: '[redacted]', 'session.token': '[redacted]', step: 'pay' });
+    expect(String((event.lines as string[])[0])).toMatch(/…\[truncated 400 bytes\]$/);
   });
 
   it('protects the layer’s own attributes', async () => {
@@ -99,16 +119,25 @@ describe('trace.getActiveSpan() in a handler', () => {
     expect(trace.getActiveSpan()).toBeUndefined();
     await invoke(() => {});
     expect(trace.getActiveSpan()).toBeUndefined();
-    await invoke(() => context.with(ROOT_CONTEXT, () => expect(trace.getActiveSpan()).toBeUndefined()));
+    let underRoot: Span | undefined | null = null;
+    await invoke(() => {
+      underRoot = context.with(ROOT_CONTEXT, () => trace.getActiveSpan());
+    });
+    expect(underRoot).toBeUndefined();
   });
 
   it('gives way to an active library span, which still nests under the invocation', async () => {
     const { tracer, invoke } = setupBridge();
     const otel = trace.getTracer('my-lib');
+    let invocation: Span | undefined;
+    let activeInOuter: Span | undefined;
+    let outerSpan: Span | undefined;
+    let activeAfter: Span | undefined;
     const { root, byName } = await invoke(async () => {
-      const invocation = trace.getActiveSpan();
+      invocation = trace.getActiveSpan();
       await otel.startActiveSpan('outer', async (outer) => {
-        expect(trace.getActiveSpan()).toBe(outer);
+        outerSpan = outer;
+        activeInOuter = trace.getActiveSpan();
         await otel.startActiveSpan('inner', async (inner) => {
           await Promise.resolve();
           tracer.startChild('GET example.com')!.endMs = Date.now();
@@ -118,9 +147,12 @@ describe('trace.getActiveSpan() in a handler', () => {
       });
       otel.startSpan('explicit', {}, trace.setSpan(context.active(), invocation!)).end();
       tracer.startChild('DynamoDB.GetItem')!.endMs = Date.now();
-      expect(trace.getActiveSpan()).toBe(invocation);
+      activeAfter = trace.getActiveSpan();
       trace.getActiveSpan()?.setAttribute('after', 1);
     });
+    expect(invocation).toBeInstanceOf(InvocationSpan);
+    expect(activeInOuter).toBe(outerSpan);
+    expect(activeAfter).toBe(invocation);
     expect(byName('outer')[0].parentSpanId).toBe(root.spanId);
     expect(byName('inner')[0].parentSpanId).toBe(byName('outer')[0].spanId);
     expect(byName('GET example.com')[0].parentSpanId).toBe(byName('inner')[0].spanId);

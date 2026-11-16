@@ -35,18 +35,24 @@ function capJsonOrText(text: string, maxBytes: number, isSecret: KeyMatcher): Ca
 const lastSegment = (key: string) => key.slice(key.lastIndexOf('.') + 1);
 
 /**
- * Applies the layer's payload rules to the attributes of a bridged span, at flush time (after the
- * response): values whose own key matches `IVY_REDACT_KEYS` are redacted (token counts are kept, see
- * `createKeyMatcher`), JSON strings are redacted by key at any depth, and every string is capped at
- * `maxBytes`. String arrays (e.g. `ai.prompt.tools`) get the same per element, within 4 × `maxBytes`.
+ * Applies the layer's payload rules to the attributes of a bridged span and its events, at flush time
+ * (after the response): values whose own key matches `IVY_REDACT_KEYS` are redacted (token counts are
+ * kept, see `createKeyMatcher`), JSON strings are redacted by key at any depth, and every string is capped
+ * at `maxBytes`. String arrays (e.g. `ai.prompt.tools`) get the same per element, within 4 × `maxBytes`.
  * Returns whether anything was truncated.
  */
 export function capAttributes(span: Pick<Span, 'attributes' | 'events'>, maxBytes: number, isSecret: KeyMatcher): boolean {
+  let truncated = capAttributeMap(span.attributes, maxBytes, isSecret);
+  for (const event of span.events) truncated = capAttributeMap(event.attributes, maxBytes, isSecret) || truncated;
+  return truncated;
+}
+
+function capAttributeMap(attrs: Attributes, maxBytes: number, isSecret: KeyMatcher): boolean {
   let truncated = false;
-  const attrs = span.attributes;
   for (const key in attrs) {
     const value = attrs[key];
-    if (!Array.isArray(value) && isSecret(lastSegment(key), value)) {
+    const name = lastSegment(key);
+    if (Array.isArray(value) ? value.some((v) => isSecret(name, v)) : isSecret(name, value)) {
       attrs[key] = REDACTED;
       continue;
     }
@@ -74,15 +80,6 @@ export function capAttributes(span: Pick<Span, 'attributes' | 'events'>, maxByte
         out.push(capped.text);
       }
       attrs[key] = out;
-    }
-  }
-  for (const event of span.events) {
-    for (const key in event.attributes) {
-      const value = event.attributes[key];
-      if (typeof value !== 'string') continue;
-      const capped = capJsonOrText(value, maxBytes, isSecret);
-      event.attributes[key] = capped.text;
-      truncated ||= capped.truncated;
     }
   }
   return truncated;

@@ -25,14 +25,16 @@ export function installOtelBridge(tracer: Tracer, env: NodeJS.ProcessEnv = proce
     const startChild: (name: string, kind?: SpanKindValue) => Span | undefined = tracer.startChild.bind(tracer);
     const caps = { maxBytes: tracer.config.maxPayloadBytes, isSecret: tracer.isSecret };
     // `trace.getActiveSpan()` outside library spans is the invocation span, created on first use.
-    let current: { invocation: Invocation; context: Context } | undefined;
+    const contexts = new WeakMap<Invocation, Context>();
     const invocationContext = () => {
       const inv = tracer.active;
       if (!inv || inv.done) return ROOT_CONTEXT;
-      if (current?.invocation !== inv) {
-        current = { invocation: inv, context: ROOT_CONTEXT.setValue(SPAN_KEY, new InvocationSpan(inv, tracer, caps)) };
+      let ctx = contexts.get(inv);
+      if (!ctx) {
+        ctx = ROOT_CONTEXT.setValue(SPAN_KEY, new InvocationSpan(inv, tracer, caps));
+        contexts.set(inv, ctx);
       }
-      return current.context;
+      return ctx;
     };
     const contextManager = new AlsContextManager(invocationContext);
     const provider = new BridgeTracerProvider(tracer, startChild, caps, contextManager);

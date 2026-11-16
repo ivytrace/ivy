@@ -39,7 +39,7 @@ library needs:
   final, UNSET ignored), `recordException` adds an `exception` event, and `error.type` is set on error.
 - **Payload rules** (`attributes.ts`). Applied in the span's `finalize` hook, i.e. at flush time after the
   response: JSON strings are parsed, redacted by key and re-serialized; all strings are capped per attribute.
-  Attributes whose own key matches `IVY_REDACT_KEYS` are replaced, except token counts
+  The same rules apply to event attributes. Attributes (and string arrays) whose own key matches `IVY_REDACT_KEYS` are replaced, except token counts
   (`ai.usage.promptTokens`, `gen_ai.usage.input_tokens`) and numbers of keys that only match `token`
   (`span-conventions.md`, "Payload capping and redaction").
 - **The invocation as active span** (`invocation-span.ts`). Outside library spans, `trace.getActiveSpan()`
