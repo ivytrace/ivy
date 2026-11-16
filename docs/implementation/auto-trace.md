@@ -236,6 +236,15 @@ read (`tag:GetResources` denied), Ivy does not attach to functions that would ch
 the opt-out tag; they show as `pending`. In "all enabled regions" mode, regions that reject the credentials
 (`UnrecognizedClientException` etc., i.e. not enabled) are skipped silently; with explicit regions they're reported.
 
+IAM is eventually consistent: the first sync starts seconds after the stack creates the role, and its inline policy
+may not have reached every region yet, so one region can fail with `AccessDeniedException` ("no identity-based policy
+allows the lambda:ListFunctions action") while another succeeds. For 5 minutes after the account is verified
+(`verified_at`), a region that fails with an access-denied error is retried in place after 5, 10 and 15 s (about 30 s
+in all) before its error is stored on the account. Only that region waits; the others finish in parallel. Outside that
+window an access denial is a real misconfiguration and is reported at once, so the dashboard shows it without delay
+and the interval sync doesn't keep hammering a denied region. Retrying inside the sync, rather than scheduling a
+follow-up sync, keeps one place that owns the account's `error` and needs no extra timer state in the scheduler.
+
 `ingestConfig(tenant, project)` gives the endpoint and the project's auto-trace key: `IVY_INGEST_API_KEY` for the project
 of that bootstrap key, otherwise a system-managed key stored hashed and encrypted with `IVY_SECRET_KEY`
 (`tenancy.md`, "Auto-trace key"). Revoking that key makes the next sync write a new one into the project's functions.
@@ -318,7 +327,8 @@ See `api.md` (`/api/w/:workspace/aws/*`).
   round trip, structure, cfn-lint, a quick-create URL without parameters), `sync.test.ts` (nothing traced on connect;
   stack, tags and last modified recorded; a stack rule traces into its project with that project's own key; new
   matching functions traced on the next sync; detach when a function stops matching; key rewritten when a function
-  moves project; layer reuse/publish, conflict retry, revision conflicts, unreadable tags, disabled regions, removed
+  moves project; layer reuse/publish, conflict retry, revision conflicts, unreadable tags, disabled regions, access
+  denied while a new role propagates (retried only right after connecting), removed
   functions, manual exclude, detach on disconnect, force install (attach over a foreign wrapper, previous wrapper kept and
   restored on detach and disconnect, `ivy:trace=false` wins, a wrapper set back is detected and only overwritten on
   retry), `needs_project` not attached and detached until a manual choice,

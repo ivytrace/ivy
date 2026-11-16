@@ -6,7 +6,7 @@ import { assignmentContext, assignProject, stackOf, type Assignment, type Assign
 import { fromConfiguration, needsLayer, planFunction, type Desired, type LambdaFunction, type Plan } from './attach.js';
 import { assumeRole, forgetCredentials, regionClients } from './clients.js';
 import { ingestConfig, type IngestConfig } from './config.js';
-import { applyUpdate, ensureLayer, getFunction, layerZip, listFunctionTags, listFunctions } from './lambda.js';
+import { applyUpdate, ensureLayer, getFunction, layerZip, listFunctionTags, listFunctions, sleep } from './lambda.js';
 import { AWS_REGIONS, isRegionDisabledError } from './regions.js';
 import { awsStore } from './store.js';
 import { pollAccountThrottles, throttlePollDue, type ThrottlePollResult } from './throttles.js';
@@ -14,6 +14,8 @@ import type { AwsAccount, FunctionSetting, FunctionStatus } from './types.js';
 
 const FUNCTION_CONCURRENCY = 4;
 const REGION_CONCURRENCY = 4;
+const NEW_ROLE_MS = 5 * 60_000;
+const PROPAGATION_DELAYS_MS = [5_000, 10_000, 15_000];
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -159,6 +161,22 @@ async function syncRegion(account: AwsAccount, region: string, assigner: Assigne
   await awsStore().replaceRegionFunctions(account.tenant_id, account.account_id, region, rows);
 }
 
+const isAccessDenied = (err: unknown) =>
+  ['AccessDenied', 'AccessDeniedException'].includes((err as Error)?.name) || /is not authorized to perform/.test(message(err));
+
+/** Retries a region denied by IAM while the role is new, since its policy may not have reached every region yet. */
+async function syncRegionWithRetry(account: AwsAccount, region: string, assigner: Assigner): Promise<void> {
+  const newRole = Date.now() - account.verified_at < NEW_ROLE_MS;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await syncRegion(account, region, assigner);
+    } catch (err) {
+      if (!newRole || !isAccessDenied(err) || attempt >= PROPAGATION_DELAYS_MS.length) throw err;
+      await sleep.wait(PROPAGATION_DELAYS_MS[attempt]);
+    }
+  }
+}
+
 export interface SyncOptions {
   /** Limit to these regions (e.g. from an EventBridge event); defaults to the account's regions. */
   regions?: string[];
@@ -187,7 +205,7 @@ export async function syncAccount(account: AwsAccount, options: SyncOptions = {}
   const errors: string[] = [];
   await mapLimit(regions, REGION_CONCURRENCY, async (region) => {
     try {
-      await syncRegion(account, region, assigner);
+      await syncRegionWithRetry(account, region, assigner);
     } catch (err) {
       if (account.all_regions && isRegionDisabledError(err)) return;
       errors.push(`${region}: ${message(err)}`);

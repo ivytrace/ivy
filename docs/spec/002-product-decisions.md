@@ -110,6 +110,11 @@ live in `docs/implementation/`.
   card rows, other tables scroll inside their box, and nothing scrolls the page sideways. Desktop is unchanged.
 - A "Live" toggle on the Invocations page (`?live=1`) shows new invocations as they arrive and updates running ones in
   place; it pauses on a hidden tab, while scrolled down or paging, and after 15 minutes idle.
+- Invocations can be searched by span attribute: `job.id=abc123` in the search box (and in the MCP
+  `search_invocations` tool) finds the invocations where the invocation span or any span inside it, such as one a
+  handler creates per SQS record with `@opentelemetry/api`, has that attribute with exactly that value. Values match
+  as text (numbers and booleans too), can be quoted (`job.reason="manual retry"`), several terms must all match, and
+  they combine with the free-text search.
 
 ## Performance
 - Cold-start overhead of the layer must be minimal: the Lambda extension is a small Rust binary (the one exception
@@ -129,6 +134,13 @@ live in `docs/implementation/`.
   off) the extension sends one small provisional record, refreshed every minute; the final invocation always
   replaces it and it is never counted or billed as a trace. Without a final record past the deadline it shows as
   "No completion recorded". Shorter invocations cost nothing extra. Implementation: `docs/implementation/layer.md`.
+
+## Redaction
+- Credentials are redacted inside JSON-string request and response bodies too: the `body` string of API Gateway, ALB and
+  Function URL events and return values (and SQS records) is parsed, and `accessToken`, `refreshToken`, `idToken`,
+  `access_token` and other matching keys become `"[redacted]"`, in the tracer before data leaves the function. The
+  body stays a JSON string; base64-encoded and non-JSON bodies are left as they are.
+  Implementation: `docs/implementation/span-conventions.md`.
 
 ## LLM spans
 - Ivy captures OpenTelemetry spans from libraries such as the Vercel AI SDK and renders LLM calls (messages,

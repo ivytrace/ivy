@@ -82,6 +82,17 @@ overview and errors across all projects) read the tenant's range and group by `p
   `invocations_hourly`, and the partial hours at either edge come from raw `invocations`. Quantile states from
   both sources are merged, so counts are exact for any `from`/`to`. Buckets of 1m/5m read `invocations` only.
 - **`…/invocations`:** keyset pagination on `(ts, span_id)`. The cursor is base64url `[ts_ms, span_id]`.
+- **Search by span attribute (`q` with `key=value` terms):** `invocations` holds only the invocation span's fields,
+  so the terms are matched on `otel_traces`: `trace_id IN (SELECT TraceId FROM otel_traces WHERE <tenant, project>
+  AND Timestamp in [from − 1 min, to + 15 min) AND SpanAttributes[key] = value)`. The window covers child spans that
+  start after the range ends (an invocation runs up to Lambda's 15-minute timeout) and clock slack between the
+  invocation span and its children. One trace is one invocation (the layer propagates no trace context), so the
+  trace ID identifies it. Several terms each need some span of the trace (`GROUP BY TraceId HAVING max(term₁) AND
+  …`), not one span with all of them. Attribute values are stored as strings by the collector (`42`, `1.5`, `true`),
+  so numbers and booleans match their string form with plain equality. The existing `idx_span_attr_value` bloom filter
+  on `mapValues(SpanAttributes)` serves `SpanAttributes[key] = value`; no new index was needed. Verified with
+  `EXPLAIN indexes = 1` on 2M spans in one hour: 4 of 245 granules read. Both the final and the in-progress branch of
+  the list apply the filter. Parsing is in `packages/api/src/lib/data/invocation-search.ts`.
 - **`…/errors`:** the fingerprint and template computed per failed row (`error-grouping.md`), grouped by
   fingerprint and raw message, then by fingerprint (counts, variants, top messages).
 

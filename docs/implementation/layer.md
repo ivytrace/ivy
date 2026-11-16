@@ -180,7 +180,11 @@ bytes. The extra passes only run for oversized payloads, after the response (abo
 views' 8 KB cap) is repaired when read: `repairTruncatedJson` in `@ivy/spans` closes open strings and
 containers, drops a dangling key or partial token, and adds a `"…": "[truncated]"` entry to every
 container that was open; the dashboard renders it as a muted "… truncated", the text formatter as `…`. Unparseable bodies (truncated JSON, forms) get a
-regex-based redaction pass. A key matches `IVY_REDACT_KEYS` if, lowercased with `-`/`_` removed,
+regex-based redaction pass. A JSON string under a `body` key (Lambda proxy events and responses,
+SQS records) is parsed and redacted inside the same replacer, then put back as a compact JSON string,
+so a token in `{"statusCode":200,"body":"{\"accessToken\":…}"}` is caught too; it is only re-serialized when
+something was redacted, and skipped when the object has `isBase64Encoded: true`. Only `body` keys are
+parsed, not every JSON-looking string, to keep the flush cost predictable. A key matches `IVY_REDACT_KEYS` if, lowercased with `-`/`_` removed,
 it contains one of the entries (so `x-api-key` matches `api_key`).
 
 Limits per invocation: 500 log events (4 KB each), request/response body capture of

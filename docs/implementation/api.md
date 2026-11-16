@@ -233,7 +233,13 @@ Function overview for the range.
 reached the function. A function that was only throttled in the range is listed with 0 invocations and `last_invoked: null`.
 
 ### `GET …/invocations`
-Query: `function`, `status` (`ok`|`error`|`in_progress`), `q` (free text: matches request ID, trace ID, error message, HTTP path), `limit` (default 50, max 500), `cursor` (opaque; from `next_cursor`), `ids` (comma-separated span IDs, up to 100: only those invocations, in their current state; the dashboard's Live mode uses it to refresh in-progress rows, and `from` to fetch rows newer than the newest one it has), `group` (an error group's `fingerprint` from `…/errors`: only the failed invocations in that group; 400 if it isn't one).
+Query: `function`, `status` (`ok`|`error`|`in_progress`), `q` (free text: matches request ID, trace ID, error message, HTTP path; plus `key=value` terms, see below), `limit` (default 50, max 500), `cursor` (opaque; from `next_cursor`), `ids` (comma-separated span IDs, up to 100: only those invocations, in their current state; the dashboard's Live mode uses it to refresh in-progress rows, and `from` to fetch rows newer than the newest one it has), `group` (an error group's `fingerprint` from `…/errors`: only the failed invocations in that group; 400 if it isn't one).
+
+`key=value` terms in `q` (`job.id=abc123`, `job.reason="manual retry"`) match span attributes: an invocation matches
+when the invocation span or any span inside it has the attribute with exactly that value (numbers and booleans in
+their string form, `3`, `true`). A term is a word starting with a letter or `_`, then `=`, then a value without
+spaces or a double-quoted one (`\"` escapes a quote). Several terms must all match (each on any span); the rest of
+`q` is the free text above, and both apply. At most 10 terms (400 otherwise). See `storage.md`, "Query patterns".
 ```json
 { "items": [ {
   "trace_id": "673f1a2b…", "span_id": "…", "ts": "…",
