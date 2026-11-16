@@ -1,7 +1,7 @@
 # @ivy/layer
 
 Lambda layer that traces Node.js functions without code changes and ships the spans
-to an Ivy collector (or any OTLP/HTTP endpoint). Design notes live in
+to Ivy's ingest endpoint (or any OTLP/HTTP endpoint). Design notes live in
 [`docs/implementation/layer.md`](../../docs/implementation/layer.md); the span format in
 [`docs/implementation/span-conventions.md`](../../docs/implementation/span-conventions.md).
 
@@ -76,7 +76,7 @@ extension idles.
 | variable | default | |
 |---|---|---|
 | `AWS_LAMBDA_EXEC_WRAPPER` | | set to `/opt/ivy-wrapper` to enable |
-| `IVY_ENDPOINT` | | collector base URL; spans go to `<endpoint>/v1/traces` |
+| `IVY_ENDPOINT` | | base URL of Ivy's ingest endpoint (or any OTLP/HTTP endpoint); spans go to `<endpoint>/v1/traces` |
 | `IVY_API_KEY` | | sent as `Authorization: Bearer <key>` |
 | `IVY_DISABLE` | `false` | turn tracing off without detaching the layer |
 | `IVY_MAX_PAYLOAD_BYTES` | `16384` | cap for each `ivy.payload.*` attribute |
@@ -148,7 +148,7 @@ pnpm --filter @ivy/layer e2e
 ```
 
 By default spans go to a capture server on the host (`:4399`) and the script asserts on them.
-To send them to the local ingest router instead (`docker compose up` from the repo root first):
+To send them to the local Ivy ingest instead (`docker compose up` from the repo root first):
 
 ```sh
 IVY_ENDPOINT=http://host.docker.internal:4318 IVY_API_KEY=dev-ingest-key pnpm --filter @ivy/layer e2e

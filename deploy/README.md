@@ -7,11 +7,13 @@ docker compose -f deploy/docker-compose.yml up --build      # or: pnpm up
 | service | port | notes |
 |---|---|---|
 | API + UI | http://localhost:3000 | UI at `/`, API at `/api/*` (see `docs/implementation/api.md`) |
-| OTLP HTTP (ingest router) | http://localhost:4318/v1/traces | `Authorization: Bearer <key>` or `x-api-key: <key>`; HTTP only, no gRPC |
+| OTLP HTTP (ingest) | http://localhost:4318/v1/traces | `Authorization: Bearer <key>` or `x-api-key: <key>`; HTTP only, no gRPC |
 | ClickHouse HTTP | http://localhost:8123 | user `ivy`, password `ivy`, databases `ivy` (spans) and `ivy_control` (tenants, keys, config) |
 
-The collector has no published ports: only the ingest router (`ingest` service, same image as the API) talks to it,
-with `IVY_COLLECTOR_TOKEN`. Tenants, keys and the router: `docs/implementation/tenancy.md`.
+The stack is ClickHouse, `ingest` (a small Rust service, `packages/ingest`, image `ghcr.io/ivytrace/ivy-ingest`) and
+the API, which also serves the UI. Ingest resolves each API key to its workspace and project and writes spans to
+ClickHouse through a write-ahead log on the `ingest-wal` volume (`docs/implementation/ingest.md`). Tenants, keys and
+sharding: `docs/implementation/tenancy.md`.
 
 Environment variables (set in your shell or a `deploy/.env` file):
 
@@ -29,20 +31,19 @@ Environment variables (set in your shell or a `deploy/.env` file):
 | `IVY_DIGEST_TO` | | comma-separated extra digest recipients for the `default` workspace (installs without sign-in have no members) |
 | `IVY_ALERTS_INTERVAL_SECONDS` | `60` | how often the alert evaluator runs; `0` turns alerts and the digest off in that API process |
 | `IVY_INGEST_API_KEY` | `dev-ingest-key` | ingest key created on first start in an ordinary project "Default" of the `default` workspace (rename or archive it like any project) |
-| `IVY_COLLECTOR_TOKEN` | `dev-collector-token` | shared secret between the router and the internal collector; set your own |
 | `IVY_SECRET_KEY` | | encrypts the per-project auto-trace keys; needed for auto-trace into any project other than the one of `IVY_INGEST_API_KEY` |
 | `IVY_SHARDS` | | shard map for several cells (`tenancy.md`); one shard by default |
-| `IVY_INGEST_TRUST_PROXY`, `IVY_INGEST_MAX_BODY_BYTES` | off, 10 MiB | router: client IP from `X-Forwarded-For`; body limit |
+| `IVY_INGEST_TRUST_PROXY`, `IVY_INGEST_MAX_BODY_BYTES` | off, 10 MiB | ingest: client IP from `X-Forwarded-For`; body limit |
 | `IVY_RETENTION_DAYS` | `30` | applied when the ClickHouse volume is first created |
 | `IVY_CLICKHOUSE_USER` / `IVY_CLICKHOUSE_PASSWORD` | `ivy` / `ivy` | |
-| `IVY_INGEST_PUBLIC_URL` | | ingest router URL that Lambda functions can reach; needed for auto-trace (`docs/implementation/auto-trace.md`) |
+| `IVY_INGEST_PUBLIC_URL` | | ingest URL that Lambda functions can reach; needed for auto-trace (`docs/implementation/auto-trace.md`) |
 | `IVY_AWS_PRINCIPAL_ARN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION` | | Ivy's AWS identity for assuming the roles in connected accounts |
 | `IVY_PUBLIC_URL`, `IVY_AWS_DEFAULT_REGION`, `IVY_AWS_SYNC_INTERVAL_SECONDS` | | optional auto-trace settings |
 | `IVY_HOOKS_DIR` | `/etc/ivy/hooks` | executable hooks, e.g. `publish-cfn-template` for one-click CloudFormation links (`docs/implementation/hooks.md`; examples in `deploy/hooks.example/`) |
 | `IVY_MCP_RESOURCE` | `$IVY_PUBLIC_URL/mcp` | canonical URL of the MCP endpoint, the `aud` of MCP tokens when OIDC is on (`docs/implementation/mcp.md`) |
 | `IVY_INTERNAL_API_TOKEN` | | enables the internal admin API (`/internal/*`: workspace limits, usage, members) for an operator's billing service; ≥ 32 characters (`docs/implementation/limits.md`) |
 | `IVY_BILLING_URL` | | billing service base URL; the dashboard's Usage page then shows Upgrade / Manage billing |
-| `IVY_QUOTA_REFRESH_SECONDS`, `IVY_QUOTA_RETRY_AFTER_SECONDS`, `IVY_UPGRADE_URL` | 60, 300, `$IVY_PUBLIC_URL/w/<slug>/settings/usage` | router: monthly trace quotas |
+| `IVY_QUOTA_REFRESH_SECONDS`, `IVY_QUOTA_RETRY_AFTER_SECONDS`, `IVY_UPGRADE_URL` | 60, 300, `$IVY_PUBLIC_URL/w/<slug>/settings/usage` | ingest: monthly trace quotas |
 | `IVY_BUILD_UI` | `auto` | `false` builds an API-only image |
 | `IVY_API_PORT`, `IVY_OTLP_HTTP_PORT`, `IVY_CLICKHOUSE_HTTP_PORT` | 3000, 4318, 8123 | host ports |
 
@@ -88,8 +89,8 @@ docker compose -f deploy/docker-compose.yml exec api node tenants.mjs revoke-key
 ```
 
 (From a checkout: `pnpm --filter @ivy/api tenants …`.) With auth off or `IVY_SINGLE_TENANT=1` the dashboard shows
-only the `default` workspace. Per-tenant ingest counts: `docker compose -f deploy/docker-compose.yml exec ingest wget -qO-
-http://127.0.0.1:4320/stats`.
+only the `default` workspace. Per-tenant ingest counts are logged every minute: `docker compose -f deploy/docker-compose.yml logs ingest | grep usage`
+(also served as JSON on `127.0.0.1:4320/stats` inside the container).
 
 ## Limits
 
@@ -138,7 +139,7 @@ pnpm db:migrate   # = docker compose -f deploy/docker-compose.yml exec -T clickh
 
 **Volumes from before workspaces and projects** can't be updated in place (pre-release): `init.sh` stops with an
 error, and a one-off reset is needed. It **deletes all data**, then recreates the schema and restarts the API and
-ingest router, which recreate the `default` workspace, its project and the `IVY_INGEST_API_KEY` key:
+ingest; the API recreates the `default` workspace, its project and the `IVY_INGEST_API_KEY` key:
 
 ```sh
 pnpm db:reset
@@ -165,5 +166,5 @@ Schema and storage design: `docs/implementation/storage.md`.
 
 ```sh
 docker compose -f deploy/docker-compose.yml down       # keep data
-docker compose -f deploy/docker-compose.yml down -v    # also delete ClickHouse data and the collector queue
+docker compose -f deploy/docker-compose.yml down -v    # also delete ClickHouse data and the ingest write-ahead log
 ```

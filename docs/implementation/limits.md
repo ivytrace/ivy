@@ -4,7 +4,7 @@ Spec M6: monthly quotas enforced at ingest. Ivy counts **traces**: one trace is 
 `invocations` (a root span with `ivy.invocation = true`). Usage is per workspace (tenant), summed over **all its
 projects**, and per calendar month in UTC. There is no per-project quota or usage.
 
-Public Ivy only has the generic part: a limits table, a usage count, enforcement in the ingest router, an internal
+Public Ivy only has the generic part: a limits table, a usage count, enforcement in ingest, an internal
 admin API, and a usage page that can show billing buttons. Plans, prices and payments live with whoever operates
 the install, in a separate billing service. **Self-hosted installs are unlimited
 and have no payment code**: without a limits row a workspace is unlimited, and nothing creates rows by default.
@@ -26,7 +26,8 @@ default limits for new workspaces sets a row when the workspace is created, for 
 `on-workspace-created` hook (`hooks.md`) plus a reconcile sweep over `GET /internal/workspaces?limits=unset`.
 
 Code: `packages/api/src/lib/limits/` (`limits.ts` types and validation, `store.ts` the table, `usage.ts` the count,
-`quota-gate.ts` the router check, `present.ts` the response shape).
+`present.ts` the response shape). The check at ingest is in `packages/ingest/src/tenancy.rs` (same rules, and the
+same limits and count queries as these stores; keep them in sync).
 
 ## Usage count
 
@@ -41,19 +42,19 @@ at most two partial hours of raw rows).
 - The internal API counts fresh on every call (billing reports it).
 - `countMonthlyTracesAllTenants(month)` runs one `GROUP BY tenant_id` per shard for the internal list.
 
-Spans that arrive late (a batch held back by the layer, the collector's queue) are counted in the month of their
+Spans that arrive late (a batch held back by the layer, ingest's write-ahead log) are counted in the month of their
 timestamp, so a month's count can still grow by a few traces after it ends.
 
-## Enforcement in the ingest router
+## Enforcement at ingest
 
-`QuotaGate` (`lib/limits/quota-gate.ts`), wired in `ingest.ts`. Per request, after the key lookup and before the body
+`QuotaGate` (`packages/ingest/src/tenancy.rs`). Per request, after the key lookup and before the body
 is read:
 
 1. Per tenant it holds a **snapshot**: the limits row, and the month's count from ClickHouse (only queried when the
    limits can block: a quota and `block`).
-2. Plus a **local counter**: invocations in requests this router process forwarded successfully since the snapshot's
-   query started. The router already walks every body to count spans; it now also counts spans whose attributes have
-   `ivy.invocation` = `true` (bool or string, protobuf or JSON).
+2. Plus a **local counter**: invocations in requests this ingest process accepted since the snapshot's query
+   started: spans whose attributes have `ivy.invocation` = `true` (bool or string, protobuf or JSON), counted while
+   the body is decoded.
 3. Blocked when `over_quota = block`, the quota isn't null, and `snapshot + local ≥ quota`.
 4. The snapshot is refreshed every `IVY_QUOTA_REFRESH_SECONDS` (60) in the background: the request that finds it stale
    is answered from the old snapshot, the next ones from the new. The first request of a tenant (or of a new month)
@@ -61,7 +62,7 @@ is read:
 5. If the lookup fails, ingest is **allowed** (fail open: a ClickHouse hiccup must not drop customers' traces) and
    retried after 10 s.
 
-Answer when blocked (OTLP/HTTP, a `google.rpc.Status` in the request's encoding, like every router error):
+Answer when blocked (OTLP/HTTP, a `google.rpc.Status` in the request's encoding, like every ingest error):
 
 ```
 HTTP/1.1 429 Too Many Requests
@@ -80,16 +81,17 @@ sentence.
 
 The check is cheap (an in-memory comparison per request), not exact to the trace:
 
-- **One router:** overshoot is at most one request's worth of invocations (the request that crosses the quota is
+- **One ingest process:** overshoot is at most one request's worth of invocations (the request that crosses the quota is
   accepted whole; requests are not split). Spans accepted while a refresh query runs are kept in the local counter, so
-  they aren't lost; spans still in the collector's batch (≤ 1 s) when the query runs may be counted twice until the
-  next refresh, which only makes the router block slightly early, by at most a second of traffic.
-- **N routers:** each only knows its own local count, so the fleet can overshoot by up to (N − 1) × one refresh
+  they aren't lost. Spans still in the write-ahead log (≤ 2 s, `ingest.md`) when the query runs are in neither number,
+  and spans inserted while it runs can be in both, until the next refresh: blocking can be early or late by a couple
+  of seconds of traffic.
+- **N ingest processes:** each only knows its own local count, so the fleet can overshoot by up to (N − 1) × one refresh
   interval of the tenant's traffic before the next refresh.
-- **Changes to limits** (an upgrade, a downgrade) take effect within one refresh interval plus one request per router.
+- **Changes to limits** (an upgrade, a downgrade) take effect within one refresh interval plus one request per ingest process.
 - Fail-open on lookup errors means a ClickHouse outage suspends enforcement.
 
-Billing is computed from the stored count (`invocations`), never from the router's counters, so overshoot is at most
+Billing is computed from the stored count (`invocations`), never from ingest's counters, so overshoot is at most
 free traffic, never a wrong invoice.
 
 ### The Lambda layer
@@ -146,21 +148,18 @@ Only the dashboard has this page: the MCP views and the website demo show traces
 |---|---|---|---|
 | `IVY_INTERNAL_API_TOKEN` | API | | enables `/internal/*`; ≥ 32 characters |
 | `IVY_BILLING_URL` | API (→ UI) | | billing service base URL, e.g. `https://ivy.example.com/billing` |
-| `IVY_QUOTA_REFRESH_SECONDS` | router | `60` | snapshot refresh |
-| `IVY_QUOTA_RETRY_AFTER_SECONDS` | router | `300` | `Retry-After` while over quota |
-| `IVY_UPGRADE_URL` | router | `$IVY_PUBLIC_URL/w/<slug>/settings/usage` | link in the 429 message; `{workspace}` → the slug |
+| `IVY_QUOTA_REFRESH_SECONDS` | ingest | `60` | snapshot refresh |
+| `IVY_QUOTA_RETRY_AFTER_SECONDS` | ingest | `300` | `Retry-After` while over quota |
+| `IVY_UPGRADE_URL` | ingest | `$IVY_PUBLIC_URL/w/<slug>/settings/usage` | link in the 429 message; `{workspace}` → the slug |
 
 ## Verification
 
 - Unit: `limits/limits.test.ts` (validation, unset = unlimited, block/allow, months), `limits/usage.test.ts` (rollup
-  plus edges, tenant binding, caching, the all-tenants query), `limits/quota-gate.test.ts` (unlimited, allow, block,
-  local counting, background refresh, upgrades, month rollover and the Retry-After cap, shared first load,
-  fail-open), `ingest/router.test.ts` (429 + Retry-After + message with nothing forwarded, counting accepted
-  invocations, allow, unlimited by default), `ingest/otlp.test.ts` (invocation counting), `routes/internal/internal.test.ts`
+  plus edges, tenant binding, caching, the all-tenants query), `cargo test` in `packages/ingest` (month
+  boundaries, the 429 message), `routes/internal/internal.test.ts`
   (disabled without a token, short tokens, 401, CRUD, validation, the list and `limits=unset`, members from the workspace store,
   `/api/w/:workspace/usage`, `/api/config` billing), `tenant-scope.test.ts` (workspace usage reads all projects of
-  the tenant, explicitly), `limits/snapshot.test.ts` (no usage query without limits, all-projects count and the slug
-  link with a blocking quota, `IVY_UPGRADE_URL`), layer `export/transport.test.ts` and
+  the tenant, explicitly), layer `export/transport.test.ts` and
   `export/queue.test.ts` (Retry-After), UI `lib/usage/state.test.ts` (free under / near / over quota, paid, unlimited,
   mock billing), plus the owner-only buttons (`billingAction`) and the usage link with its legacy redirect.
 - Compose stack on alternate ports (API :33100, ingest :34418, ClickHouse :38223, `IVY_QUOTA_REFRESH_SECONDS=5`): a
@@ -178,4 +177,4 @@ Only the dashboard has this page: the MCP views and the website demo show traces
 ## Gaps
 
 - No per-query limits yet (the other half of M6).
-- Router counters are per process; see Tolerance.
+- Ingest counters are per process; see Tolerance.

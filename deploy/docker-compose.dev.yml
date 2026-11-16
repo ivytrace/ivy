@@ -1,6 +1,0 @@
-# Used by `pnpm dev` (scripts/dev.sh): the API, ingest router and UI run on the host, so the
-# collector's internal OTLP port is published, on localhost only.
-services:
-  collector:
-    ports:
-      - "127.0.0.1:${IVY_COLLECTOR_DEV_PORT:-4319}:4318"

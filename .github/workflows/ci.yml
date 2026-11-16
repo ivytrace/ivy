@@ -34,3 +34,15 @@ jobs:
         with:
           workspaces: packages/layer/extension
       - run: cargo test --locked
+
+  ingest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/ingest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/ingest
+      - run: cargo test --locked

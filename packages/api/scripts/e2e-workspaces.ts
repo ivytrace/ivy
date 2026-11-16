@@ -5,6 +5,7 @@
  *
  *   IVY_E2E_ISSUER_PORT=14400 \
  *   IVY_OIDC_ISSUER=http://host.docker.internal:14400 IVY_OIDC_CLIENT_ID=ivy IVY_SINGLE_TENANT=0 IVY_SECRET_KEY=e2e \
+ *   IVY_PUBLIC_URL=http://localhost:13000 \
  *   IVY_API_PORT=13000 IVY_OTLP_HTTP_PORT=14318 IVY_CLICKHOUSE_HTTP_PORT=18123 \
  *     docker compose -p ivy-e2e -f deploy/docker-compose.yml up -d --build --wait
  *   pnpm --filter @ivy/api exec tsx scripts/e2e-workspaces.ts http://localhost:13000 http://localhost:14318
@@ -133,7 +134,7 @@ try {
   const traces: Record<string, string> = {};
   for (const [ws, setup] of Object.entries(setups)) {
     for (const [slug, p] of Object.entries(setup.projects)) {
-      // Each span claims to belong to the other workspace's project: the router/collector must overwrite that.
+      // Each span claims to belong to the other workspace's project: ingest must overwrite that.
       const other = Object.values(setups[ws === alpha ? beta : alpha].projects)[0].id;
       const { traceId, body } = invocation(`${ws}-${slug}-fn`, { 'ivy.tenant_id': 'ten_forged', 'ivy.project_id': other });
       traces[`${ws}/${slug}`] = traceId;

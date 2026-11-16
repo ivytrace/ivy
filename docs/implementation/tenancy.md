@@ -15,7 +15,7 @@ server from the API key, and the routing seams for sharding by tenant exist now,
   `ivy_<40 base62>` (~238 bits), shown once at creation. Ivy stores `sha256(key)` and a display prefix
   (`ivy_` + 6 characters), never the key. `kind` is `user`, `bootstrap` (from `IVY_INGEST_API_KEY`) or `auto-trace`
   (see below). Revoking sets `revoked_at`.
-- **Shard / cell**: a full copy of the single-box data stack (collector + ClickHouse `ivy` database). The tenant
+- **Shard / cell**: a full copy of the single-box data stack (ClickHouse with the `ivy` database). The tenant
   directory (`tenants.shard_id`) says which cell holds a tenant's spans.
 - **Control plane**: the `ivy_control` database (tenants, keys, auto-trace config). One for all cells. Today it lives on
   the same ClickHouse as `shard-1`; `IVY_CONTROL_CLICKHOUSE_URL` can point it elsewhere.
@@ -32,49 +32,45 @@ The two materialized views copy tenant and project through (`TenantId AS tenant_
 client (Lambda layer, OTel SDK, loadgen)
   │  POST /v1/traces, Authorization: Bearer <key>   (or x-api-key)
   ▼
-ingest router :4318  ── key hash → ivy_control.api_keys → tenant + project + shard (cached)
-  │  same body (protobuf/JSON, gzip as sent)
-  │  Authorization: Bearer $IVY_COLLECTOR_TOKEN, x-ivy-tenant: <tenant id>, x-ivy-project: <project id>
+ivy-ingest :4318  ── key hash → ivy_control.api_keys → tenant + project + shard (cached)
+  │  decode OTLP (protobuf/JSON), set ivy.tenant_id + ivy.project_id resource attributes (client values replaced)
   ▼
-shard collector :4318 (internal)  ── resource/tenant: delete ivy.tenant_id + ivy.project_id, insert from the headers
-  ▼                                  filter/tenant: drop spans without a tenant or a project
+write-ahead log (per shard)  ── every 2 s: INSERT … FORMAT RowBinary
+  ▼
 ClickHouse ivy.otel_traces  ── TenantId/ProjectId DEFAULT ResourceAttributes['ivy.tenant_id'/'ivy.project_id']
 ```
 
+`ivy-ingest` is a small Rust service (`packages/ingest`); its design, write-ahead log, row mapping and measurements
+are in `ingest.md`. It replaced a Node ingest router that forwarded to an internal OpenTelemetry Collector per shard.
+
 ### Decision: the tenant comes from the key, never from the payload
 
-Before, `otel_traces.TenantId` defaulted from the resource attribute `ivy.tenant_id`, which any sender could set.
-Now the collector deletes that attribute and inserts it again from the `x-ivy-tenant` request header
-(`include_metadata: true` on the OTLP receiver + the `resource` processor with `from_context: metadata.x-ivy-tenant`).
-Only the router can reach the collector (no published ports, and a shared bearer token), and the router always sets the
-header from the key lookup. Spans that somehow arrive without the header are dropped by a `filter` processor rather
-than stored under an empty tenant. Verified against the pinned `otel/opentelemetry-collector-contrib:0.165.0`: a span
-claiming `ivy.tenant_id = evil` lands as the header's tenant, header names are matched case-insensitively, a request
-without the header stores nothing, and a wrong token gets 401.
+Before tenancy, `otel_traces.TenantId` defaulted from the resource attribute `ivy.tenant_id`, which any sender could
+set. Now ingest decodes every request and sets `ivy.tenant_id` and `ivy.project_id` on every resource from the key
+lookup, replacing whatever the client sent under these names, before the rows are written. There is no internal hop a
+client could reach with forged values: ingest writes to ClickHouse itself. (Previously the router passed tenant and
+project to the collector in `x-ivy-tenant` / `x-ivy-project` headers and the collector's processors set the
+attributes; the Rust service was checked against that path to store identical rows, `ingest.md`.)
 
-The project works the same way (`x-ivy-project` → `ivy.project_id`, `workspaces-projects.md`). Verified on 0.165.0
-in the compose end-to-end run: spans that claimed another workspace's `ivy.project_id` and `ivy.tenant_id = ten_forged`
-landed under the key's project and tenant; a request straight to the collector with `x-ivy-tenant` but no
-`x-ivy-project` (and a client-set `ivy.project_id`) stored nothing; `X-Ivy-Project` in another case was accepted.
+### Decision: ingest is its own service and image
 
-### Decision: the router is its own entrypoint in the API image
+`packages/ingest`, image `ghcr.io/ivytrace/ivy-ingest:<sha>` (`ivy-ingest:local` when compose builds it from
+`packages/ingest/Dockerfile`), run as the `ingest` compose service. Not part of the API process because:
+- ingest is the public, high-volume, abuse-facing surface; a burst of spans must not stall dashboard requests, and the
+  API must be able to restart without dropping ingest (and the other way round);
+- with cells, ingest is scaled and placed by traffic, not by dashboard use;
+- per-request overhead is the cost of ingest (one request per Lambda invocation), and a small Rust binary that writes
+  to ClickHouse directly sustains about twice the throughput of the Node router and collector on the same box
+  (`ingest.md`, "Why").
 
-`packages/api/src/ingest.ts`, built to `ingest.mjs` in the same image, run as the `ingest` compose service
-(`command: ["node", "ingest.mjs"]`). Not a second listener in the API process because:
-- ingest is the public, high-volume, abuse-facing surface; a burst of spans must not stall dashboard requests on the
-  same event loop, and the API must be able to restart without dropping ingest (and the other way round);
-- with cells, routers are scaled and placed by traffic, not by dashboard use;
-- it still shares the code it needs (key lookup, shard config, ClickHouse client), and there is one image to build and
-  release.
+The price is that the control-plane queries it needs (key lookup, workspace limits, monthly trace count) exist in Rust
+as well as in `packages/api`; they are small and kept in sync by hand.
 
-It is a plain `node:http` server (no Hono): it streams-limits the body, keeps the raw bytes and forwards them with
-`fetch`.
-
-### Router behaviour
+### Ingest behaviour
 
 | case | answer |
 |---|---|
-| `POST /v1/traces` with a valid key | the collector's answer (status, body, `Retry-After`), body forwarded byte for byte |
+| `POST /v1/traces` with a valid key | 200 with an empty `ExportTraceServiceResponse` once the rows are in the write-ahead log |
 | no key | 401 |
 | unknown or revoked key, or a key of an archived project | 401; counts as a failure for the client IP |
 | more than `IVY_INGEST_MAX_KEY_FAILURES` (20) failures from an IP within a minute | 429 + `Retry-After` until the minute ends, except for keys already cached as valid (so one bad client behind a shared NAT doesn't lock out others) |
@@ -83,9 +79,8 @@ It is a plain `node:http` server (no Hono): it streams-limits the body, keeps th
 | body that doesn't parse | 400 |
 | `content-encoding` other than `gzip`, `deflate`, none | 400 |
 | `/v1/logs`, `/v1/metrics` | 404 (Ivy has no logs/metrics pipeline) |
-| collector unreachable or > 15 s | 503 + `Retry-After: 5` |
+| write-ahead log over `IVY_INGEST_WAL_MAX_BYTES` (ClickHouse down or behind) | 503 + `Retry-After: 5` |
 | key lookup failing (control database down) | 503 + `Retry-After: 5` |
-| collector answers 401/403 (token misconfigured) | 503 (not the client's fault) |
 | `GET /health` | 200 |
 
 Error bodies are a `google.rpc.Status`, JSON or protobuf like the request, as OTLP/HTTP specifies. 429/502/503/504
@@ -99,33 +94,27 @@ Server timeouts: 10 s for headers, 30 s per request. Client IP is the socket add
 database), concurrent lookups of one key share a query, at most 50k entries. A revoked key or a tenant move takes
 effect within a minute.
 
-**Usage counters.** Per tenant: requests, spans and bytes (as received) accepted by the collector, in memory per router
-process. Logged once a minute (`[ingest] usage tenant=… requests=… spans=… bytes=…`) and served as JSON on
-`http://127.0.0.1:4320/stats` (`IVY_INGEST_ADMIN_PORT`, loopback only). Counting spans means decompressing and
-walking each body (a small protobuf field walker, or `JSON.parse`); the walk also counts invocations
-(`ivy.invocation = true`) for quotas.
+**Usage counters.** Per tenant: requests, spans and bytes (as received) accepted, in memory per ingest process.
+Logged once a minute (`[ingest] usage tenant=… requests=… spans=… bytes=…`) and served as JSON on
+`http://127.0.0.1:4320/stats` (`IVY_INGEST_ADMIN_PORT`, loopback only). Spans are counted while each body is decoded
+into rows, and the same pass counts invocations (`ivy.invocation = true`) for quotas.
 
 **Monthly trace quotas** (`limits.md`). After the key lookup, a tenant whose `ivy_control.workspace_limits` row has a
 quota with `over_quota = block`, and whose traces this month (ClickHouse, refreshed every minute, plus this process's
 count since) reached it, gets 429 with `Retry-After`. Without a row a tenant is unlimited.
 
-### Decision: forward with `node:http`, not `fetch`
+### Note: per-request overhead
 
-The router forwards to the collector with a plain `http.request` on a keep-alive agent (`lib/ingest/forward.ts`).
-With `fetch` (undici), forwarding was 45% of the router's CPU per request: web streams, `Request`/`Headers` objects
-and body copies, plus the garbage they leave. One OTLP request per Lambda invocation (what the layer sends) makes
-per-request overhead the router's cost, and the router is a single process. Replacing `fetch` took the router from
-~345 to ~158 µs of CPU per request in a local benchmark (stub collector, realistic gzipped JSON invocations).
-On a 2-vCPU instance running the whole stack, per-invocation ingest with p99 under 100 ms went from ~450/s to ~700/s, and the
-hard ceiling (throughput stops growing, requests time out) from ~690/s to over 1,000/s, where the whole box is CPU-bound.
-What remains is mostly Node's HTTP server and the span count (`countTraffic`), which quotas depend on.
+The layer sends one OTLP request per Lambda invocation, so the fixed cost of a request dominates. The Node router
+first lost almost half its CPU to `fetch` (undici) when forwarding; replacing it with `node:http` took it from ~450 to
+~700 invocations/s with p99 under 100 ms on a 2-vCPU instance. The Rust service roughly doubled that again; the
+comparison is in `ingest.md`.
 
 ### Decision: no public gRPC (4317)
 
 Ingest is OTLP/HTTP only. The Ivy layer and loadgen use OTLP/HTTP; every OTel SDK and the Collector's `otlphttp`
-exporter support it. Proxying gRPC would mean an HTTP/2 server in the router and per-message work in gRPC framing for
-no current user. The collector's gRPC receiver is removed. If a customer needs gRPC, the router can grow an HTTP/2
-listener later with the same key and header logic.
+exporter support it. gRPC would mean an HTTP/2 server in ingest and per-message work in gRPC framing for no current
+user. If a customer needs gRPC, ingest can grow an HTTP/2 listener later with the same key and tenancy logic.
 
 ## API: workspace context
 
@@ -170,7 +159,7 @@ The background auto-trace sync runs outside requests; it works per account and a
    `USING getSettingOrDefault('SQL_ivy_tenant', '') = '' OR <tenant column> = getSettingOrDefault('SQL_ivy_tenant', '')`,
    restrictive, for all users; and `ivy_project` the same way with `SQL_ivy_project` and the project column. The API sets `SQL_ivy_tenant` on every query, so a route that forgets its tenant filter
    still only sees its tenant. Without the setting the policy passes everything: a fail-closed policy also filters the
-   blocks that materialized views read on insert (tried: `invocations` stayed empty), and the collector, MVs and admin
+   blocks that materialized views read on insert (tried: `invocations` stayed empty), and ingest inserts, MVs and admin
    sessions have no tenant. So the policy protects against a missing `WHERE`, not against code that bypasses the query
    helper; the static test covers that. A separate read-only ClickHouse user for the API with a fail-closed policy is
    the stronger follow-up. The control tables have no row policy (the cross-tenant lookups above need them).
@@ -184,7 +173,7 @@ hash can't give it back. There is one auto-trace key per project (a function's p
 - the project the `IVY_INGEST_API_KEY` bootstrap key belongs to (in the `default` tenant): that key (self-hosted keeps
   working with no new configuration; the plaintext already lives in the environment). Null when that project is archived.
 - Otherwise a system-managed key of kind `auto-trace` of that project, minted the first time it is needed, stored hashed (for
-  the router) and encrypted with AES-256-GCM under a key derived from `IVY_SECRET_KEY` (HKDF-SHA256), in
+  ingest) and encrypted with AES-256-GCM under a key derived from `IVY_SECRET_KEY` (HKDF-SHA256), in
   `api_keys.encrypted_key`. Every process picks the oldest active one, so two processes that mint at the same moment
   still converge on one key.
 - Neither available (no `IVY_SECRET_KEY` for any other project): functions show as `pending` and `GET /api/aws/setup`
@@ -197,12 +186,13 @@ revoked).
 
 ## Self-hosted bootstrap
 
-On startup, the API and the router each first give every key without a project its workspace's former default project
-(`assignProjectlessKeys`, see `workspaces-projects.md`, "There is no default project"), then ensure tenant `default`
+On startup, the API first gives every key without a project its workspace's former default project
+(`assignProjectlessKeys`, see `workspaces-projects.md`, "There is no default project"), then ensures tenant `default`
 (slug `default`, shard `shard-1`) exists and, if `IVY_INGEST_API_KEY` is set, that it is an active `bootstrap` key of an
 ordinary project: "Default" (slug `default`, derived ID), created the first time. A new value of the variable revokes
-the previous bootstrap key and takes over its project while that is active. The API also gives every existing tenant a
-slug (`ensureWorkspaceSlugs`). The key ID is derived from the hash, so concurrent or repeated runs write the same row.
+the previous bootstrap key and takes over its project while that is active. It also gives every existing tenant a
+slug (`ensureWorkspaceSlugs`). Ingest does none of this (the Node router used to run the same bootstrap); a key is
+accepted once the API has written it. The key ID is derived from the hash, so concurrent or repeated runs write the same row.
 Unsetting the variable revokes nothing. The dev flow (`dev-ingest-key`) and single-tenant installs work as before.
 
 ## Admin
@@ -224,18 +214,18 @@ docker compose -f deploy/docker-compose.yml exec api node tenants.mjs list   # i
 
 ## Cells: the sharding plan
 
-Each cell is today's stack: a collector and a ClickHouse with the `ivy` database (`otel_traces`, the MVs, the rollups).
-The router and the API are cell-agnostic; `IVY_SHARDS` maps shard IDs to endpoints:
+Each cell is a ClickHouse with the `ivy` database (`otel_traces`, the MVs, the rollups). Ingest and the API are
+cell-agnostic; `IVY_SHARDS` maps shard IDs to ClickHouse URLs:
 
 ```sh
-IVY_SHARDS='{"shard-1":{"clickhouse":"http://ch-1:8123","collector":"http://col-1:4318"},
-             "shard-2":{"clickhouse":"http://ch-2:8123","collector":"http://col-2:4318"}}'
+IVY_SHARDS='{"shard-1":{"clickhouse":"http://ch-1:8123"},
+             "shard-2":{"clickhouse":"http://ch-2:8123"}}'
 ```
 
-Without it there is one shard, `shard-1`, from `IVY_CLICKHOUSE_URL` and `IVY_COLLECTOR_URL`. New tenants go to
-`shard-1` (`tenants create --shard` picks another). The API queries `shardClient(tenant.shardId)`; the router forwards
-to `shardConfig(tenant.shardId).collector`. All cells share `IVY_COLLECTOR_TOKEN` and the ClickHouse credentials for
-now.
+Without it there is one shard, `shard-1`, from `IVY_CLICKHOUSE_URL`. A `"collector"` key from older configurations is
+ignored. New tenants go to `shard-1` (`tenants create --shard` picks another). The API queries
+`shardClient(tenant.shardId)`; ingest keeps a write-ahead log per shard and inserts into that shard's ClickHouse. All
+cells share the ClickHouse credentials for now.
 
 ### Moving a tenant between shards (runbook)
 
@@ -259,9 +249,9 @@ copied with `INSERT … SELECT … WHERE`. Run on the target cell's ClickHouse, 
    For large tenants, copy one day at a time (`AND toDate(Timestamp) = '…'`). To redo a day, first delete it on the
    target from all three tables (`ALTER TABLE … DELETE WHERE TenantId/tenant_id = 'ten_X' AND …`).
 3. **Flip the shard.** `pnpm --filter @ivy/api tenants set-shard ten_X shard-2`. Within a minute (key cache TTL) the
-   routers send the tenant's new spans to `shard-2`; within 30 s the API reads from `shard-2`.
+   ingest processes send the tenant's new spans to `shard-2`; within 30 s the API reads from `shard-2`.
 4. **Copy the tail.** After the TTLs have passed, copy `T0 ≤ Timestamp < T1` (T1 = flip time + 2 minutes, which
-   includes spans still in the source collector's queue) the same way.
+   includes spans still in the source shard's write-ahead log) the same way.
 5. **Check** `count()` per day for the tenant on both sides (`otel_traces` and `invocations`).
 6. **Delete from the source**: `ALTER TABLE ivy.otel_traces DELETE WHERE TenantId = 'ten_X'` (and `invocations`,
    `invocations_hourly`) on `shard-1`, or let retention age it out.
@@ -272,40 +262,41 @@ Control-plane rows (`tenants`, `projects`, `api_keys`, `aws_*`, `workspace_limit
 
 | variable | used by | default | |
 |---|---|---|---|
-| `IVY_INGEST_API_KEY` | API, router | `dev-ingest-key` in compose | bootstrap key of tenant `default` |
-| `IVY_COLLECTOR_TOKEN` | router, collector | `dev-collector-token` in compose | shared secret for the internal collectors; **required** by the router |
-| `IVY_COLLECTOR_URL` | router | `http://localhost:4319` | `shard-1` collector when `IVY_SHARDS` is unset |
-| `IVY_SHARDS` | API, router | | shard map, see above |
-| `IVY_CONTROL_CLICKHOUSE_URL` / `IVY_CONTROL_CLICKHOUSE_DATABASE` | API, router | `shard-1`'s ClickHouse / `ivy_control` | control plane |
+| `IVY_INGEST_API_KEY` | API | `dev-ingest-key` in compose | bootstrap key of tenant `default` |
+| `IVY_SHARDS` | API, ingest | | shard map, see above |
+| `IVY_CONTROL_CLICKHOUSE_URL` / `IVY_CONTROL_CLICKHOUSE_DATABASE` | API, ingest | `shard-1`'s ClickHouse / `ivy_control` | control plane |
 | `IVY_SECRET_KEY` | API | | encrypts auto-trace keys; needed for auto-trace of tenants other than `default` |
-| `IVY_INGEST_PORT` | router | `4318` | |
-| `IVY_INGEST_ADMIN_PORT` / `IVY_INGEST_ADMIN_HOST` | router | `4320` / `127.0.0.1` | `/stats` |
-| `IVY_INGEST_MAX_BODY_BYTES` | router | 10 MiB | |
-| `IVY_INGEST_MAX_KEY_FAILURES` | router | `20` | invalid keys per IP per minute before 429 |
-| `IVY_INGEST_TRUST_PROXY` | router | off | client IP from `X-Forwarded-For` |
-| `IVY_QUOTA_REFRESH_SECONDS`, `IVY_QUOTA_RETRY_AFTER_SECONDS`, `IVY_UPGRADE_URL` | router | 60, 300 | monthly quotas, `limits.md` |
+| `IVY_INGEST_PORT` | ingest | `4318` | |
+| `IVY_INGEST_ADMIN_PORT` / `IVY_INGEST_ADMIN_HOST` | ingest | `4320` / `127.0.0.1` | `/stats` |
+| `IVY_INGEST_MAX_BODY_BYTES` | ingest | 10 MiB | |
+| `IVY_INGEST_MAX_KEY_FAILURES` | ingest | `20` | invalid keys per IP per minute before 429 |
+| `IVY_INGEST_TRUST_PROXY` | ingest | off | client IP from `X-Forwarded-For` |
+| `IVY_QUOTA_REFRESH_SECONDS`, `IVY_QUOTA_RETRY_AFTER_SECONDS`, `IVY_UPGRADE_URL` | ingest | 60, 300 | monthly quotas, `limits.md` |
 | `IVY_INTERNAL_API_TOKEN` | API | | enables the internal admin API at `/internal/*` (`limits.md`) |
+
+Ingest's own settings (write-ahead log directory and size, flush interval) are in `ingest.md`, "Configuration".
 
 ## Verification
 
-- Unit tests: `scoped.test.ts` and `routes/tenant-scope.test.ts` (guards), `ingest/router.test.ts` (forwarding,
-  gzip passthrough, `x-api-key`, 401/413/415/400/404/429/503, collector backpressure), `ingest/otlp.test.ts`,
-  `tenancy/tenants.test.ts` (bootstrap, rotation, key hashing, auto-trace key minting/encryption).
-- Compose stack (built image, internal collector): loadgen with `dev-ingest-key` lands as `default` in
+- Unit tests: `scoped.test.ts` and `routes/tenant-scope.test.ts` (guards), `tenancy/tenants.test.ts` (bootstrap,
+  rotation, key hashing, auto-trace key minting/encryption); `cargo test` in `packages/ingest` (OTLP decoding, row
+  mapping and the tenant attributes, write-ahead log, key hashing, invalid-key limiting).
+- Row compatibility: the same payloads sent through the old collector path and through `ivy-ingest` into two projects
+  gave identical `otel_traces`, `invocations` and rollups apart from the project (`ingest.md`, "Decisions").
+- Compose stack (built images): loadgen with `dev-ingest-key` lands as `default` in
   `otel_traces`, `invocations` and `invocations_hourly`; a span claiming `ivy.tenant_id = evil` sent with the default
   key lands as `default`; a tenant made with `tenants.mjs create` gets its own key and its spans land under its
   `ten_…` ID, invisible to the API (`default`); bad and missing keys get 401, an IP with too many bad keys 429; the
-  collector stopped gives 503 + `Retry-After: 5` and recovers; the Lambda layer e2e
+  Lambda layer e2e
   (`IVY_ENDPOINT=http://host.docker.internal:4318`) lands under `default`; the API smoke script passes.
 - Row policies: with `SQL_ivy_tenant` set, a query without a tenant filter only sees that tenant; inserts through the
   materialized views are unaffected.
 
 ## Gaps
 
-- Monthly trace quotas exist (`limits.md`); per-query limits don't yet (M6). Router usage counters are per process and
+- Monthly trace quotas exist (`limits.md`); per-query limits don't yet (M6). Ingest usage counters are per process and
   reset on restart.
 - Row policies are fail-open without the setting (see Guards); a dedicated API ClickHouse user would close that.
 - No operator (cross-workspace) admin UI; the CLI talks to the control database directly. The internal admin API
   (`limits.md`) only covers limits, usage and members, for an operator's billing service.
 - The move runbook is manual and has not been rehearsed across two real cells.
-- Every router decompresses and parses each body once to count spans.

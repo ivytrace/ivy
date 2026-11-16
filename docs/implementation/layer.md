@@ -31,7 +31,7 @@ calls only exist there). Exporting is done by the extension:
   request ID (bounded by the invocation deadline + 200 ms), then exports and only then calls
   `/next`. Lambda keeps the environment running until all extensions call `/next`, so export
   happens after the response without delaying it. It does add to billed duration (~1–5 ms to a
-  healthy collector).
+  healthy ingest endpoint).
 - The extension only waits for spans once the tracer is attached (it said hello, or sent spans).
   The tracer does not hold up init for the hello's answer, so the hello can arrive just after the
   first `INVOKE`; when `AWS_LAMBDA_EXEC_WRAPPER` points at `ivy-wrapper` the extension expects a
@@ -350,7 +350,7 @@ Measured on Lambda (eu-west-1, Node.js 22, method and full tables in
   +160–215 ms with the Node extension and untrimmed tracer.
 - Warm response latency: no measurable difference at 1024 MB, ~1 ms at the median at 128 MB.
 - Billed duration: +15–20 ms per warm invocation at 1024 MB for the export after the response
-  (mostly the collector round trip), 40–50 ms at 128 MB.
+  (mostly the round trip to the ingest endpoint), 40–50 ms at 128 MB.
 
 Website-facing numbers: the old claim "under 1 ms added to a warm invocation" is only true for
 response latency. Use "no measurable delay to warm responses; about 20–45 ms added to cold

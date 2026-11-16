@@ -12,7 +12,7 @@ Rust one (`docs/implementation/layer.md`, "Extension in Rust") and trimming the 
   - **Node extension (main)**: the layer as built from main before this work (Node extension, old tracer);
   - **Rust extension**: the old tracer with the Rust extension;
   - **Rust + trimmed tracer**: the current layer.
-- **Collector**: a second Lambda function behind a function URL that answers `200 {}` and logs the
+- **Ingest endpoint**: a stand-in for Ivy's ingest, a second Lambda function behind a function URL that answers `200 {}` and logs the
   span count, so every export is a real HTTPS request (TLS handshake on the first export of each
   environment). The handler's `fetch` goes to another URL of that function (an alias), so it is
   traced as a normal outgoing call. All spans arrived with the right `Authorization` header.
@@ -70,7 +70,7 @@ Billed duration (`REPORT` `Duration`, includes the post-response export), ms:
   back-to-back invocations that arrive while the previous invocation's export is still running
   on the environment's small CPU share, so Lambda queues them or starts a new environment.
 - Billed duration grows by the export: ~15–20 ms at 1024 MB, most of it the HTTPS round trip to
-  the collector (here a Lambda function URL, itself ~10–15 ms). A faster collector endpoint
+  the ingest endpoint (here a Lambda function URL, itself ~10–15 ms). A faster ingest endpoint
   makes this smaller; the extension's language hardly matters for it at 1024 MB. At 128 MB
   serializing and exporting on a fraction of a vCPU costs 40–60 ms at the median, less with the
   Rust extension than with Node.
@@ -87,7 +87,7 @@ The website said "under 1 ms added to a warm invocation". Measured on Lambda:
 - Cold start: +20–45 ms init.
 
 Suggested wording: "No measurable delay to warm responses; about 20–45 ms added to cold starts.
-Spans are exported after the response, which adds the collector round trip to billed duration."
+Spans are exported after the response, which adds the export round trip to billed duration."
 
 ## Local numbers (Docker, M-series Mac)
 

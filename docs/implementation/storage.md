@@ -1,29 +1,31 @@
 # Storage
 
-## Decision: use the Collector's ClickHouse exporter, add our tables as materialized views
+## Decision: the Collector's ClickHouse exporter schema, our tables as materialized views
 
-The answer to the spec's open question "Does the Collector's ClickHouse exporter schema fit, or do we write our own exporter?" is: it fits. We use the
-contrib `clickhouse` exporter (pinned `otel/opentelemetry-collector-contrib:0.165.0`) writing to
-its standard `otel_traces` table. Everything Ivy-specific is derived inside ClickHouse with materialized views.
+The answer to the spec's open question "Does the Collector's ClickHouse exporter schema fit, or do we write our own exporter?" is: it fits. Spans are stored in the
+contrib `clickhouse` exporter's standard `otel_traces` table (as of `otel/opentelemetry-collector-contrib:0.165.0`).
+Everything Ivy-specific is derived inside ClickHouse with materialized views.
 
-Why:
-- Little custom ingest code. The Collector gives us OTLP decoding, batching, retries and a persistent on-disk
-  queue (`file_storage`) for free, and any OTLP/HTTP producer works. In front of it, the ingest router
-  (`tenancy.md`) only authenticates keys and forwards bodies unchanged.
+Ivy first ran the Collector itself, behind a Node ingest router: it gave OTLP decoding, batching, retries and a
+persistent on-disk queue for free. Ingest is now `ivy-ingest` (`ingest.md`), a Rust service that writes the same
+rows the exporter wrote (verified side by side), with its own write-ahead log, for about twice the throughput. The
+table and the views did not change.
+
+Why this schema:
+- Any OTLP producer's spans fit it, and it is the shape OTel tooling knows.
 - The exporter's span shape (attribute maps, nested events) holds everything in
   `span-conventions.md`. Attributes arrive as strings (arrays as JSON strings), which matches what the API
   contract already promises.
 - Materialized views run on insert, so `invocations` and the rollups stay in sync with no extra service.
 
 Trade-offs:
-- `otel_traces` column names and types are defined by the exporter. We create the table ourselves
-  (`create_schema: false`) with the same columns as 0.165.0's DDL, plus `TenantId`. When upgrading the
-  Collector, diff its DDL (run it once with `create_schema: true` against a scratch database).
-- The exporter writes `SpanKind` as `Server`/`Client`/… and `StatusCode` as `Ok`/`Error`/`Unset`. The API
+- `otel_traces` column names and types are the exporter's 0.165.0 DDL, plus `TenantId` and `ProjectId`, created by
+  `schema.sql`. `packages/ingest/src/rows.rs` maps spans to these columns exactly as the exporter did, because the
+  materialized views match on its strings; a schema change means changing both.
+- Span kind is stored as `Server`/`Client`/… and the status as `Ok`/`Error`/`Unset` (the exporter's strings). The API
   normalizes them to `SERVER`/`ERROR`/….
 - `TenantId` and `ProjectId` default from the resource attributes `ivy.tenant_id` and `ivy.project_id`, which
-  the collector sets from the ingest router's `x-ivy-tenant` and `x-ivy-project` headers after deleting whatever
-  the client sent (`tenancy.md`, `workspaces-projects.md`). Workspace and project are therefore always the API
+  ingest sets from the API key after replacing whatever the client sent (`tenancy.md`, `workspaces-projects.md`). Workspace and project are therefore always the API
   key's, never the payload's.
 
 ## Tables (`deploy/clickhouse/schema.sql`)
@@ -88,7 +90,7 @@ overview and errors across all projects) read the tenant's range and group by `p
   start after the range ends (an invocation runs up to Lambda's 15-minute timeout) and clock slack between the
   invocation span and its children. One trace is one invocation (the layer propagates no trace context), so the
   trace ID identifies it. Several terms each need some span of the trace (`GROUP BY TraceId HAVING max(term₁) AND
-  …`), not one span with all of them. Attribute values are stored as strings by the collector (`42`, `1.5`, `true`),
+  …`), not one span with all of them. Attribute values are stored as strings (`42`, `1.5`, `true`, as the exporter did),
   so numbers and booleans match their string form with plain equality. The existing `idx_span_attr_value` bloom filter
   on `mapValues(SpanAttributes)` serves `SpanAttributes[key] = value`; no new index was needed. Verified with
   `EXPLAIN indexes = 1` on 2M spans in one hour: 4 of 245 granules read. Both the final and the in-progress branch of
@@ -112,7 +114,7 @@ Pre-release schema changes are applied this way, without migrations.
 all three span tables, which ClickHouse can't change in place (`MODIFY ORDER BY` only appends new columns), and the
 control plane gained tables and columns. Since there was no production data yet, volumes from before this change
 are **reset, not migrated**: `deploy/clickhouse/reset.sql` drops the `ivy` and `ivy_control` databases, `init.sh`
-recreates everything, and on restart the API and router recreate the `default` workspace, its `default` project and
+recreates everything, and on restart the API recreates the `default` workspace, its `default` project and
 the `IVY_INGEST_API_KEY` key, so an existing ingest key set through that variable keeps working; users get fresh
 workspaces when they sign in again. `pnpm db:reset` does all three for compose. `init.sh` refuses to run on an old
 volume and says to reset. This is not a migration path and won't be one: the first real migration needs a migration

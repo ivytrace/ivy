@@ -71,15 +71,15 @@ the Node router and collector. Past the ceiling the box is saturated by the TLS 
 | `IVY_INGEST_MAX_BODY_BYTES`, `IVY_INGEST_MAX_KEY_FAILURES`, `IVY_INGEST_TRUST_PROXY`, `IVY_INGEST_ADMIN_PORT/HOST` | as the Node router | |
 | `IVY_QUOTA_REFRESH_SECONDS`, `IVY_QUOTA_RETRY_AFTER_SECONDS`, `IVY_PUBLIC_URL`, `IVY_UPGRADE_URL` | as the Node router | |
 
-## Status and rollout
+## Rollout
 
-Built and verified (unit tests: `cargo test` in `packages/ingest`; the differential test and load tests above), not
-yet wired in. Remaining, in this order:
-
-1. Release workflow: build and push `ghcr.io/ivytrace/ivy-ingest:<sha>` (multi-arch, `packages/ingest/Dockerfile`).
-2. `deploy/docker-compose.yml`: the `ingest` service runs this image with a `ingest-wal` volume and the
-   `ivy-ingest health` healthcheck; the `collector` service and `deploy/collector/` go once nothing uses them.
-3. Deployments that override the compose file must switch in the same release (their collector settings and ingest
-   image), and drain the collector's queue before it is removed.
-4. `tenancy.md` → "Ingest path" and the Node router (`packages/api/src/ingest.ts`, `lib/ingest/`) are updated or
-   removed once the image is the default.
+- Images: `release.yml` publishes `ghcr.io/ivytrace/ivy-ingest:<sha>` and `:main` next to `ivy-api` (multi-arch);
+  CI runs `cargo test --locked` in `packages/ingest`. Compose builds it locally as `ivy-ingest:local`.
+- Switching a running deployment: start the new ingest first and stop the collector ~20 s later, so the collector
+  inserts what it still holds (it batches every 2 s) before it goes. No upgrade path is documented for self-hosted
+  installs, as none predate the switch.
+- The Node router (`packages/api/src/ingest.ts`, `lib/ingest/`, the quota gate) and `deploy/collector/` were
+  removed in the same change; the API still bootstraps the default tenant on start.
+- Verification before the switch: the side-by-side row comparison and load tests above, `e2e-workspaces.ts` against
+  the new compose file (tenant and project isolation, forged attributes overwritten), and a WAL replay test (100
+  requests accepted with ClickHouse stopped and ingest restarted, all 100 inserted once ClickHouse returned).

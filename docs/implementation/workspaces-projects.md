@@ -84,7 +84,7 @@ started as a fixed project with a derived ID, then became a movable designation 
 could be archived. Users then asked why it had to exist at all, and it doesn't: **every key, rule and traced function
 belongs to an explicit project**, so nothing ever resolves to a fallback.
 
-- **Keys.** `project_id` is always set. The router's key cache, `findKeyByHash` and the key routes compare it as is; a
+- **Keys.** `project_id` is always set. Ingest's key cache, `findKeyByHash` and the key routes compare it as is; a
   key without one is rejected like a revoked key.
 - **Auto-trace.** A rule and a manual "trace" choice must name a project (`targetProject` answers 400 without one).
   `ivy:trace=true` without an `ivy:project` naming an active project, and no manual choice or rule to supply one, gives
@@ -104,8 +104,8 @@ archiving it disables that key. Changing the variable revokes the previous boots
 previous key's project while that is active, else to the derived project (created again if missing). Without the
 variable, the `default` workspace starts empty like any other.
 
-**Migration (existing installs and the hosted service).** On startup, before serving, the API and the ingest router run
-`assignProjectlessKeys()`: every key with an empty `project_id` (keys from before projects, bootstrap keys that
+**Migration (existing installs and the hosted service).** On startup, before serving, the API runs
+`assignProjectlessKeys()` (ingest used to as well; it now leaves the bootstrap to the API): every key with an empty `project_id` (keys from before projects, bootstrap keys that
 followed the default, the hosted service's ingest key) gets its workspace's then-current default project written
 explicitly: `tenants.default_project_id`, or the derived ID when that was empty. It is idempotent and reads all such keys
 in one cross-tenant query. Functions traced only because of `ivy:trace=true` (no `ivy:project`, rule or manual choice)
@@ -122,11 +122,10 @@ last used for tracing in this browser, else nothing.
 
 ### Ingest stamps the project server-side
 
-The router resolves key → tenant **and** project (keys without a project, or of archived or missing projects, are
-rejected with 401) and forwards `x-ivy-project` next to `x-ivy-tenant`. The collector
-deletes any client-sent `ivy.project_id` and inserts the header's value, exactly like the tenant, and drops spans
-without either. `otel_traces.ProjectId` defaults from that attribute. Verified on the pinned collector (0.165.0): a
-forged `ivy.project_id` (and `ivy.tenant_id`) is overwritten, and a request without the project header stores nothing.
+Ingest resolves key → tenant **and** project (keys without a project, or of archived or missing projects, are
+rejected with 401) and sets `ivy.project_id` on every resource, replacing any client-sent value, exactly like the
+tenant. `otel_traces.ProjectId` defaults from that attribute. A forged `ivy.project_id` (and `ivy.tenant_id`) is
+overwritten (verified first on the collector path this replaced, `tenancy.md`, and in `rows.rs`'s tests).
 
 ### Single-workspace mode hides workspace management
 
@@ -177,7 +176,7 @@ concurrent accepts by the same user write the same membership row, so they're ha
 because the email must match.
 
 **Projects.** Create (slug from the name unless given), rename/re-slug, archive/unarchive. Archiving
-keeps the data readable, stops the project's keys at the router (within the key cache TTL of a minute), refuses new
+keeps the data readable, stops the project's keys at ingest (within the key cache TTL of a minute), refuses new
 keys, and re-syncs AWS so rules pointing at it stop tracing into it. Every project, the last active one included,
 archives through the same confirmation in Settings → Projects: keys created for it stop working, its data stays until
 retention, and it can be unarchived.
@@ -218,13 +217,13 @@ The app's own paths that a proxy in front of Ivy must send to the app (in additi
   keys and auto-trace keys), `routes/tenant-scope.test.ts` and `lib/clickhouse/scoped.test.ts` (project guard; workspace-wide invocations and
   timeseries: tenant bound, no project, items labelled with their project, a cursor page across projects, `project`
   narrowing, 404 for another workspace without any query),
-  `lib/ingest/router.test.ts` (`x-ivy-project`, old keys, archived/missing projects).
+  and `cargo test` in `packages/ingest` (client-set tenant and project attributes replaced).
 - Schema: a ClickHouse volume created with the previous schema was refused by the new `init.sh` with the reset
   instructions; after `reset.sql` the new `init.sh` created all 14 tables and ran again as a no-op. (A data-preserving
   in-place rebuild was also built and verified first, then dropped in favour of the reset; see `storage.md`.)
 - End to end on a compose stack with alternate ports (`ivy-e2e`: API :13000, ingest :14318, ClickHouse :18123), OIDC
   on in multi-workspace mode against a throwaway provider (`pnpm --filter @ivy/api e2e:workspaces`): two users, two
-  workspaces, two projects each, a key per project, one invocation per project sent through the ingest router with
+  workspaces, two projects each, a key per project, one invocation per project sent through ingest with
   forged `ivy.tenant_id`/`ivy.project_id`. Each project's functions/invocations/traces showed only its own data, a
   trace was 404 under the sibling project, workspace-wide functions covered both projects with project slugs, forged
   attributes were overwritten, the other user got 404 on the workspace (by slug and ID) until invited, the invite was

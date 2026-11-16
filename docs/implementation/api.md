@@ -168,7 +168,7 @@ is no per-project usage route.
 - `GET /api/w/:workspace/p/:project` → the project.
 - `PATCH /api/w/:workspace/p/:project`, body: any of `name`, `slug`, `archived` (boolean) → the project. Renaming
   doesn't change the slug. Archiving works the same for every project, the last active one included: the keys created
-  for it stop ingesting (401 at the router), AWS accounts are re-synced so no function sends to it, and its data stays
+  for it stop ingesting (401 at ingest), AWS accounts are re-synced so no function sends to it, and its data stays
   until retention. Unarchiving brings it back.
 
 ### Ingest keys of a project
@@ -619,13 +619,13 @@ RFC 9728 protected resource metadata of the MCP endpoint (only when OIDC is conf
 
 ## Ingest (separate service, port 4318)
 
-Not part of the API process: the ingest router (`tenancy.md`) serves OTLP/HTTP.
+Not part of the API process: the `ivy-ingest` service (`ingest.md`, `tenancy.md`) serves OTLP/HTTP.
 
 ### `POST /v1/traces`
 OTLP/HTTP `ExportTraceServiceRequest`, `application/x-protobuf` or `application/json`, optionally
 `content-encoding: gzip`/`deflate`. Authenticated with `Authorization: Bearer <key>` or `x-api-key: <key>` (a
 project's ingest key). The spans are stored under the key's workspace and project; `ivy.tenant_id` and
-`ivy.project_id` sent by the client are overwritten. Answers as OTLP/HTTP: the collector's response on success;
+`ivy.project_id` sent by the client are overwritten. Answers as OTLP/HTTP: 200 with an empty `ExportTraceServiceResponse` once the spans are in ingest's write-ahead log;
 400, 401 (also for keys of archived projects), 413, 415, 429 (`Retry-After`) or 503 (`Retry-After`) with a
 `google.rpc.Status` body otherwise. `/v1/logs` and `/v1/metrics` are 404; there is no gRPC.
 A workspace over a monthly trace quota with `over_quota: block` gets 429, `Retry-After: 300` (or until the month
@@ -657,7 +657,7 @@ One workspace's usage object.
 
 ### `PUT /internal/workspaces/:id/limits`
 Body `{ "plan": "Free", "monthly_trace_quota": 50000 | null, "over_quota": "block" | "allow" }` (all optional:
-`""`, `null` = unlimited, `allow`). Replaces the workspace's limits. The ingest routers pick it up within
+`""`, `null` = unlimited, `allow`). Replaces the workspace's limits. Ingest picks it up within
 `IVY_QUOTA_REFRESH_SECONDS`.
 `{ "workspace": "ten_…", "limits": { …, "source": "workspace" }, "updated_at": "…" }`
 

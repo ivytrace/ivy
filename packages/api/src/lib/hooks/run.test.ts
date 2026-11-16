@@ -86,7 +86,7 @@ describe('provider hooks', () => {
 
   it('get only the allow-listed environment', async () => {
     vi.stubEnv('IVY_SECRET_KEY', 'secret');
-    vi.stubEnv('IVY_COLLECTOR_TOKEN', 'secret');
+    vi.stubEnv('IVY_CLICKHOUSE_PASSWORD', 'secret');
     vi.stubEnv('IVY_INTERNAL_API_TOKEN', 'secret');
     vi.stubEnv('AWS_REGION', 'eu-west-1');
     vi.stubEnv('HOOK_BUCKET', 'b');

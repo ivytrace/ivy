@@ -37,58 +37,34 @@ services:
       retries: 40
     restart: unless-stopped
 
-  collector-volume-init:
-    image: alpine:3.20
-    command: ["sh", "-c", "chown -R 10001:10001 /var/lib/otelcol/file_storage"]
-    volumes:
-      - collector-queue:/var/lib/otelcol/file_storage
-
-  # Internal only: no published ports. Clients send to the ingest router, which forwards here
-  # with IVY_COLLECTOR_TOKEN and the tenant header (docs/implementation/tenancy.md).
-  collector:
-    image: otel/opentelemetry-collector-contrib:0.165.0
-    command: ["--config=/etc/otelcol-contrib/config.yaml"]
-    environment:
-      <<: *clickhouse-env
-      IVY_COLLECTOR_TOKEN: ${IVY_COLLECTOR_TOKEN:-dev-collector-token}
-      IVY_CLICKHOUSE_ENDPOINT: tcp://clickhouse:9000?dial_timeout=10s
-    volumes:
-      - ./collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
-      - collector-queue:/var/lib/otelcol/file_storage
-    depends_on:
-      clickhouse: { condition: service_healthy }
-      collector-volume-init: { condition: service_completed_successfully }
-    restart: unless-stopped
-
-  # Public OTLP/HTTP endpoint: API key → tenant → shard collector. Same image as the API.
+  # Public OTLP/HTTP endpoint: API key → tenant, project and shard → that shard's ClickHouse, through a
+  # write-ahead log (docs/implementation/ingest.md).
   ingest:
-    image: ivy-api:local
-    build: *api-build
-    command: ["node", "ingest.mjs"]
+    image: ivy-ingest:local
+    build: ../packages/ingest
     environment:
       <<: *clickhouse-env
-      IVY_COLLECTOR_URL: http://collector:4318
-      IVY_COLLECTOR_TOKEN: ${IVY_COLLECTOR_TOKEN:-dev-collector-token}
-      IVY_INGEST_API_KEY: ${IVY_INGEST_API_KEY:-dev-ingest-key}
+      IVY_INGEST_WAL_DIR: /var/lib/ivy-ingest
       IVY_INGEST_TRUST_PROXY: ${IVY_INGEST_TRUST_PROXY:-}
       IVY_INGEST_MAX_BODY_BYTES: ${IVY_INGEST_MAX_BODY_BYTES:-}
       IVY_SHARDS: ${IVY_SHARDS:-}
       # Monthly trace quotas (docs/implementation/limits.md); the 429 message links to IVY_UPGRADE_URL,
-      # else to IVY_PUBLIC_URL/settings/usage
+      # else to IVY_PUBLIC_URL/w/<workspace>/settings/usage
       IVY_PUBLIC_URL: ${IVY_PUBLIC_URL:-}
       IVY_UPGRADE_URL: ${IVY_UPGRADE_URL:-}
       IVY_QUOTA_REFRESH_SECONDS: ${IVY_QUOTA_REFRESH_SECONDS:-}
       IVY_QUOTA_RETRY_AFTER_SECONDS: ${IVY_QUOTA_RETRY_AFTER_SECONDS:-}
+    volumes:
+      - ingest-wal:/var/lib/ivy-ingest
     ports:
       - "${IVY_OTLP_HTTP_PORT:-4318}:4318"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4318/health"]
+      test: ["CMD", "/ivy-ingest", "health"]
       interval: 5s
       timeout: 3s
       retries: 20
     depends_on:
       clickhouse: { condition: service_healthy }
-      collector: { condition: service_started }
     restart: unless-stopped
 
   api:
@@ -141,4 +117,4 @@ services:
 
 volumes:
   clickhouse-data:
-  collector-queue:
+  ingest-wal:

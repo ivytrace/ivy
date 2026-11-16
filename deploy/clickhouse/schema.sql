@@ -42,7 +42,7 @@ ORDER BY (TenantId, ProjectId, toStartOfHour(Timestamp), TraceId)
 TTL toDateTime(Timestamp) + toIntervalDay({{RETENTION_DAYS}})
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 
--- Tenant and project are set by the collector from the ingest router's headers, which replace any
+-- Tenant and project are set by ingest from the API key, replacing any
 -- client-supplied `ivy.tenant_id` / `ivy.project_id`. Older schemas fell back to the client's attribute or 'default'.
 ALTER TABLE ivy.otel_traces MODIFY COLUMN `TenantId` LowCardinality(String) DEFAULT ResourceAttributes['ivy.tenant_id'] CODEC(ZSTD(1));
 
@@ -248,7 +248,7 @@ TTL minute + toIntervalDay({{RETENTION_DAYS}});
 
 -- Defence in depth: when a query sets SQL_ivy_tenant (the API does for every query, see
 -- packages/api/src/lib/clickhouse/scoped.ts), only that tenant's rows are visible, even if the
--- SQL forgot its tenant filter. Without the setting (collector inserts, materialized views,
+-- SQL forgot its tenant filter. Without the setting (ingest inserts, materialized views,
 -- admin sessions) the policy lets everything through: a fail-closed policy would also filter
 -- the rows materialized views read on insert.
 CREATE ROW POLICY OR REPLACE ivy_tenant ON ivy.otel_traces AS RESTRICTIVE

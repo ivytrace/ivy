@@ -42,7 +42,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: build
+      - id: api
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -56,16 +56,30 @@ jobs:
           outputs: type=image,name=ghcr.io/ivytrace/ivy-api,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
-      - name: Save digest
+      - id: ingest
+        uses: docker/build-push-action@v7
+        with:
+          context: packages/ingest
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=ivy-ingest
+            org.opencontainers.image.description=Ivy OTLP ingest
+          outputs: type=image,name=ghcr.io/ivytrace/ivy-ingest,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=ingest-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=ingest-${{ matrix.arch }}
+      - name: Save digests
         run: |
-          mkdir -p /tmp/digests
-          touch "/tmp/digests/${DIGEST#sha256:}"
+          mkdir -p /tmp/digests/api /tmp/digests/ingest
+          touch "/tmp/digests/api/${API#sha256:}" "/tmp/digests/ingest/${INGEST#sha256:}"
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          API: ${{ steps.api.outputs.digest }}
+          INGEST: ${{ steps.ingest.outputs.digest }}
       - uses: actions/upload-artifact@v5
         with:
-          name: digest-${{ matrix.arch }}
-          path: /tmp/digests/*
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests
           retention-days: 1
 
   image:
@@ -76,7 +90,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v5
         with:
-          pattern: digest-*
+          pattern: digests-*
           path: /tmp/digests
           merge-multiple: true
       - uses: docker/setup-buildx-action@v4
@@ -88,11 +102,13 @@ jobs:
       - name: Publish the multi-arch tags
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create \
-            -t ghcr.io/ivytrace/ivy-api:${{ github.sha }} \
-            -t ghcr.io/ivytrace/ivy-api:main \
-            $(printf 'ghcr.io/ivytrace/ivy-api@sha256:%s ' *)
-          docker buildx imagetools inspect ghcr.io/ivytrace/ivy-api:${{ github.sha }}
+          for image in api ingest; do
+            docker buildx imagetools create \
+              -t ghcr.io/ivytrace/ivy-$image:${{ github.sha }} \
+              -t ghcr.io/ivytrace/ivy-$image:main \
+              $(cd $image && printf "ghcr.io/ivytrace/ivy-$image@sha256:%s " *)
+            docker buildx imagetools inspect ghcr.io/ivytrace/ivy-$image:${{ github.sha }}
+          done
 
   dispatch-hosted:
     needs: image

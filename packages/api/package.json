@@ -5,10 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "dev:ingest": "tsx watch src/ingest.ts",
-    "build": "esbuild src/index.ts src/ingest.ts scripts/tenants.ts scripts/hooks-test.ts --bundle --platform=node --target=node22 --format=esm --outdir=dist --entry-names=[name] --out-extension:.js=.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "build": "esbuild src/index.ts scripts/tenants.ts scripts/hooks-test.ts --bundle --platform=node --target=node22 --format=esm --outdir=dist --entry-names=[name] --out-extension:.js=.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "start": "node dist/index.mjs",
-    "start:ingest": "node dist/ingest.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "smoke": "tsx scripts/smoke.ts",

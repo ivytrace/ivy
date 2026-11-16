@@ -1,7 +1,7 @@
 # Ivy
 
 Open-source observability for AWS Lambda (Node.js first). One `docker compose up`
-runs everything: OpenTelemetry Collector → ClickHouse → API (Hono) → UI (React).
+runs everything: OTLP ingest (Rust) → ClickHouse → API (Hono) → UI (React).
 
 ## Self-hosting
 
@@ -15,8 +15,8 @@ docker compose -f deploy/docker-compose.yml up -d --build
 
 The dashboard and API listen on port 3000, OTLP ingest on 4318. Put both behind a reverse proxy with TLS (Caddy,
 nginx, a load balancer), for example `ivy.example.com` → `:3000` and `ingest.ivy.example.com` → `:4318`.
-Instead of building, you can use the published image: replace the `build:` entries with
-`image: ghcr.io/ivytrace/ivy-api:main`.
+Instead of building, you can use the published images: replace the `build:` entries with
+`image: ghcr.io/ivytrace/ivy-api:main` (API and dashboard) and `image: ghcr.io/ivytrace/ivy-ingest:main` (ingest).
 
 A minimal `deploy/.env`:
 
@@ -24,7 +24,6 @@ A minimal `deploy/.env`:
 IVY_PUBLIC_URL=https://ivy.example.com
 IVY_INGEST_PUBLIC_URL=https://ingest.ivy.example.com
 IVY_SECRET_KEY=…              # openssl rand -base64 32
-IVY_COLLECTOR_TOKEN=…         # openssl rand -hex 32
 IVY_CLICKHOUSE_PASSWORD=…
 IVY_INGEST_API_KEY=…          # a first ingest key, created on startup (the default, dev-ingest-key, is public)
 
@@ -50,7 +49,7 @@ To upgrade, `git pull` and run the same `up` command again, then apply schema ch
 
 ```sh
 pnpm install
-pnpm dev        # ClickHouse + collector in Docker; API, ingest router and dashboard with hot reload
+pnpm dev        # ClickHouse + ingest in Docker; API and dashboard with hot reload
                 # dashboard: http://localhost:5173, API: :3000, OTLP/HTTP: :4318 (key dev-ingest-key)
 pnpm --filter loadgen start -- --count 5000 --backfill 24   # sample data
 pnpm dev:mock   # dashboard only, with fixture data (no Docker)
@@ -73,7 +72,8 @@ interactive view (MCP Apps) in hosts that support it, and as text elsewhere. Wit
 OAuth protected resource (`docs/implementation/mcp.md`).
 
 See `docs/implementation/span-conventions.md`, `docs/implementation/api.md`, `docs/implementation/mcp.md` and
-`docs/implementation/tenancy.md` (tenants, API keys, ingest router, sharding plan).
+`docs/implementation/tenancy.md` (tenants, API keys, sharding plan) and `docs/implementation/ingest.md` (the ingest
+service).
 
 ## License
 

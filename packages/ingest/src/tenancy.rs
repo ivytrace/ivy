@@ -7,6 +7,8 @@ use serde::Deserialize;
 use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -157,15 +159,15 @@ struct QuotaEntry {
     refreshed_at: i64,
 }
 
+/// Where a tenant's limits and this month's usage come from (ClickHouse; a fake in tests).
+pub trait LoadSnapshot: Send + Sync {
+    fn load<'a>(&'a self, tenant: &'a str, shard: &'a str, month: (i64, u32), now: i64) -> Pin<Box<dyn Future<Output = Result<Snapshot, String>> + Send + 'a>>;
+}
+
 pub struct QuotaGate {
-    control: Client,
-    control_db: String,
-    shards: HashMap<String, Client>,
-    data_db: String,
+    loader: Box<dyn LoadSnapshot>,
     refresh_ms: i64,
     recheck_seconds: i64,
-    public_url: Option<String>,
-    upgrade_url: Option<String>,
     entries: Mutex<HashMap<String, QuotaEntry>>,
     refreshing: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
@@ -179,26 +181,11 @@ const FAILURE_RETRY_MS: i64 = 10_000;
 const HOUR_MS: i64 = 3_600_000;
 
 impl QuotaGate {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        control: Client,
-        control_db: String,
-        shards: HashMap<String, Client>,
-        data_db: String,
-        refresh_seconds: i64,
-        recheck_seconds: i64,
-        public_url: Option<String>,
-        upgrade_url: Option<String>,
-    ) -> QuotaGate {
+    pub fn new(loader: Box<dyn LoadSnapshot>, refresh_seconds: i64, recheck_seconds: i64) -> QuotaGate {
         QuotaGate {
-            control,
-            control_db,
-            shards,
-            data_db,
+            loader,
             refresh_ms: refresh_seconds * 1000,
             recheck_seconds,
-            public_url,
-            upgrade_url,
             entries: Mutex::new(HashMap::new()),
             refreshing: Mutex::new(HashMap::new()),
         }
@@ -255,7 +242,7 @@ impl QuotaGate {
         };
         let started = now_ms();
         let local_before = self.entries.lock().unwrap().get(tenant).filter(|e| e.month == month).map_or(0, |e| e.local);
-        let result = self.load(tenant, shard, month, started).await;
+        let result = self.loader.load(tenant, shard, month, started).await;
         let mut entries = self.entries.lock().unwrap();
         match result {
             Ok(snapshot) => {
@@ -275,8 +262,26 @@ impl QuotaGate {
             }
         }
     }
+}
 
-    async fn load(&self, tenant: &str, shard: &str, month: (i64, u32), now: i64) -> Result<Snapshot, String> {
+/// Limits from `ivy_control.workspace_limits`; usage (only when the limits can block) from the shard's data.
+pub struct ClickHouseSnapshots {
+    pub control: Client,
+    pub control_db: String,
+    pub shards: HashMap<String, Client>,
+    pub data_db: String,
+    pub public_url: Option<String>,
+    pub upgrade_url: Option<String>,
+}
+
+impl LoadSnapshot for ClickHouseSnapshots {
+    fn load<'a>(&'a self, tenant: &'a str, shard: &'a str, month: (i64, u32), now: i64) -> Pin<Box<dyn Future<Output = Result<Snapshot, String>> + Send + 'a>> {
+        Box::pin(self.snapshot(tenant, shard, month, now))
+    }
+}
+
+impl ClickHouseSnapshots {
+    async fn snapshot(&self, tenant: &str, shard: &str, month: (i64, u32), now: i64) -> Result<Snapshot, String> {
         let rows: Vec<HashMap<String, Json>> = self
             .control
             .query(
@@ -512,6 +517,85 @@ mod tests {
         );
         assert_eq!(thousands(999), "999");
         assert_eq!(thousands(1_000_000), "1,000,000");
+    }
+
+    struct FakeSnapshots {
+        result: Mutex<Result<Snapshot, String>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl LoadSnapshot for FakeSnapshots {
+        fn load<'a>(&'a self, _: &'a str, _: &'a str, _: (i64, u32), _: i64) -> Pin<Box<dyn Future<Output = Result<Snapshot, String>> + Send + 'a>> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let result = self.result.lock().unwrap().clone();
+            Box::pin(async move { result })
+        }
+    }
+
+    fn gate(result: Result<Snapshot, String>, refresh_seconds: i64) -> (Arc<QuotaGate>, &'static FakeSnapshots) {
+        let fake: &'static FakeSnapshots = Box::leak(Box::new(FakeSnapshots { result: Mutex::new(result), calls: Default::default() }));
+        struct Shared(&'static FakeSnapshots);
+        impl LoadSnapshot for Shared {
+            fn load<'a>(&'a self, t: &'a str, s: &'a str, m: (i64, u32), n: i64) -> Pin<Box<dyn Future<Output = Result<Snapshot, String>> + Send + 'a>> {
+                self.0.load(t, s, m, n)
+            }
+        }
+        (Arc::new(QuotaGate::new(Box::new(Shared(fake)), refresh_seconds, 300)), fake)
+    }
+
+    fn blocking(quota: u64, used: u64) -> Snapshot {
+        Snapshot { plan: "free".into(), blocking_quota: Some(quota), used, upgrade_url: Some("https://example.com/up".into()) }
+    }
+
+    #[tokio::test]
+    async fn quota_allows_unlimited_and_under_quota() {
+        let (g, _) = gate(Ok(Snapshot::default()), 60);
+        assert!(g.check("t", "shard-1").await.is_none());
+        let (g, _) = gate(Ok(blocking(10, 9)), 60);
+        assert!(g.check("t", "shard-1").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn quota_blocks_at_the_quota() {
+        let (g, _) = gate(Ok(blocking(10, 10)), 60);
+        let block = g.check("t", "shard-1").await.expect("blocked");
+        assert!(block.retry_after >= 1 && block.retry_after <= 300);
+        assert!(block.message.contains("10 traces on the free plan") && block.message.contains("https://example.com/up"));
+    }
+
+    #[tokio::test]
+    async fn quota_counts_accepted_traces_between_refreshes() {
+        let (g, fake) = gate(Ok(blocking(10, 7)), 60);
+        assert!(g.check("t", "shard-1").await.is_none());
+        g.add("t", 2);
+        assert!(g.check("t", "shard-1").await.is_none());
+        g.add("t", 1);
+        assert!(g.check("t", "shard-1").await.is_some());
+        assert_eq!(fake.calls.load(std::sync::atomic::Ordering::SeqCst), 1, "cached for the refresh interval");
+    }
+
+    #[tokio::test]
+    async fn quota_refreshes_in_the_background() {
+        let (g, fake) = gate(Ok(blocking(10, 0)), 0);
+        assert!(g.check("t", "shard-1").await.is_none());
+        *fake.result.lock().unwrap() = Ok(blocking(10, 10));
+        // The stale snapshot answers; the refresh it starts is used next time.
+        assert!(g.check("t", "shard-1").await.is_none());
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(g.check("t", "shard-1").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn quota_fails_open() {
+        let (g, _) = gate(Err("ClickHouse down".into()), 60);
+        assert!(g.check("t", "shard-1").await.is_none());
+        let (g, fake) = gate(Ok(blocking(10, 10)), 0);
+        assert!(g.check("t", "shard-1").await.is_some());
+        *fake.result.lock().unwrap() = Err("ClickHouse down".into());
+        g.check("t", "shard-1").await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        // A failed refresh keeps the last snapshot.
+        assert!(g.check("t", "shard-1").await.is_some());
     }
 
     #[test]

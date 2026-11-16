@@ -4,7 +4,6 @@ import { targetProject } from '../../lib/aws/rules.js';
 import { setAwsStore } from '../../lib/aws/store.js';
 import { loadAssigner } from '../../lib/aws/sync.js';
 import type { AwsAccount } from '../../lib/aws/types.js';
-import { KeyCache } from '../../lib/ingest/key-cache.js';
 import { derivedProjectId, hashKey } from '../../lib/tenancy/ids.js';
 import { createProject } from '../../lib/tenancy/projects.js';
 import type { ProjectRecord, TenancyStore, TenantRecord } from '../../lib/tenancy/store.js';
@@ -67,7 +66,14 @@ describe('projects without a default', () => {
 });
 
 describe('keys, rules and functions name their project', () => {
-  const keyCache = () => new KeyCache({ lookup: (hash) => store.findKeyByHash(hash) });
+  // The key's project as ingest (packages/ingest) resolves it: none without a project, or with an archived or missing one.
+  const keyCache = () => ({
+    async resolve(key: string) {
+      const match = await store.findKeyByHash(hashKey(key));
+      if (!match?.key.project_id || !match.project || match.project.archived) return null;
+      return { projectId: match.project.id };
+    },
+  });
 
   it('resolves no fallback for keys without a project; keys of an archived project stop working', async () => {
     await store.saveKey({ tenant_id: workspace.id, project_id: '', id: 'key_old', name: 'old', kind: 'user', key_hash: hashKey('old-key'), prefix: 'old', encrypted_key: '', created_at: 1, revoked_at: null });

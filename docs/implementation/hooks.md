@@ -148,7 +148,7 @@ its own process group. On timeout the whole group gets `SIGKILL`, so anything th
 
 **Environment.** Only: `PATH`, `HOME`, `IVY_HOOKS_DIR`, `IVY_PUBLIC_URL`, and every `AWS_*` and `HOOK_*` variable of
 the API process. Configure your hooks with `HOOK_*` variables (e.g. `HOOK_CFN_BUCKET`). Nothing else is passed; in
-particular none of Ivy's secrets (`IVY_SECRET_KEY`, `IVY_COLLECTOR_TOKEN`, ClickHouse credentials, SMTP URL, …).
+particular none of Ivy's secrets (`IVY_SECRET_KEY`, `IVY_INTERNAL_API_TOKEN`, ClickHouse credentials, SMTP URL, …).
 `AWS_*` is passed because the publish hook typically needs credentials.
 
 **Failure.** A failing provider hook means its fallback; a failing notification hook is only logged. Neither fails
@@ -157,7 +157,7 @@ the request.
 **Observability.** Every run logs one line: `[hook <name> <id>] ok (<ms> ms)` or `… failed: <reason> (<ms> ms)`. Counts
 per hook since start (`{ runs, ok, failed }`) are on the API's internal stats endpoint:
 `http://127.0.0.1:3020/stats` → `{ "hooks": { "publish-cfn-template": { "runs": 3, "ok": 3, "failed": 0 } } }`
-(`IVY_API_ADMIN_PORT`, `IVY_API_ADMIN_HOST`; loopback only, like the ingest router's).
+(`IVY_API_ADMIN_PORT`, `IVY_API_ADMIN_HOST`; loopback only, like ingest's).
 
 ## Examples
 
