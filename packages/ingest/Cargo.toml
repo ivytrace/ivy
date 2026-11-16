@@ -1,0 +1,24 @@
+[package]
+name = "ivy-ingest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+bytes = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server", "client"] }
+mimalloc = { version = "0.1", default-features = false }
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "fs", "sync"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

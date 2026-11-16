@@ -188,3 +188,10 @@ live in `docs/implementation/`.
   `docs/implementation/error-grouping.md`.
 - Self-hosters get the `on-error-group-created` hook for their own integrations. Implementation:
   `docs/implementation/alerts.md`.
+
+## Ingest
+- The ingest router becomes a small Rust service (its own image) that authenticates keys, enforces quotas and writes
+  spans straight to ClickHouse, replacing both the Node router and the OpenTelemetry Collector on the ingest path.
+  Spans it accepted must survive a ClickHouse outage or a restart: it keeps its own on-disk write-ahead log, as the
+  collector's persistent queue did. Rows must stay identical to what the collector wrote. Implementation:
+  `docs/implementation/ingest.md`.

@@ -6,6 +6,7 @@
   ```
   packages/layer      Lambda layer: Node.js tracer (TypeScript) + extension (Rust, in extension/)
   packages/api        Hono API and the OTLP ingest router (only components that talk to ClickHouse)
+  packages/ingest     Rust OTLP ingest straight to ClickHouse, replacing the router + collector (not wired in yet)
   packages/ui         React dashboard
   packages/spans      Span types and service-aware span descriptions (shared by UI and format)
   packages/format     Traces and invocation lists as compact text for LLMs
@@ -18,7 +19,7 @@
 - Inside a package: `src/routes/<group>/<method>.ts` for API routes (e.g. `GET /api/invocations` → `src/routes/invocations/get.ts`), `src/lib/<folder>/*.ts` for helpers (always in a folder: `clickhouse/`, `services/`, `utils/`, or a feature name), `scripts/` for manually run scripts.
 - Vitest, with tests next to the source files they cover.
 - Deviations from the usual stack are deliberate (see `docs/spec/001-ivy-trace-v1.md`): pnpm instead of Yarn, ClickHouse instead of DynamoDB, docker compose instead of CDK/Lambda for the backend.
-- TypeScript everywhere, with one exception: the layer's Lambda extension (`packages/layer/extension`) is Rust, because a Node process added ~30 ms to every cold start (see `docs/implementation/layer.md`).
+- TypeScript everywhere, with two exceptions in Rust: the layer's Lambda extension (`packages/layer/extension`), because a Node process added ~30 ms to every cold start (see `docs/implementation/layer.md`), and ingest (`packages/ingest`), because per-request overhead is ingest's cost (see `docs/implementation/ingest.md`).
 - The UI (and later the website) is dark mode only. No light theme, no theme toggle. Links use the shared `link` style (medium weight, white, underlined); the green accent is reserved for primary buttons.
 - No Claude Code attribution in commits or PRs: no `Co-Authored-By: Claude` or `Claude-Session` trailers, no "Generated with Claude Code" lines.
 - The product is called "Ivy" in all prose and UI. "ivytrace"/"Ivy Trace" is only for domains (ivytrace.dev) and GitHub/npm org names, because "ivy" alone is too generic.
