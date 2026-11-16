@@ -542,6 +542,20 @@ The webhook URL is never returned.
 Partial `{ slack_enabled?, interval_minutes? (1–10080), every_occurrences? (1–1000000), include_throttles? }`; returns
 the settings. 400 on anything else.
 
+### `POST /api/w/:workspace/alerts/apply` (owner)
+Copies a project's alerts ("Apply to other projects…" in Settings → Alerts): the rule and the Slack channels.
+```json
+{ "source": "prj_…",
+  "projects": ["prj_…", "prj_…"],
+  "settings": { "slack_enabled": true, "interval_minutes": 60, "every_occurrences": 100, "include_throttles": false } }
+```
+All four settings are required (a whole rule, not a partial update). `source` and every ID in `projects` (1–500;
+duplicates ignored) must be active projects of this workspace: anything else is a 400 naming it, and nothing is
+written. Each listed project gets the settings and the source's working Slack channels, as new rows with the same
+webhook, connected now; a channel the project already has (same webhook, or the same Slack channel) is skipped.
+Returns `{ "updated": 2, "projects": [{ "id", "slug", "name", "channels_added": 1 }], "settings": {…},
+"channels_added": 2 }`. All or nothing (`alerts.md`). 403 for members, 404 for a workspace you're not a member of.
+
 ### `POST /api/w/:workspace/p/:project/alerts/slack/connect` (owner)
 `{ "url": "https://slack.com/oauth/v2/authorize?client_id=…&scope=incoming-webhook&redirect_uri=…&state=…" }` and a
 `Set-Cookie: ivy_slack_oauth=<nonce>; Path=/api/slack; HttpOnly; SameSite=Lax` the callback checks. 409 without the

@@ -205,8 +205,12 @@ export async function deliver(channel: SlackIntegration, message: unknown, secre
   return delivery;
 }
 
+/** Marks the channel broken, and every other channel of the workspace copied from the same connection (same webhook). */
 async function markBroken(channel: SlackIntegration, error: string) {
+  const siblings = (await alertStore().listWorkspaceIntegrations(channel.tenant_id)).filter(
+    (i) => i.id !== channel.id && i.status === 'ok' && i.encrypted_webhook_url === channel.encrypted_webhook_url,
+  );
   channel.status = 'broken';
   channel.error = error;
-  await alertStore().saveIntegration(channel);
+  await alertStore().saveIntegrations([channel, ...siblings.map((i) => ({ ...i, status: 'broken' as const, error }))]);
 }

@@ -186,6 +186,12 @@ live in `docs/implementation/`.
   most frequent ones; alerts and the digest show the pattern too. A group whose occurrences all have the same message
   shows that message instead of the pattern, everywhere. Implementation:
   `docs/implementation/error-grouping.md`.
+- Owners can copy a project's alerts to any of the workspace's other active projects in one step ("Apply to other
+  projects…" on Settings → Alerts), all or nothing: the "When to post" rule (Slack on/off, the minutes and occurrences
+  limits, throttles) and the project's Slack channels, which are part of the settings being copied (no separate
+  option). The channels are shared, not reconnected: removing the app or a channel in Slack affects every project
+  using it, and the dialog says so. Copying never posts a project's existing errors as new, and running it twice adds
+  no duplicate channels. A default rule for new projects is not part of this.
 - Self-hosters get the `on-error-group-created` hook for their own integrations. Implementation:
   `docs/implementation/alerts.md`.
 

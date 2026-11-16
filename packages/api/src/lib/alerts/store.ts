@@ -63,10 +63,16 @@ export interface Lease {
 export interface AlertStore {
   getSettings(tenant: string, project: string): Promise<AlertSettings>;
   saveSettings(tenant: string, project: string, settings: AlertSettings): Promise<void>;
+  /** The same settings for several projects of one workspace, in one insert (all or nothing). */
+  saveSettingsForProjects(tenant: string, projects: string[], settings: AlertSettings): Promise<void>;
   listIntegrations(tenant: string, project: string): Promise<SlackIntegration[]>;
   /** Every working integration of every workspace (the evaluator's work list). */
   listAllIntegrations(): Promise<SlackIntegration[]>;
+  /** Every channel of every project of one workspace. */
+  listWorkspaceIntegrations(tenant: string): Promise<SlackIntegration[]>;
   saveIntegration(integration: SlackIntegration): Promise<void>;
+  /** Several channels in one insert (all or nothing); `deleted` removes them instead. */
+  saveIntegrations(integrations: SlackIntegration[], deleted?: boolean): Promise<void>;
   deleteIntegration(integration: SlackIntegration): Promise<void>;
   listStates(tenant: string, project: string): Promise<AlertState[]>;
   saveState(state: AlertState): Promise<void>;
@@ -103,8 +109,11 @@ export const clickhouseAlertStore: AlertStore = {
     );
     return rows[0] ? { ...rows[0], slack_enabled: !!rows[0].slack_enabled, include_throttles: !!rows[0].include_throttles } : { ...DEFAULT_ALERT_SETTINGS };
   },
-  saveSettings: (tenant, project, s) =>
-    insertRows(control(), 'alert_settings', [{ tenant_id: tenant, project_id: project, ...s, updated_at: version() }]),
+  saveSettings: (tenant, project, s) => clickhouseAlertStore.saveSettingsForProjects(tenant, [project], s),
+  saveSettingsForProjects: (tenant, projects, s) => {
+    const updated_at = version();
+    return insertRows(control(), 'alert_settings', projects.map((project) => ({ tenant_id: tenant, project_id: project, ...s, updated_at })));
+  },
   listIntegrations: (tenant, project) =>
     tenantQuery<SlackIntegration>(
       control(),
@@ -119,7 +128,14 @@ export const clickhouseAlertStore: AlertStore = {
       control(),
       `SELECT ${INTEGRATION_COLUMNS} FROM slack_integrations FINAL WHERE NOT deleted AND status = 'ok' ORDER BY tenant_id, project_id, created_at`,
     ),
+  listWorkspaceIntegrations: (tenant) =>
+    tenantQuery<SlackIntegration>(
+      control(),
+      tenant,
+      `SELECT ${INTEGRATION_COLUMNS} FROM slack_integrations FINAL WHERE tenant_id = {tenant:String} AND NOT deleted ORDER BY project_id, created_at`,
+    ),
   saveIntegration: (i) => insertRows(control(), 'slack_integrations', [integrationRow(i)]),
+  saveIntegrations: (list, deleted = false) => insertRows(control(), 'slack_integrations', list.map((i) => integrationRow(i, deleted ? 1 : 0))),
   deleteIntegration: (i) => insertRows(control(), 'slack_integrations', [integrationRow(i, 1)]),
   listStates: (tenant, project) =>
     tenantQuery<AlertState>(
@@ -188,14 +204,26 @@ export function memoryAlertStore(): AlertStore {
     async saveSettings(tenant, project, s) {
       settings.set(`${tenant}/${project}`, copy(s));
     },
+    async saveSettingsForProjects(tenant, projects, s) {
+      for (const project of projects) settings.set(`${tenant}/${project}`, copy(s));
+    },
     async listIntegrations(tenant, project) {
       return [...integrations.values()].filter((i) => i.tenant_id === tenant && i.project_id === project).map(copy);
     },
     async listAllIntegrations() {
       return [...integrations.values()].filter((i) => i.status === 'ok').map(copy);
     },
+    async listWorkspaceIntegrations(tenant) {
+      return [...integrations.values()].filter((i) => i.tenant_id === tenant).map(copy);
+    },
     async saveIntegration(i) {
       integrations.set(`${i.tenant_id}/${i.project_id}/${i.id}`, copy(i));
+    },
+    async saveIntegrations(list, deleted = false) {
+      for (const i of list) {
+        if (deleted) integrations.delete(`${i.tenant_id}/${i.project_id}/${i.id}`);
+        else integrations.set(`${i.tenant_id}/${i.project_id}/${i.id}`, copy(i));
+      }
     },
     async deleteIntegration(i) {
       integrations.delete(`${i.tenant_id}/${i.project_id}/${i.id}`);

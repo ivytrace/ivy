@@ -151,6 +151,31 @@ restart over Monday morning still sends it.
   "Send test message", remove), and "When an error group is first seen (always), then at most every [60] minutes or
   every [100] occurrences, whichever comes first", the Slack on/off switch and "Also alert on throttles". Owners edit;
   members see it read-only.
+- **Apply to other projects…** (owners, next to Save, outline button; shown when the workspace has other active
+  projects) copies this project's alerts: the "When to post" rule and its Slack channels. The dialog shows the rule in
+  words (the form's current values, unsaved changes included, with a note that they are not saved to this project),
+  the channels that come along ("Slack channels: #alerts, #oncall", or "none"), a checklist of the other active
+  projects with "Select all", and "Apply to N projects". One `POST /api/w/:ws/alerts/apply` (`api.md`); the dialog then
+  shows "Updated N projects, added M Slack channels" with their names, or the error and "No project was changed".
+  Every cached project's alerts are refetched afterwards.
+  - *Channels are shared, not reconnected.* A channel is an `incoming-webhook` URL Slack issued to one OAuth install;
+    a copy is a new `slack_integrations` row in the target with the same encrypted URL (same ciphertext), a new ID,
+    `created_by` the caller and only working (`ok`) channels. The dialog says that removing the app or a channel in
+    Slack affects every project that uses it.
+  - *Connected now.* Each copy's `created_at` is the time of the copy, never the source's. The evaluator announces
+    groups first seen after a project's first channel was connected, so the target's existing error groups get a
+    baseline instead of a "New error" message.
+  - *Safe to run twice.* A target that already has the webhook (same URL after decryption, or the same ciphertext
+    without `IVY_SECRET_KEY`), or the same Slack channel (team and channel ID, connected itself), is skipped for that
+    channel. The source itself, if listed, only gets the rule.
+  - *Broken together.* When Slack rejects a webhook (`markBroken`), every working row of the workspace with the same
+    ciphertext is marked broken too, in one insert; a successful "Send test message" revives them all. Rows connected
+    separately to the same channel have their own webhook and are unaffected. "Remove" removes only that project's
+    row; the webhook stays in Slack (and keeps serving the other projects).
+  - *All or nothing.* Everything is checked and read first. ClickHouse has no transactions, so the write is two
+    inserts: the new channel rows, then the settings of every project. If the settings insert fails, the channel rows
+    are removed again (best effort) and the request fails.
+  - Not done (possible follow-up): a workspace "default for new projects" rule.
 - **Settings → Notifications** (`/w/<ws>/settings/notifications`), one page per workspace for everything that
   notifies:
   - *Weekly email digest*: the workspace's on/off switch (owners; members see it disabled with "Only workspace owners
@@ -215,7 +240,15 @@ If `IVY_SECRET_KEY` changes, stored webhooks can't be decrypted: the channels sh
   settings and validation, the authorize URL and cookie, the callback storing the webhook encrypted (`v1.…`, decrypts
   to the URL, never returned by the API), reconnecting the same channel, a second channel, missing/forged/expired
   state and a missing cookie (400, no code exchange), cancelled, Slack refusing the code, an owner demoted mid-flow,
-  test message, broken on `invalid_token`, remove.
+  test message, broken on `invalid_token`, remove; "apply to other projects": the whole rule on every listed project
+  and no other, owners only, nothing written for an unknown, archived or other-workspace project or source,
+  validation of the list and of the rule; the source's working channels copied with the same webhook and a
+  `created_at` of now, nothing added when run twice or when the target connected the same channel itself, the
+  target's older error group baselined by the evaluator instead of posted as new, and a rejected webhook marking
+  every copy broken (a successful test reviving them).
+- UI: `components/alerts/apply-to-projects.test.tsx` (rule and channel wording, the shared-channels note, checklist
+  and "Select all", unsaved-changes note, result), `lib/mock/alerts.test.ts`, and the dialog checked in Chrome on the
+  mock API.
 - `lib/alerts/slack.test.ts`: message content and trimming, escaping, no payloads or logs whatever the input,
   throttle links, first-frame extraction, signed tokens (tamper, purpose, secret, expiry), cron.
 - `routes/digest/digest.test.ts`, against an SMTP catcher (`lib/email/testing.ts`, the real nodemailer transport):
