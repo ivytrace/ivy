@@ -120,7 +120,11 @@ function redactJsonBody(body: string, parent: any, isSecret: KeyMatcher): string
     return body;
   }
   const redacted = toJson(parsed, isSecret, NO_LIMITS);
-  return redacted === JSON.stringify(parsed) ? body : redacted;
+  try {
+    return redacted === JSON.stringify(parsed) ? body : redacted;
+  } catch {
+    return redacted;
+  }
 }
 
 /**
