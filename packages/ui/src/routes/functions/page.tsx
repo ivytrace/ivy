@@ -5,7 +5,8 @@ import type { ColumnDef } from "@tanstack/react-table";
 
 import { DataTable } from "@/components/tables/data-table";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
-import { FunctionProject, TraceStateLabel } from "@/components/aws/trace-state";
+import { FunctionState } from "@/components/aws/conflict-state";
+import { FunctionProject } from "@/components/aws/trace-state";
 import { Onboarding } from "@/components/workspaces/onboarding";
 import { Button } from "@/components/ui/button";
 import { Sparkline, TimeseriesChart } from "@/components/stats/timeseries-chart";
@@ -45,7 +46,7 @@ function TracingCell({ fn }: { fn: FunctionSummary }) {
   }
   return (
     <span className="flex items-center gap-3">
-      <TraceStateLabel state={aws.state} reason={aws.reason} />
+      <FunctionState fn={aws} />
       {aws.project && aws.project !== fn.project && <FunctionProject fn={aws} />}
     </span>
   );

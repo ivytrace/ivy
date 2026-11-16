@@ -22,7 +22,7 @@ import { clearQuickCreateCacheForTests } from '../../lib/aws/publish.js';
 import { syncInProgress } from '../../lib/aws/scheduler.js';
 import { setAwsStore } from '../../lib/aws/store.js';
 import { ensureDefaultTenant } from '../../lib/tenancy/tenants.js';
-import { appFor, DEFAULT_PROJECT, resetTenancyForTests } from '../../lib/tenancy/testing.js';
+import { appFor, DEFAULT_PROJECT, resetTenancyForTests, testWorkspace } from '../../lib/tenancy/testing.js';
 
 let app: ReturnType<typeof createApp>;
 const lambda = mockClient(LambdaClient);
@@ -314,6 +314,48 @@ describe('AWS account routes', () => {
     expect((await app.request(`${W}/functions/${ACCOUNT_ID}/eu-west-1/orders`, json({ mode: 'off' }, 'PUT'))).status).toBe(400);
     expect((await app.request(`${W}/functions/${ACCOUNT_ID}/eu-west-1/orders`, json({ mode: 'trace' }, 'PUT'))).status).toBe(400);
     expect((await app.request(`${W}/functions/000000000000/eu-west-1/orders`, json({ mode: 'exclude' }, 'PUT'))).status).toBe(404);
+  });
+
+  it('force-installs over another tracer, keeps force across choices, and hands the wrapper back on exclude', async () => {
+    await connected();
+    const LUMIGO = '/opt/lumigo_wrapper';
+    const lumigo = { FunctionName: 'orders', FunctionArn: fnArn('orders'), Runtime: 'nodejs22.x' as const, RevisionId: 'r2', Environment: { Variables: { AWS_LAMBDA_EXEC_WRAPPER: LUMIGO } } };
+    const forced = { ...lumigo, RevisionId: 'r3', Layers: [{ Arn: LAYER }], Environment: { Variables: { ...IVY_ENV, IVY_PREVIOUS_EXEC_WRAPPER: LUMIGO } } };
+    const force = (body: unknown) => req(`${W}/functions/${ACCOUNT_ID}/eu-west-1/orders/force`, json(body));
+    const put = (body: unknown) => req(`${W}/functions/${ACCOUNT_ID}/eu-west-1/orders`, json(body, 'PUT'));
+
+    lambda.on(GetFunctionConfigurationCommand).resolves(lumigo);
+    expect(await put({ mode: 'trace', project: 'default' })).toMatchObject({
+      function: { state: 'conflict', conflict: 'wrapper', wrapper: LUMIGO, tracer: 'Lumigo', force: false },
+    });
+    expect(lambda.commandCalls(UpdateFunctionConfigurationCommand)).toHaveLength(0);
+
+    expect(await force({ force: true })).toMatchObject({
+      applied: true,
+      function: { state: 'traced', conflict: null, wrapper: LUMIGO, tracer: 'Lumigo', force: true, manual: { mode: 'trace', project: 'default' } },
+    });
+    expect(lambda.commandCalls(UpdateFunctionConfigurationCommand)[0].args[0].input.Environment).toEqual({ Variables: { ...IVY_ENV, IVY_PREVIOUS_EXEC_WRAPPER: LUMIGO } });
+
+    lambda.on(GetFunctionConfigurationCommand).resolves(forced);
+    expect(await put({ mode: 'rules' })).toMatchObject({ function: { force: true, manual: null } });
+    expect(mem.settings.get(`default/${ACCOUNT_ID}/eu-west-1/orders`)).toMatchObject({ mode: '', force: true });
+
+    lambda.resetHistory();
+    expect(await put({ mode: 'exclude' })).toMatchObject({ function: { state: 'opted_out', force: false } });
+    expect(lambda.commandCalls(UpdateFunctionConfigurationCommand)[0].args[0].input.Environment).toEqual({ Variables: { AWS_LAMBDA_EXEC_WRAPPER: LUMIGO } });
+
+    expect((await app.request(`${W}/functions/${ACCOUNT_ID}/eu-west-1/orders/force`, json({}))).status).toBe(400);
+    expect((await app.request(`${W}/functions/${ACCOUNT_ID}/nowhere/orders/force`, json({ force: true }))).status).toBe(400);
+    expect((await app.request(`${W}/functions/000000000000/eu-west-1/orders/force`, json({ force: true }))).status).toBe(404);
+  });
+
+  it("can't force a function of another workspace's account", async () => {
+    await connected();
+    const other = await testWorkspace('Other', 'other');
+    const res = await (await appFor(other)).request(`/api/w/other/aws/functions/${ACCOUNT_ID}/eu-west-1/orders/force`, json({ force: true }));
+    expect(res.status).toBe(404);
+    expect([...mem.settings.values()]).toEqual([]);
+    expect(lambda.commandCalls(GetFunctionConfigurationCommand)).toHaveLength(0);
   });
 
   it('traces selected functions in bulk', async () => {

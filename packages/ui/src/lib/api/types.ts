@@ -271,6 +271,14 @@ export interface AwsFunction {
   source: "tag" | "manual" | "rule" | null;
   rule_id: string | null;
   manual: { mode: ManualMode; project_id: string | null; project: string | null } | null;
+  /** Force install: Ivy replaces another tracer's AWS_LAMBDA_EXEC_WRAPPER when it traces the function. */
+  force: boolean;
+  /** With state `conflict`: another exec wrapper, the layer limit, or another tracer that set its wrapper back after a force install. */
+  conflict: "wrapper" | "layers" | "reapplied" | null;
+  /** Another tracer's exec wrapper: the one in the way, or the one a force install replaced. */
+  wrapper: string | null;
+  /** The tracer behind `wrapper` (e.g. Lumigo), when recognisable. */
+  tracer: string | null;
   new: boolean;
   first_seen_at: string | null;
   updated_at: string;

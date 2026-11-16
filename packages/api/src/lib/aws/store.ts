@@ -37,7 +37,7 @@ const ACCOUNT_COLUMNS = `tenant_id, id, name, account_id, role_arn, external_id,
   toUnixTimestamp64Milli(last_sync_at) AS last_sync_at`;
 
 const FUNCTION_COLUMNS = `tenant_id, account_id, region, function_name, function_arn, runtime, state, reason,
-  project_id, project_source, rule_id, stack, tags, last_modified,
+  project_id, project_source, rule_id, conflict, wrapper, stack, tags, last_modified,
   toUnixTimestamp64Milli(first_seen_at) AS first_seen_at,
   toUnixTimestamp64Milli(updated_at) AS updated_at`;
 
@@ -152,7 +152,7 @@ export const clickhouseStore: AwsStore = {
   async listSettings(tenant, accountId) {
     const rows = await scoped<FunctionSetting & { tracing_enabled: boolean }>(
       tenant,
-      `SELECT account_id, region, function_name, tracing_enabled, mode, project_id FROM aws_function_settings FINAL
+      `SELECT account_id, region, function_name, tracing_enabled, mode, project_id, force FROM aws_function_settings FINAL
        WHERE tenant_id = {tenant:String} ${accountId ? 'AND account_id = {accountId:String}' : ''}`,
       { accountId: accountId ?? '' },
     );
@@ -164,7 +164,7 @@ export const clickhouseStore: AwsStore = {
   saveSettings: (tenant, settings) =>
     insert(
       'aws_function_settings',
-      settings.map((s) => ({ tenant_id: tenant, ...s, tracing_enabled: s.mode !== 'exclude', updated_at: version() })),
+      settings.map((s) => ({ tenant_id: tenant, ...s, force: !!s.force, tracing_enabled: s.mode !== 'exclude', updated_at: version() })),
     ),
 
   listRules: (tenant) =>

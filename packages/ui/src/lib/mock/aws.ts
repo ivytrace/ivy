@@ -29,6 +29,10 @@ interface MockFunction {
   tags: Record<string, string>;
   /** States the attach logic decides regardless of the selection. */
   fixed?: { state: Exclude<TraceState, "traced" | "available" | "opted_out">; reason: string };
+  /** Another tracer's AWS_LAMBDA_EXEC_WRAPPER: a conflict when traced, unless force-installed. */
+  wrapper?: string;
+  /** The other tracer sets its wrapper back after a force install (until a retry, as if its integration was turned off). */
+  reapplies?: boolean;
   first_seen_ms: number;
   last_modified: string;
 }
@@ -73,7 +77,10 @@ const PROD: Seed[] = [
   ["support-triageTicket", "eu-west-1", "nodejs22.x", "support-api-prod"],
   ["staging-api-handler", "us-east-1", "nodejs22.x", "billing-api-staging", { tags: { team: "api" } }],
   ["reports-pdfRender", "us-east-1", "python3.12", "billing-api-staging", { fixed: { state: "unsupported", reason: "Runtime python3.12 is not supported" } }],
-  ["search-indexer", "us-east-1", "nodejs22.x", null, { fixed: { state: "conflict", reason: "AWS_LAMBDA_EXEC_WRAPPER is already set to /opt/datadog_wrapper" } }],
+  ["checkout-capturePayment", "eu-west-1", "nodejs22.x", "checkout-prod", { wrapper: "/opt/lumigo_wrapper" }],
+  ["orders-notifyCustomer", "eu-west-1", "nodejs22.x", "checkout-prod", { wrapper: "/opt/lumigo_wrapper", reapplies: true }],
+  ["search-indexer", "us-east-1", "nodejs22.x", null, { wrapper: "/opt/datadog_wrapper" }],
+  ["search-suggest", "us-east-1", "nodejs22.x", null, { wrapper: "/opt/acme-wrapper" }],
   ["media-transcode", "us-east-1", "nodejs20.x", null, { tags: { team: "media" } }],
   ["orders-archive", "eu-west-1", "nodejs20.x", null, { first_seen_ms: Date.now() - 2 * 3600_000 }],
   ["ops-cron", "eu-west-1", "nodejs22.x", null, { first_seen_ms: Date.now() - 3 * 3600_000, tags: { team: "ops" } }],
@@ -131,12 +138,21 @@ export function matches(m: RuleMatcher, fn: Pick<MockFunction, "account_id" | "r
 
 const fnKey = (f: { account_id: string; region: string; name: string }) => `${f.account_id}/${f.region}/${f.name}`;
 
+const TRACERS: [RegExp, string][] = [
+  [/lumigo/i, "Lumigo"],
+  [/datadog/i, "Datadog"],
+  [/otel|opentelemetry/i, "OpenTelemetry"],
+];
+const tracerOf = (wrapper: string | undefined) => (wrapper ? (TRACERS.find(([re]) => re.test(wrapper))?.[1] ?? null) : null);
+
 /** One workspace's AWS state. `projects` resolves project IDs and slugs (active projects only). */
 export function createAwsMock(options: MockOptions, projects: () => { id: string; slug: string; archived: boolean }[], workspaceSlug: () => string) {
   const now = Date.now();
   const accounts: MockAccount[] = [];
   let functions: MockFunction[] = [];
   const manual = new Map<string, Manual>();
+  /** Functions force-installed over another tracer's wrapper. */
+  const forced = new Set<string>();
   let rules: MockRule[] = [];
   let counter = 0;
 
@@ -192,8 +208,25 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
       { id: "rul_team_media", matcher: { account_id: null, region: null, stack: null, name: null, tag: "team=media" }, project_id: p("checkout-prod"), enabled: false, created_at: new Date(now - 5 * DAY).toISOString() },
     ];
     manual.set("123456789012/us-east-1/reports-nightlyExport", { mode: "trace", project_id: p("billing-api-staging") });
+    manual.set("123456789012/us-east-1/search-indexer", { mode: "trace", project_id: p("support-api-prod") });
+    manual.set("123456789012/us-east-1/search-suggest", { mode: "trace", project_id: p("support-api-prod") });
+    forced.add("123456789012/eu-west-1/orders-notifyCustomer");
   }
   seed();
+
+  /** Selection (assign) plus the attach logic's view of another tracer's wrapper (attach.ts). */
+  function decide(fn: MockFunction) {
+    const a = assign(fn);
+    if (a.state !== "traced" || !fn.wrapper) return { ...a, conflict: null as AwsFunction["conflict"] };
+    if (!forced.has(fnKey(fn))) {
+      return { ...a, state: "conflict" as const, reason: `AWS_LAMBDA_EXEC_WRAPPER is already set to ${fn.wrapper}`, conflict: "wrapper" as const };
+    }
+    if (fn.reapplies) {
+      const reason = `AWS_LAMBDA_EXEC_WRAPPER was set back to ${fn.wrapper} after Ivy replaced it; Ivy no longer replaces it`;
+      return { ...a, state: "conflict" as const, reason, conflict: "reapplied" as const };
+    }
+    return { ...a, conflict: null };
+  }
 
   /** The same precedence as the API (assign.ts): tags, manual choice, rules, otherwise available. */
   function assign(fn: MockFunction, ruleList = rules) {
@@ -227,7 +260,8 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
   };
 
   function present(fn: MockFunction): AwsFunction {
-    const a = assign(fn);
+    const a = decide(fn);
+    const wrapper = fn.wrapper && (a.state === "conflict" || a.state === "traced") ? fn.wrapper : null;
     const m = manual.get(fnKey(fn));
     const slug = (id: string | null | undefined) => (id ? (projects().find((p) => p.id === id)?.slug ?? null) : null);
     return {
@@ -246,6 +280,10 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
       source: a.source,
       rule_id: a.rule,
       manual: m ? { mode: m.mode, project_id: m.project_id, project: slug(m.project_id) } : null,
+      force: forced.has(fnKey(fn)),
+      conflict: a.conflict,
+      wrapper,
+      tracer: tracerOf(wrapper ?? undefined),
       new: a.state === "available" && fn.first_seen_ms > reviewedMs(fn.account_id),
       first_seen_at: new Date(fn.first_seen_ms).toISOString(),
       updated_at: new Date(now).toISOString(),
@@ -412,11 +450,24 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
       if (body.mode === "trace" && !projectBy(body.project as string)) return { status: 400, body: { error: "project is required: every rule and traced function belongs to a project" } };
       const list = (body.functions as { account_id: string; region: string; name: string }[]) ?? [];
       for (const f of list) {
+        if (body.mode === "exclude") forced.delete(fnKey(f));
         if (body.mode === "rules") manual.delete(fnKey(f));
         else manual.set(fnKey(f), { mode: body.mode as "trace" | "exclude", project_id: body.mode === "trace" ? (projectBy(body.project as string)?.id ?? null) : null });
       }
       for (const a of accounts) if (list.some((f) => f.account_id === a.account_id)) startSync(a);
       return { status: 202, body: { updated: list.length } };
+    }
+    const forceFn = path.match(/^\/functions\/(\d{12})\/([\w-]+)\/([^/]+)\/force$/);
+    if (forceFn && method === "POST") {
+      const target = functions.find((f) => f.account_id === forceFn[1] && f.region === forceFn[2] && f.name === decodeURIComponent(forceFn[3]));
+      if (!target) return { status: 404, body: { error: `AWS account ${forceFn[1]} is not connected to this workspace` } };
+      if (typeof body.force !== "boolean") return { status: 400, body: { error: "force must be true or false" } };
+      if (body.force) {
+        // A retry after the other tracer set its wrapper back: as if its integration was turned off meanwhile.
+        if (forced.has(fnKey(target))) target.reapplies = false;
+        forced.add(fnKey(target));
+      } else forced.delete(fnKey(target));
+      return { status: 200, body: { applied: true, error: null, function: present(target) } };
     }
     const fn = path.match(/^\/functions\/(\d{12})\/([\w-]+)\/([^/]+)$/);
     if (fn && method === "PUT") {
@@ -424,6 +475,7 @@ export function createAwsMock(options: MockOptions, projects: () => { id: string
       if (!target) return { status: 404, body: { error: "Function not found" } };
       if (!["trace", "exclude", "rules"].includes(String(body.mode))) return { status: 400, body: { error: 'mode must be "trace", "exclude" or "rules"' } };
       if (body.mode === "trace" && !projectBy(body.project as string)) return { status: 400, body: { error: "project is required: every rule and traced function belongs to a project" } };
+      if (body.mode === "exclude") forced.delete(fnKey(target));
       if (body.mode === "rules") manual.delete(fnKey(target));
       else manual.set(fnKey(target), { mode: body.mode as "trace" | "exclude", project_id: body.mode === "trace" ? (projectBy(body.project as string)?.id ?? null) : null });
       return { status: 200, body: { applied: true, error: null, function: present(target) } };

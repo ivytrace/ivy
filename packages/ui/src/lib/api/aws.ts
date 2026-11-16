@@ -37,6 +37,10 @@ export type ManualChoice = { mode: "trace"; project: string } | { mode: "exclude
 export const setFunctionChoice = (ws: string, fn: { account_id: string; region: string; name: string }, choice: ManualChoice) =>
   sendJson<TracingResponse>("PUT", `${aws(ws)}/functions/${fn.account_id}/${fn.region}/${encodeURIComponent(fn.name)}`, choice);
 
+/** Force install over another tracer's exec wrapper (`true`, also to retry after it was set back), or hand it back (`false`). */
+export const setFunctionForce = (ws: string, fn: { account_id: string; region: string; name: string }, force: boolean) =>
+  sendJson<TracingResponse>("POST", `${aws(ws)}/functions/${fn.account_id}/${fn.region}/${encodeURIComponent(fn.name)}/force`, { force });
+
 export const setFunctionsChoice = (ws: string, functions: { account_id: string; region: string; name: string }[], choice: ManualChoice) =>
   sendJson<{ updated: number }>("POST", `${aws(ws)}/functions/bulk`, { functions, ...choice });
 

@@ -40,6 +40,12 @@ export type TraceState = 'traced' | 'available' | 'opted_out' | 'needs_project' 
 
 export const TRACE_STATES: TraceState[] = ['traced', 'available', 'opted_out', 'needs_project', 'unsupported', 'conflict', 'error', 'pending'];
 
+/**
+ * Why a `conflict`: another exec wrapper (`wrapper`, which a forced install can replace), the Lambda layer limit
+ * (`layers`), or another tracer that set its wrapper back after a forced install (`reapplied`).
+ */
+export type ConflictKind = '' | 'wrapper' | 'layers' | 'reapplied';
+
 /** Why a function is (or isn't) traced: a tag, a manual choice in the dashboard, a rule, or nothing. */
 export type ProjectSource = 'tag' | 'manual' | 'rule' | '';
 
@@ -56,6 +62,9 @@ export interface FunctionStatus {
   project_id: string;
   project_source: ProjectSource;
   rule_id: string;
+  conflict: ConflictKind;
+  /** Another tracer's AWS_LAMBDA_EXEC_WRAPPER: the one in the way (conflict), or the one a forced install replaced. */
+  wrapper: string;
   /** The `aws:cloudformation:stack-name` tag, '' when the function isn't part of a stack. */
   stack: string;
   tags: Record<string, string>;
@@ -74,6 +83,8 @@ export interface FunctionSetting {
   mode: ManualMode;
   /** With mode `trace`: the project. ('' only on old rows: such a choice is `needs_project`.) */
   project_id: string;
+  /** Replace another tracer's exec wrapper when the function is traced (force install). */
+  force?: boolean;
 }
 
 /** Every non-empty field must match (see matchesRule). */

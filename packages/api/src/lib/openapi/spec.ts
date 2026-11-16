@@ -437,6 +437,16 @@ export const openApiDocument = {
         responses: { 200: json(ref('AwsFunctionUpdateResult')), ...bad, ...notFound },
       },
     },
+    '/api/w/{workspace}/aws/functions/{accountId}/{region}/{name}/force': {
+      post: {
+        tags: ['Auto-trace'], summary: "Force install over another tracer's exec wrapper", operationId: 'forceAwsFunction',
+        description:
+          "Stores the choice, then applies it right away. When the function is traced, Ivy replaces AWS_LAMBDA_EXEC_WRAPPER, keeps the old value in IVY_PREVIOUS_EXEC_WRAPPER and restores it when it detaches. The other tracer usually stops tracing the function. Tags, manual choices and rules still decide whether it is traced.",
+        parameters: [ws, path('accountId', '12-digit AWS account ID.'), path('region', 'AWS region.'), path('name', 'Function name.')],
+        requestBody: body('AwsFunctionForce'),
+        responses: { 200: json(ref('AwsFunctionUpdateResult')), ...bad, ...notFound },
+      },
+    },
     '/api/w/{workspace}/aws/rules': {
       get: { tags: ['Auto-trace'], summary: 'Auto-trace rules, in evaluation order', operationId: 'listRules', parameters: [ws], responses: { 200: json(ref('RuleList')), ...notFound } },
       post: {

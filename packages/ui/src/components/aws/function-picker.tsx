@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Ban, Layers, Trash2, X } from "lucide-react";
 
 import { NewBadge } from "@/components/aws/account-parts";
-import { FunctionChoiceMenu, FunctionProject, NeedsProject, TraceStateLabel } from "@/components/aws/trace-state";
+import { FunctionState } from "@/components/aws/conflict-state";
+import { FunctionChoiceMenu, FunctionProject, NeedsProject } from "@/components/aws/trace-state";
 import { dryRunSummary, TraceDialog, type TraceTarget } from "@/components/aws/trace-dialog";
 import { EmptyState } from "@/components/common/states";
 import { errorMessage } from "@/components/workspaces/name-dialog";
@@ -292,7 +293,7 @@ function StackGroup({
               {f.state === "needs_project" && <NeedsProject fn={f} onError={onError} />}
             </div>
             <div className="w-28">
-              <TraceStateLabel state={f.state} reason={f.reason} />
+              <FunctionState fn={f} onError={onError} />
             </div>
             <div className="w-48">
               <FunctionProject fn={f} />

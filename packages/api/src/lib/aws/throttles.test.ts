@@ -49,6 +49,8 @@ const fn = (function_name: string, state: FunctionStatus['state'] = 'traced', re
   project_id: function_name === 'worker' ? 'prj_ops' : function_name === 'unassigned' ? '' : 'prj_checkout',
   project_source: state === 'traced' ? 'rule' : '',
   rule_id: '',
+  conflict: '',
+  wrapper: '',
   stack: '',
   tags: {},
   last_modified: '',

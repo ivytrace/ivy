@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detachUpdate, fromConfiguration, isSupportedRuntime, planFunction, type Desired, type LambdaFunction } from './attach.js';
+import { detachUpdate, fromConfiguration, isSupportedRuntime, needsLayer, planFunction, type Desired, type LambdaFunction } from './attach.js';
 
 const LAYER = 'arn:aws:lambda:eu-west-1:123456789012:layer:ivy-trace-nodejs:3';
 const OLD_LAYER = 'arn:aws:lambda:eu-west-1:123456789012:layer:ivy-trace-nodejs:2';
@@ -107,6 +107,62 @@ describe('planFunction', () => {
   it('waits for ingest config and a published layer', () => {
     expect(planFunction(fn(), { ...desired, ingest: null })).toMatchObject({ state: 'pending', update: null });
     expect(planFunction(fn(), { ...desired, layerArn: null })).toMatchObject({ state: 'pending', update: null });
+  });
+});
+
+describe('force install', () => {
+  const LUMIGO = '/opt/lumigo_wrapper';
+  const lumigo = (env: Record<string, string> = {}) => fn({ layers: [OTHER(1)], env: { TABLE: 'x', AWS_LAMBDA_EXEC_WRAPPER: LUMIGO, LUMIGO_TRACER_TOKEN: 't', ...env } });
+  const forced = { ...desired, force: true };
+  const FORCED_ENV = { TABLE: 'x', LUMIGO_TRACER_TOKEN: 't', ...IVY_ENV, IVY_PREVIOUS_EXEC_WRAPPER: LUMIGO };
+
+  it('replaces the other wrapper, keeps it in IVY_PREVIOUS_EXEC_WRAPPER, and leaves the other layer and variables', () => {
+    expect(planFunction(lumigo(), desired)).toMatchObject({ state: 'conflict', conflict: 'wrapper', wrapper: LUMIGO, update: null });
+    expect(needsLayer(lumigo())).toBe(false);
+    expect(needsLayer(lumigo(), { force: true })).toBe(true);
+
+    const plan = planFunction(lumigo(), forced);
+    expect(plan).toMatchObject({ state: 'traced', wrapper: LUMIGO });
+    expect(plan.update).toEqual({ layers: [OTHER(1), LAYER], env: FORCED_ENV });
+    expect(planFunction(fn({ layers: [OTHER(1), LAYER], env: FORCED_ENV }), forced)).toEqual({ state: 'traced', reason: '', update: null, wrapper: LUMIGO });
+  });
+
+  it('restores the replaced wrapper when Ivy detaches', () => {
+    const attached = fn({ layers: [OTHER(1), LAYER], env: FORCED_ENV });
+    const restored = { layers: [OTHER(1)], env: { TABLE: 'x', LUMIGO_TRACER_TOKEN: 't', AWS_LAMBDA_EXEC_WRAPPER: LUMIGO } };
+    expect(detachUpdate(attached)).toEqual(restored);
+    expect(planFunction(attached, { ...forced, enabled: false, offState: 'available' })).toMatchObject({ state: 'available', update: restored });
+    expect(planFunction({ ...attached, runtime: 'nodejs16.x' }, forced)).toMatchObject({ state: 'unsupported', update: restored });
+  });
+
+  it('hands the wrapper back when force is turned off', () => {
+    const plan = planFunction(fn({ layers: [OTHER(1), LAYER], env: FORCED_ENV }), desired);
+    expect(plan).toMatchObject({ state: 'conflict', conflict: 'wrapper', wrapper: LUMIGO });
+    expect(plan.update?.env.AWS_LAMBDA_EXEC_WRAPPER).toBe(LUMIGO);
+    expect(plan.update?.env).not.toHaveProperty('IVY_PREVIOUS_EXEC_WRAPPER');
+  });
+
+  it('lets ivy:trace=false win over force', () => {
+    expect(planFunction({ ...lumigo(), tags: { 'ivy:trace': 'false' } }, forced)).toMatchObject({ state: 'opted_out', update: null });
+    const attached = fn({ layers: [LAYER], env: FORCED_ENV, tags: { 'ivy:trace': 'false' } });
+    expect(planFunction(attached, forced).update?.env.AWS_LAMBDA_EXEC_WRAPPER).toBe(LUMIGO);
+  });
+
+  it('stands down when the other tracer sets its wrapper back, and forces again only on retry', () => {
+    const reapplied = fn({ layers: [OTHER(1), LAYER], env: { ...FORCED_ENV, AWS_LAMBDA_EXEC_WRAPPER: LUMIGO } });
+    const plan = planFunction(reapplied, forced);
+    expect(plan).toMatchObject({ state: 'conflict', conflict: 'reapplied', wrapper: LUMIGO });
+    expect(plan.reason).toContain('set back to /opt/lumigo_wrapper');
+    // Ivy's layer and variables go; the record of the replaced wrapper stays, so the next sync doesn't fight.
+    expect(plan.update).toEqual({ layers: [OTHER(1)], env: { TABLE: 'x', LUMIGO_TRACER_TOKEN: 't', AWS_LAMBDA_EXEC_WRAPPER: LUMIGO, IVY_PREVIOUS_EXEC_WRAPPER: LUMIGO } });
+    expect(planFunction(fn(plan.update!), forced)).toMatchObject({ state: 'conflict', conflict: 'reapplied', update: null });
+
+    expect(planFunction(fn(plan.update!), { ...forced, retryForce: true })).toMatchObject({ state: 'traced', update: { env: FORCED_ENV } });
+  });
+
+  it('does not force past the layer limit', () => {
+    const full = fn({ layers: [1, 2, 3, 4, 5].map(OTHER), env: { AWS_LAMBDA_EXEC_WRAPPER: LUMIGO } });
+    expect(planFunction(full, forced)).toMatchObject({ state: 'conflict', conflict: 'layers', update: null });
   });
 });
 

@@ -426,3 +426,90 @@ describe('opt-in tracing with rules', () => {
     expect(await stateOf()).toMatchObject({ legacy: ['needs_project', '', 'tag', ''] });
   });
 });
+
+describe('force install over another tracer', () => {
+  const LUMIGO = '/opt/lumigo_wrapper';
+  const LUMIGO_LAYER = 'arn:aws:lambda:eu-west-1:114300393969:layer:lumigo-node-tracer:300';
+  const lumigo = () =>
+    config('checkout', { Layers: [{ Arn: LUMIGO_LAYER }], Environment: { Variables: { AWS_LAMBDA_EXEC_WRAPPER: LUMIGO, LUMIGO_TRACER_TOKEN: 't' } } });
+  const FORCED_ENV = { LUMIGO_TRACER_TOKEN: 't', ...IVY_ENV, IVY_PREVIOUS_EXEC_WRAPPER: LUMIGO };
+  const forced = config('checkout', { Layers: [{ Arn: LUMIGO_LAYER }, { Arn: LAYER_V2 }], Environment: { Variables: FORCED_ENV } });
+  const updates = () => lambda.commandCalls(UpdateFunctionConfigurationCommand).map((c) => c.args[0].input);
+  const row = async () => (await mem.store.listFunctions('default'))[0];
+  const force = () =>
+    mem.store.saveSetting('default', { account_id: ACCOUNT_ID, region: 'eu-west-1', function_name: 'checkout', mode: '', project_id: '', force: true });
+
+  beforeEach(async () => {
+    await mem.store.saveAccount(account);
+    await mem.store.saveRules('default', [everything]);
+    lambda.on(ListLayerVersionsCommand).resolves({ LayerVersions: [{ LayerVersionArn: LAYER_V2, Description: 'sha256:abc123' }] });
+    lambda.on(UpdateFunctionConfigurationCommand).resolves({});
+  });
+
+  it('keeps a conflict without force, and takes over once forced, also on later syncs', async () => {
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [lumigo()] });
+    await syncAccount(account);
+    expect(updates()).toEqual([]);
+    expect(await row()).toMatchObject({ state: 'conflict', conflict: 'wrapper', wrapper: LUMIGO });
+
+    await force();
+    await syncAccount(account);
+    expect(updates()).toEqual([expect.objectContaining({ Layers: [LUMIGO_LAYER, LAYER_V2], Environment: { Variables: FORCED_ENV } })]);
+    expect(await row()).toMatchObject({ state: 'traced', conflict: '', wrapper: LUMIGO });
+
+    lambda.resetHistory();
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [forced] });
+    await syncAccount(account);
+    expect(updates()).toEqual([]);
+    expect((await row()).state).toBe('traced');
+  });
+
+  it('restores the previous wrapper when the function stops being traced or the account is disconnected', async () => {
+    await force();
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [forced] });
+    const restored = { Layers: [LUMIGO_LAYER], Environment: { Variables: { LUMIGO_TRACER_TOKEN: 't', AWS_LAMBDA_EXEC_WRAPPER: LUMIGO } } };
+
+    expect(await detachAccount(account)).toEqual([]);
+    expect(updates()).toEqual([expect.objectContaining(restored)]);
+
+    lambda.resetHistory();
+    await mem.store.saveRules('default', [{ ...everything, enabled: false }]);
+    await syncAccount(account);
+    expect(updates()).toEqual([expect.objectContaining(restored)]);
+    expect(await row()).toMatchObject({ state: 'available' });
+  });
+
+  it('lets ivy:trace=false win over force', async () => {
+    await force();
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [lumigo()] });
+    tagging.on(GetResourcesCommand).resolves({ ResourceTagMappingList: [{ ResourceARN: arn('checkout'), Tags: [{ Key: 'ivy:trace', Value: 'false' }] }] });
+    await syncAccount(account);
+    expect(updates()).toEqual([]);
+    expect(await row()).toMatchObject({ state: 'opted_out' });
+  });
+
+  it('detects the other tracer setting its wrapper back, stops fighting, and retries only when asked', async () => {
+    await force();
+    const reapplied = config('checkout', {
+      Layers: [{ Arn: LUMIGO_LAYER }, { Arn: LAYER_V2 }],
+      Environment: { Variables: { ...FORCED_ENV, AWS_LAMBDA_EXEC_WRAPPER: LUMIGO } },
+    });
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [reapplied] });
+    await syncAccount(account);
+    const standDown = { LUMIGO_TRACER_TOKEN: 't', AWS_LAMBDA_EXEC_WRAPPER: LUMIGO, IVY_PREVIOUS_EXEC_WRAPPER: LUMIGO };
+    expect(updates()).toEqual([expect.objectContaining({ Layers: [LUMIGO_LAYER], Environment: { Variables: standDown } })]);
+    expect(await row()).toMatchObject({ state: 'conflict', conflict: 'reapplied', wrapper: LUMIGO });
+
+    lambda.resetHistory();
+    const stoodDown = config('checkout', { Layers: [{ Arn: LUMIGO_LAYER }], Environment: { Variables: standDown } });
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [stoodDown] });
+    await syncAccount(account);
+    expect(updates()).toEqual([]);
+    expect((await row()).conflict).toBe('reapplied');
+
+    lambda.on(GetFunctionConfigurationCommand).resolves(stoodDown);
+    const retried = await syncFunction(account, 'eu-west-1', 'checkout', { retryForce: true });
+    expect(retried).toMatchObject({ state: 'traced', wrapper: LUMIGO });
+    expect(updates()).toEqual([expect.objectContaining({ Environment: { Variables: FORCED_ENV } })]);
+  });
+});
