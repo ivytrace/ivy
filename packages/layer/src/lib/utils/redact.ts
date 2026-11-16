@@ -105,6 +105,24 @@ function shorten(s: string, chars: number): string {
   return `${s.slice(0, end)}…[+${s.length - end} chars]`;
 }
 
+const MAX_BODY_PARSE_CHARS = 1024 * 1024;
+
+/**
+ * A JSON `body` string (API Gateway, ALB, Function URL, SQS) with its secrets redacted, still as compact
+ * JSON text. Returned unchanged when it is base64-encoded, not JSON, or has nothing to redact.
+ */
+function redactJsonBody(body: string, parent: any, isSecret: KeyMatcher): string {
+  if (parent?.isBase64Encoded === true || body.length > MAX_BODY_PARSE_CHARS || !/^\s*[[{]/.test(body)) return body;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return body;
+  }
+  const redacted = toJson(parsed, isSecret, NO_LIMITS);
+  return redacted === JSON.stringify(parsed) ? body : redacted;
+}
+
 /**
  * `JSON.stringify` with key redaction at any depth and the given limits. `longStrings` collects the
  * lengths of strings over `MIN_CHARS`, for picking a string limit afterwards.
@@ -115,6 +133,7 @@ function toJson(value: unknown, isSecret: KeyMatcher, limits: Limits, longString
     return (
       JSON.stringify(value, function (this: any, key: string, v: unknown) {
         if (key !== '' && isSecret(key, v)) return REDACTED;
+        if (key === 'body' && typeof v === 'string') v = redactJsonBody(v, this, isSecret);
         const original = key === '' ? value : this[key];
         if (original !== null && typeof original === 'object') {
           if (original instanceof Uint8Array) return decodeBinary(original);
