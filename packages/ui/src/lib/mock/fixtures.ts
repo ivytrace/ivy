@@ -940,6 +940,7 @@ export function buildTrace(inv: MockInvocation): Span[] {
       ...(kind ? { "ivy.failure.phase": "invoke", "ivy.platform.status": kind === "timed_out" ? "timeout" : "error" } : {}),
       ...reportAttributes(inv),
       ...(isImport ? importRootAttributes : {}),
+      ...(fn.name === "checkout-createOrder" ? { "tenant.id": "acme", "user.id": `u-${inv.seed % 900 + 100}`, "cart.items": String(inv.seed % 5 + 1) } : {}),
     },
     resource,
     events,

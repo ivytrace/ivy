@@ -162,9 +162,12 @@ Paths below are relative to `/w/:workspace/:project`.
   here, in the invocation list and on the errors page; when the extension had to create the invocation span itself
   (init failure, crash), a note under the header says there is no (complete) trace and that the Logs tab holds the
   log tail. The MCP App views' header uses the same components (`InvocationStatus`, `MemoryUsage`, `FailureNote`). The service graph is on the left, with tabs on the right: Overview (error +
-  stack, invocation fields, event payload, return value), Timeline (waterfall, where expanding a row shows its
+  stack, invocation fields, the app's own attributes, event payload, return value), Timeline (waterfall, where expanding a row shows its
   service-specific details and payloads) and Logs (`log` events). When a trace contains several invocations,
   an "Only this invocation" switch scopes the view (this replaces trace-stack's "Filter current invocation").
+  The app's own attributes (`customAttributes` in `@ivy/spans`: everything outside the layer's reserved namespaces,
+  `span-conventions.md`) are an "Attributes" list under the invocation fields, and also in the invocation row's
+  details in the timeline, which is where the MCP App views (no Overview tab) show them.
   Clicking a graph node opens and scrolls to its spans in the timeline. The route is lazy-loaded so React Flow
   stays out of the main bundle.
 - `/errors?function=`: groups from `errors` (`error-grouping.md`): the message template with its placeholders muted

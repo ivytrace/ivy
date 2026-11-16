@@ -133,6 +133,18 @@ live in `docs/implementation/`.
 - Token counts are not secrets: redaction keeps `max_tokens`, `input_tokens`, `inputTokens`, … while `token`,
   `accessToken`, `sessionToken` and the like stay redacted.
 
+## Tagging invocations
+
+- Apps tag an invocation with the standard OpenTelemetry API, our equivalent of execution tags:
+  `trace.getActiveSpan()?.setAttribute("user.id", id)` (or `setAttributes`) inside a traced handler writes to the
+  invocation span when no library span is active. No Ivy SDK or import is needed beyond `@opentelemetry/api`. The
+  values follow the payload rules (redaction by key, size caps), cannot overwrite the layer's own attributes
+  (reserved namespaces such as `faas.*`, `ivy.*`, `cloud.*`, `aws.*`, `http.*` are ignored), and are stored as
+  ordinary span attributes, so attribute search covers them. `setStatus(ERROR)` marks the invocation as failed;
+  `addEvent`/`recordException` add events. The dashboard's invocation Overview, the timeline's invocation row and
+  the MCP App views list them as "Attributes"; `@ivy/format` puts them under the trace header. Not available when
+  the app registers its own OpenTelemetry context manager. Implementation: `docs/implementation/llm-spans.md`.
+
 ## Alerts
 - Alerts: Slack per error group (first seen, then at most every 60 min or 100 occurrences, customizable per project)
   and a weekly email digest; each only when configured. This replaces 001's "alerting beyond a webhook on new error

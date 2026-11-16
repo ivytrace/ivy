@@ -1,7 +1,8 @@
 import type { Span, SpanKindValue } from '../tracer/span.js';
-import type { Tracer } from '../tracer/tracer.js';
-import { SPAN_KEY } from './api.js';
-import { activeContext, AlsContextManager } from './context.js';
+import type { Invocation, Tracer } from '../tracer/tracer.js';
+import { SPAN_KEY, type Context } from './api.js';
+import { activeContext, AlsContextManager, ROOT_CONTEXT } from './context.js';
+import { InvocationSpan } from './invocation-span.js';
 import { BridgeTracerProvider } from './provider.js';
 import { apiVersion, hasOwnSdk, registerGlobal } from './register.js';
 import { BridgeSpan } from './span.js';
@@ -22,8 +23,18 @@ export function installOtelBridge(tracer: Tracer, env: NodeJS.ProcessEnv = proce
   try {
     const appRoot = env.LAMBDA_TASK_ROOT ?? process.cwd();
     const startChild: (name: string, kind?: SpanKindValue) => Span | undefined = tracer.startChild.bind(tracer);
-    const contextManager = new AlsContextManager();
     const caps = { maxBytes: tracer.config.maxPayloadBytes, isSecret: tracer.isSecret };
+    // `trace.getActiveSpan()` outside library spans is the invocation span, created on first use.
+    let current: { invocation: Invocation; context: Context } | undefined;
+    const invocationContext = () => {
+      const inv = tracer.active;
+      if (!inv || inv.done) return ROOT_CONTEXT;
+      if (current?.invocation !== inv) {
+        current = { invocation: inv, context: ROOT_CONTEXT.setValue(SPAN_KEY, new InvocationSpan(inv, tracer, caps)) };
+      }
+      return current.context;
+    };
+    const contextManager = new AlsContextManager(invocationContext);
     const provider = new BridgeTracerProvider(tracer, startChild, caps, contextManager);
 
     const register = () => {

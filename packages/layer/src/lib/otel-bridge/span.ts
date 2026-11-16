@@ -1,5 +1,5 @@
 import { now } from '../tracer/clock.js';
-import { cleanStack, StatusCode, type Attributes, type Span } from '../tracer/span.js';
+import { cleanStack, StatusCode, type Attributes, type Span, type SpanEvent } from '../tracer/span.js';
 import type { Invocation } from '../tracer/tracer.js';
 import type { KeyMatcher } from '../utils/redact.js';
 import { capAttributes, setAttributes, toAttrValue } from './attributes.js';
@@ -12,6 +12,35 @@ export function toEpochMs(time: TimeInput | undefined): number | undefined {
   if (time instanceof Date) return time.getTime();
   if (typeof time === 'number') return time < performance.timeOrigin ? performance.timeOrigin + time : time;
   return undefined;
+}
+
+/** The event of `span.addEvent(name, attributes?, time?)` (or `addEvent(name, time)`). */
+export function toEvent(name: string, attributesOrTime?: OtelAttributes | TimeInput, time?: TimeInput): SpanEvent {
+  let attributes: OtelAttributes | undefined;
+  if (attributesOrTime instanceof Date || Array.isArray(attributesOrTime) || typeof attributesOrTime === 'number') {
+    time = attributesOrTime;
+  } else {
+    attributes = attributesOrTime;
+  }
+  const attrs: Attributes = {};
+  setAttributes(attrs, attributes);
+  return { name, timeMs: toEpochMs(time) ?? now(), attributes: attrs };
+}
+
+/** The `exception` event of `span.recordException(exception, time?)`. */
+export function toExceptionEvent(exception: unknown, time?: TimeInput): SpanEvent {
+  const e = exception as { name?: unknown; message?: unknown; stack?: unknown; code?: unknown } | string | null;
+  const attributes: Attributes = {};
+  if (typeof e === 'string') {
+    attributes['exception.message'] = e;
+  } else if (e && typeof e === 'object') {
+    const type = e.name ?? e.code;
+    if (type !== undefined) attributes['exception.type'] = String(type);
+    if (e.message !== undefined) attributes['exception.message'] = String(e.message);
+    const stack = typeof e.stack === 'string' ? cleanStack(e.stack) : undefined;
+    if (stack) attributes['exception.stacktrace'] = stack;
+  }
+  return { name: 'exception', timeMs: toEpochMs(time) ?? now(), attributes };
 }
 
 export interface CapSettings {
@@ -51,16 +80,7 @@ export class BridgeSpan {
   }
 
   addEvent(name: string, attributesOrTime?: OtelAttributes | TimeInput, time?: TimeInput): this {
-    if (this.ended) return this;
-    let attributes: OtelAttributes | undefined;
-    if (attributesOrTime instanceof Date || Array.isArray(attributesOrTime) || typeof attributesOrTime === 'number') {
-      time = attributesOrTime;
-    } else {
-      attributes = attributesOrTime;
-    }
-    const attrs: Attributes = {};
-    setAttributes(attrs, attributes);
-    this.ivy.events.push({ name, timeMs: toEpochMs(time) ?? now(), attributes: attrs });
+    if (!this.ended) this.ivy.events.push(toEvent(name, attributesOrTime, time));
     return this;
   }
 
@@ -87,19 +107,7 @@ export class BridgeSpan {
   }
 
   recordException(exception: unknown, time?: TimeInput): void {
-    if (this.ended) return;
-    const e = exception as { name?: unknown; message?: unknown; stack?: unknown; code?: unknown } | string | null;
-    const attributes: Attributes = {};
-    if (typeof e === 'string') {
-      attributes['exception.message'] = e;
-    } else if (e && typeof e === 'object') {
-      const type = e.name ?? e.code;
-      if (type !== undefined) attributes['exception.type'] = String(type);
-      if (e.message !== undefined) attributes['exception.message'] = String(e.message);
-      const stack = typeof e.stack === 'string' ? cleanStack(e.stack) : undefined;
-      if (stack) attributes['exception.stacktrace'] = stack;
-    }
-    this.ivy.events.push({ name: 'exception', timeMs: toEpochMs(time) ?? now(), attributes });
+    if (!this.ended) this.ivy.events.push(toExceptionEvent(exception, time));
   }
 
   end(endTime?: TimeInput): void {

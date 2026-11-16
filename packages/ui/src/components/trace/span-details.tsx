@@ -1,7 +1,7 @@
 import { PayloadPreview } from "@/components/stats/payload-preview";
 import { ErrorBlock } from "@/components/trace/error-block";
 import { LlmDetails } from "@/components/trace/llm-details";
-import { describeSpan, formatCount, getException, type CollapsedInfo } from "@/lib/spans/services";
+import { customAttributes, describeSpan, formatCount, getException, type CollapsedInfo } from "@/lib/spans/services";
 import type { Span } from "@/lib/spans/types";
 import { formatDuration, formatTimestamp } from "@/lib/utils/format";
 
@@ -40,6 +40,22 @@ export function SpanFields({ span }: { span: Span }) {
   );
 }
 
+/** Attributes the app set on its invocation, e.g. `trace.getActiveSpan()?.setAttribute("user.id", id)`. */
+export function CustomAttributes({ span }: { span: Span }) {
+  const entries = customAttributes(span);
+  if (!entries.length) return null;
+  return (
+    <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-xs">
+      {entries.map(([key, value]) => (
+        <div key={key} className="contents">
+          <dt className="font-mono text-muted-foreground">{key}</dt>
+          <dd className="break-all font-mono">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export function SpanDetails({ span }: { span: Span }) {
   const d = describeSpan(span);
   const exception = getException(span);
@@ -60,6 +76,12 @@ export function SpanDetails({ span }: { span: Span }) {
         </p>
       )}
       <SpanFields span={span} />
+      {d.isInvocation && customAttributes(span).length > 0 && (
+        <section>
+          <h4 className="mb-2 text-xs font-medium text-muted-foreground">Attributes</h4>
+          <CustomAttributes span={span} />
+        </section>
+      )}
       {exception && !d.isInvocation && <ErrorBlock exception={exception} />}
       {d.llm && <LlmDetails llm={d.llm} />}
       <PayloadPreview title={d.isInvocation ? "Event" : "Request"} value={d.request} truncated={d.truncated} />

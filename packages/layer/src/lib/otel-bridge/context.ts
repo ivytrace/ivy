@@ -30,12 +30,15 @@ export const ROOT_CONTEXT: Context = new BaseContext();
 /**
  * Context manager on `AsyncLocalStorage`, like the SDK's `AsyncLocalStorageContextManager`. The storage
  * is created on first use, so async hooks stay off until something actually starts an active span.
+ * Without a stored context, `active()` returns `base()`: the invocation's context while one is running.
  */
 export class AlsContextManager implements ContextManager {
   private storage: AsyncLocalStorage<Context> | undefined;
 
+  constructor(private readonly base: () => Context = () => ROOT_CONTEXT) {}
+
   active(): Context {
-    return this.storage?.getStore() ?? ROOT_CONTEXT;
+    return this.storage?.getStore() ?? this.base();
   }
 
   with<A extends unknown[], F extends (...args: A) => ReturnType<F>>(context: Context, fn: F, thisArg?: ThisParameterType<F>, ...args: A): ReturnType<F> {

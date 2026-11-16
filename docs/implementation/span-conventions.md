@@ -60,6 +60,13 @@ One per invocation. It is the span the `invocations` table is built from.
   (`exception.type`, `exception.message`, `exception.stacktrace`). Also set
   `error.type` on the span. Timeouts: `error.type = "Timeout"` from the tracer, replaced by
   `Sandbox.Timedout` when the extension sees the platform's timeout.
+- Custom attributes and events: apps tag the invocation with `trace.getActiveSpan()?.setAttribute(key, value)`
+  (`llm-spans.md`, "The invocation as active span"). They are stored like any span attribute (the
+  `SpanAttributes` map of the invocation span) and follow the payload rules of library spans (below). Keys in
+  the namespaces the layer, the extension and the server use on this span are reserved and ignored:
+  `ivy.`, `faas.`, `cloud.`, `aws.`, `http.`, `url.`, `messaging.`, `error.`, `exception.`, `otel.`. The same list
+  (`customAttributes` in `@ivy/spans`) decides what the dashboard, the MCP App views and `@ivy/format` show as
+  the app's own attributes; keep the two copies in sync.
 - `ivy.init_duration_ms` (double): on cold starts, the init phase duration from the Lambda platform
   (`platform.initReport`). `ivy.restore_duration_ms` likewise for SnapStart restores.
 
@@ -215,7 +222,8 @@ payload rules: capped at `IVY_MAX_PAYLOAD_BYTES` each (with the `…[truncated N
 `ivy.payload.truncated = true`), JSON strings redacted by key at any depth, values whose own key
 matches `IVY_REDACT_KEYS` replaced (token counts are kept, see above). String arrays are capped per
 element within 4 × `IVY_MAX_PAYLOAD_BYTES`. Spans of the layer's own instrumentation (fetch, http, AWS SDK)
-started inside an active library span become its children.
+started inside an active library span become its children. Outside library spans, `trace.getActiveSpan()` is
+the invocation span itself (see "Invocation (root) span").
 
 ## LLM spans
 

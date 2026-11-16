@@ -14,6 +14,14 @@ describe("formatTrace", () => {
     expect(formatTrace(checkoutOk)).toMatchSnapshot();
   });
 
+  it("lists the app's own invocation attributes under the header", () => {
+    const spans = checkoutOk.spans.map((s) =>
+      s.attributes["ivy.invocation"] === "true" ? { ...s, attributes: { ...s.attributes, "user.id": "u-42", "tenant.id": "acme" } } : s,
+    );
+    const lines = formatTrace({ ...checkoutOk, spans }).split("\n");
+    expect(lines[2]).toBe("attributes tenant.id=acme user.id=u-42");
+  });
+
   it("renders an in-progress invocation as running, and as no completion recorded past its deadline", () => {
     const start = Date.UTC(2026, 10, 14, 12, 0, 0);
     const root = {

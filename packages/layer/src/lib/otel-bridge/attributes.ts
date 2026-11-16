@@ -41,7 +41,7 @@ const lastSegment = (key: string) => key.slice(key.lastIndexOf('.') + 1);
  * `maxBytes`. String arrays (e.g. `ai.prompt.tools`) get the same per element, within 4 × `maxBytes`.
  * Returns whether anything was truncated.
  */
-export function capAttributes(span: Span, maxBytes: number, isSecret: KeyMatcher): boolean {
+export function capAttributes(span: Pick<Span, 'attributes' | 'events'>, maxBytes: number, isSecret: KeyMatcher): boolean {
   let truncated = false;
   const attrs = span.attributes;
   for (const key in attrs) {

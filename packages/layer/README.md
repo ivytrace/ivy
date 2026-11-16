@@ -116,6 +116,25 @@ same way. If the app registers its own tracer provider, the layer leaves it alon
 with the AWS SDK (`InvokeModel`, `Converse` and their streaming variants) are LLM calls too, with no setup.
 Details: `docs/implementation/llm-spans.md`.
 
+## Tagging invocations
+
+With `@opentelemetry/api` installed (or bundled), the active span in a handler is the invocation itself, so
+attributes set on it show up on the invocation (and in attribute search):
+
+```ts
+import { trace } from "@opentelemetry/api";
+
+export const handler = async (event) => {
+  trace.getActiveSpan()?.setAttributes({ "user.id": userId, "tenant.id": "acme" });
+  // …
+};
+```
+
+Values follow the payload rules (redaction, size caps). Keys under the layer's own namespaces (`ivy.`, `faas.`,
+`cloud.`, `aws.`, `http.`, `url.`, `messaging.`, `error.`, `exception.`, `otel.`) are ignored. Inside a library
+span (`startActiveSpan`) the active span is that span instead. Not available when the app registers its own
+OpenTelemetry context manager.
+
 ## Local end-to-end test
 
 Needs Docker, no AWS account. It builds the layer, mounts it at `/opt` in the official

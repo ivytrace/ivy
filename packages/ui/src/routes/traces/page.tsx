@@ -10,7 +10,7 @@ import { ErrorBlock } from "@/components/trace/error-block";
 import { FailureNote } from "@/components/trace/failure-note";
 import { OmittedSpansNote } from "@/components/trace/omitted-note";
 import { Logs } from "@/components/trace/logs";
-import { SpanFields } from "@/components/trace/span-details";
+import { CustomAttributes, SpanFields } from "@/components/trace/span-details";
 import { TraceGraph } from "@/components/trace/trace-graph";
 import { Waterfall } from "@/components/trace/waterfall";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,7 @@ import { LlmUsageTable } from "@/components/trace/llm-details";
 import {
   describeSpan,
   formatTokens,
+  customAttributes,
   getException,
   getLogs,
   invocationResources,
@@ -154,6 +155,12 @@ function Overview({ invocation, usage }: { invocation: Span; usage?: LlmUsage })
         <h4 className="mb-3 text-sm font-medium">Invocation</h4>
         <SpanFields span={invocation} />
       </section>
+      {customAttributes(invocation).length > 0 && (
+        <section>
+          <h4 className="mb-3 text-sm font-medium">Attributes</h4>
+          <CustomAttributes span={invocation} />
+        </section>
+      )}
       {usage && usage.calls > 0 && (
         <section>
           <h4 className="mb-3 text-sm font-medium">LLM usage</h4>

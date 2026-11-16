@@ -1,6 +1,7 @@
 import {
   collapsedCalls,
   collapsedInfo,
+  customAttributes,
   describeLlm,
   droppedSpans,
   droppedSpansLabel,
@@ -90,6 +91,8 @@ function hasStatusAtLeast400(span: Span) {
   return Number(span.attributes["http.response.status_code"] ?? 0) >= 400;
 }
 
+const MAX_CUSTOM_ATTRIBUTES = 20;
+
 function header(trace: Trace, spans: Span[], nowMs: number): Line[] {
   const root = rootInvocation(spans);
   const { start, end } = traceBounds(spans);
@@ -132,6 +135,12 @@ function header(trace: Trace, spans: Span[], nowMs: number): Line[] {
     { text: first.join(" · "), keep: true },
     { text: second.join(" · "), keep: true },
   ];
+  const custom = customAttributes(root);
+  if (custom.length) {
+    const shown = custom.slice(0, MAX_CUSTOM_ATTRIBUTES).map(([key, value]) => `${key}=${oneLine(value, 80)}`);
+    const more = custom.length > MAX_CUSTOM_ATTRIBUTES ? ` +${custom.length - MAX_CUSTOM_ATTRIBUTES} more` : "";
+    lines.push({ text: `attributes ${shown.join(" ")}${more}` });
+  }
   const note = missingTraceNote(kind, a["ivy.synthetic"] === "true");
   if (note) lines.push({ text: `(${note})`, keep: true });
   if (inProgress) {
