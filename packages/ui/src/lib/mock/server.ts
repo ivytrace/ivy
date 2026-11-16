@@ -123,7 +123,8 @@ function functions(pool: Row[], throttles: ThrottleRow[], params: URLSearchParam
 /** `ids` (slug → project ID) for workspace-wide lists, whose items carry `project_id` and `project`. */
 function invocations(pool: Row[], params: URLSearchParams, ids?: Map<string, string>): InvocationsResponse {
   const status = params.get("status");
-  const q = params.get("q")?.toLowerCase();
+  const { text, terms } = searchTerms(params.get("q") ?? "");
+  const q = text.toLowerCase();
   const limit = Math.min(Number(params.get("limit") ?? 50) || 50, 500);
   const offset = Number(params.get("cursor") ? atob(params.get("cursor")!) : 0);
   const only = params.get("ids") ? new Set(params.get("ids")!.split(",")) : null;
@@ -133,7 +134,8 @@ function invocations(pool: Row[], params: URLSearchParams, ids?: Map<string, str
       (!only || only.has(i.span_id)) &&
       (!group || (i.status === "error" && fingerprint(groupKey(i, false)) === group)) &&
       (!status || i.status === status) &&
-      (!q || [i.request_id, i.trace_id, i.error_message, i.http_path].some((v) => v?.toLowerCase().includes(q))),
+      (!q || [i.request_id, i.trace_id, i.error_message, i.http_path].some((v) => v?.toLowerCase().includes(q))) &&
+      (!terms.length || terms.every(([key, value]) => buildTrace(i).some((span) => span.attributes[key] === value))),
   );
   const page = found.slice(offset, offset + limit);
   const next = offset + limit < found.length ? btoa(String(offset + limit)) : null;
@@ -141,6 +143,19 @@ function invocations(pool: Row[], params: URLSearchParams, ids?: Map<string, str
     items: page.map((row) => (ids ? { ...strip(row), project_id: ids.get(row.project) ?? row.project, project: row.project } : strip(row))),
     next_cursor: next,
   };
+}
+
+/** The API's `key=value` span attribute terms (`invocation-search.ts`), split from the free text. */
+function searchTerms(q: string) {
+  const terms: [string, string][] = [];
+  const text = q
+    .replace(/(?<=^|\s)([A-Za-z_][\w.\-/:@]*)=("(?:[^"\\]|\\.)+"|[^\s"]+)(?=\s|$)/g, (_, key: string, raw: string) => {
+      terms.push([key, raw.startsWith('"') ? raw.slice(1, -1).replace(/\\(.)/g, "$1") : raw]);
+      return " ";
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+  return { text, terms };
 }
 
 /** Mock grouping: function, error type and message template (the mock has no stacks, so no code location). */

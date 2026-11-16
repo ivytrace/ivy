@@ -6,6 +6,7 @@ import { emptyToNull, isoFromMs, round, zeroToNull } from '../utils/format.js';
 import { badRequest } from '../utils/http-error.js';
 import type { TimeRange } from '../utils/time-range.js';
 import { ERROR_FINGERPRINT_EXPR } from './error-grouping.js';
+import { attributeTraceIds, parseInvocationSearch } from './invocation-search.js';
 import { projectFields, type ProjectNames } from './projects.js';
 
 interface InvocationRow {
@@ -37,6 +38,7 @@ interface InvocationRow {
 export interface InvocationFilters {
   function?: string;
   status?: string;
+  /** Free text plus `key=value` span attribute terms (`invocation-search.ts`). */
   q?: string;
   cursor?: string;
   limit?: string | number;
@@ -107,8 +109,15 @@ export async function listInvocations(scope: DataScope, range: TimeRange, filter
     shared.push('span_id IN {ids:Array(String)}');
     queryParams.ids = ids;
   }
-  const q = filters.q?.trim();
+  const search = parseInvocationSearch(filters.q);
+  const q = search.text;
   if (q) queryParams.q = q;
+  let attributeFilter: string | undefined;
+  if (search.attributes.length) {
+    const traces = attributeTraceIds(search.attributes, projectFilter(queryScope(scope), 'ProjectId'));
+    attributeFilter = `trace_id IN (${traces.sql})`;
+    Object.assign(queryParams, traces.params);
+  }
   if (filters.cursor) {
     const cursor = decodeCursor(filters.cursor);
     shared.push('(ts, span_id) < (fromUnixTimestamp64Milli({cursor_ts:Int64}), {cursor_span:String})');
@@ -132,6 +141,7 @@ export async function listInvocations(scope: DataScope, range: TimeRange, filter
         OR positionCaseInsensitive(http_path, {q:String}) > 0)`,
     );
   }
+  if (attributeFilter) finalWhere.push(attributeFilter);
   const select = (columns: string) => `${byProject ? 'project_id, ' : ''}${columns}`;
   const branches: string[] = [];
   if (status !== 'in_progress') {
@@ -150,7 +160,7 @@ export async function listInvocations(scope: DataScope, range: TimeRange, filter
          WHERE ${common.join(' AND ')}
            AND ts >= fromUnixTimestamp64Milli({from:Int64} - {slack:Int64}) AND ts < fromUnixTimestamp64Milli({to:Int64} + {slack:Int64})
            AND span_id IN (SELECT span_id FROM invocations_in_progress WHERE ${pending.join(' AND ')})
-       )`,
+       )${attributeFilter ? `\n       AND ${attributeFilter}` : ''}`,
     );
   }
 

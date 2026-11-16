@@ -63,12 +63,15 @@ export function registerInvocationTools(server: McpServer, data: IvyData) {
       title: "Search invocations",
       description:
         "Search Lambda invocations across your workspaces (or one), newest first, one line each. `q` matches a request " +
-        "ID or trace ID exactly, or a substring of the error message or HTTP path (case-insensitive). Combine with " +
+        "ID or trace ID exactly, or a substring of the error message or HTTP path (case-insensitive). `key=value` terms in " +
+        "`q` match a span attribute exactly, on the invocation span or any span inside it (e.g. `job.id=abc123`, numbers " +
+        'and booleans as text, quote values with spaces: `job.reason="manual retry"`); several terms must all match, and ' +
+        "the rest of `q` is free text. Combine with " +
         `function and status to narrow down, e.g. recent successful runs of a function to compare with a failure. ${LIST_FORMAT}`,
       inputSchema: {
         workspace,
         project,
-        q: z.string().min(1).optional().describe("Request ID, trace ID, or text in the error message or HTTP path."),
+        q: z.string().min(1).optional().describe("Request ID, trace ID, text in the error message or HTTP path, and/or span attribute terms like job.id=abc123."),
         function: functionName,
         status: z.enum(["ok", "error", "in_progress"]).optional().describe("Only successful (ok), failed (error) or still running (in_progress) invocations."),
         since: since("24h"),

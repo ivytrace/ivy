@@ -13,7 +13,7 @@ export interface InvocationQuery {
   project?: string;
   function?: string;
   status?: "ok" | "error" | "in_progress";
-  /** Free text: request ID, trace ID, error message or HTTP path (as `GET /api/invocations?q=`). */
+  /** Free text (request ID, trace ID, error message or HTTP path) plus `key=value` span attribute terms (as `GET /api/invocations?q=`). */
   q?: string;
   /** Relative range like `15m`, `1h`, `24h`, `7d`. Ignored when `from` is set. */
   since?: string;

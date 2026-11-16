@@ -24,7 +24,7 @@ const fn = query('function', 'Exact function name.');
 const invocationFilters = [
   fn,
   query('status', 'Only ok, error or in_progress (still running).', { type: 'string', enum: ['ok', 'error', 'in_progress'] }),
-  query('q', 'Free text: request ID or trace ID (exact), or text in the error message or HTTP path.'),
+  query('q', 'Free text: request ID or trace ID (exact), or text in the error message or HTTP path. `key=value` terms (value optionally double-quoted) match a span attribute on any span of the invocation; all terms must match.'),
   query('limit', 'Page size.', { type: 'integer', minimum: 1, maximum: 500, default: 50 }),
   query('cursor', 'Opaque cursor from next_cursor.'),
   query('ids', 'Comma-separated span IDs (up to 100): only these invocations, in their current state (the final row once it arrived). Used by Live to refresh in-progress rows.'),

@@ -153,6 +153,8 @@ Paths below are relative to `/w/:workspace/:project`.
   region + name; functions not in a connected account show "Manual"). Under `all` the totals charts sum every project
   (`/api/w/:ws/stats/timeseries`) and each row's sparklines are its own project's.
 - `/invocations?function=&status=&q=&live=`: filters (and the Live toggle, below) live in the URL so links can deep-link into a filtered list.
+  The search box takes the API's `q`, so `key=value` span attribute terms work there; its placeholder mentions
+  `key=value` and its tooltip explains it.
   Uses cursor pagination (a stack of `next_cursor`s for Previous/Next). With `function` set, the function's
   charts are shown, as on trace-stack's per-function page. Under `all` the list and charts cover every project that
   has the function, and rows link to their project's trace.
