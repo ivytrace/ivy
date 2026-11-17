@@ -7,7 +7,7 @@ import { invocationIds, newTraceId } from '../utils/ids.js';
 import { anchorClock, now } from './clock.js';
 import { SpanReducer } from './collapse.js';
 import { byteLength, isPayloadKey, PayloadBudget } from './payload-budget.js';
-import { createSpan, recordError, SpanKind, StatusCode, type Attributes, type Span, type SpanKindValue } from './span.js';
+import { createSpan, recordError, SpanKind, StatusCode, type Attributes, type Span, type SpanEvent, type SpanKindValue } from './span.js';
 
 export interface LambdaContext {
   awsRequestId?: string;
@@ -35,6 +35,8 @@ export interface Invocation {
   reducer: SpanReducer;
   done: boolean;
   timer?: NodeJS.Timeout;
+  /** Open spans received from worker threads, updated in place when they arrive again. */
+  openWorkerSpans?: Map<string, Span>;
 }
 
 const MAX_LOG_EVENTS = 500;
@@ -95,14 +97,7 @@ export class Tracer {
 
   startChild(name: string, kind: SpanKindValue = SpanKind.CLIENT): Span | undefined {
     const inv = this.active;
-    if (!inv || inv.done) return undefined;
-    if (inv.children.length >= inv.reducer.softLimit) {
-      inv.children = inv.reducer.reduce(inv.children, false);
-      if (inv.children.length >= inv.reducer.softLimit) {
-        inv.reducer.drop(1, 'span limit');
-        return undefined;
-      }
-    }
+    if (!inv || inv.done || !this.hasRoom(inv)) return undefined;
     const span = createSpan(inv.root.traceId, name, kind, now(), inv.root.spanId);
     inv.children.push(span);
     return span;
@@ -117,6 +112,42 @@ export class Tracer {
       timeMs: now(),
       attributes: { 'log.severity': severity, 'log.message': capString(message, MAX_LOG_BYTES).text },
     });
+  }
+
+  /**
+   * Adds spans and log events recorded by a worker thread to the current invocation. Spans that were
+   * children of the worker's own root become children of `parentSpanId`; spans that started before
+   * this invocation belong to an earlier one and are skipped. A span sent while still open is updated
+   * when it comes again.
+   */
+  adopt(spans: Span[], logs: SpanEvent[], workerRootId: string, parentSpanId: string): void {
+    const inv = this.active;
+    if (!inv || inv.done) return;
+    const open = (inv.openWorkerSpans ??= new Map());
+    for (const span of spans) {
+      if (span.startMs < inv.root.startMs) continue;
+      span.traceId = inv.root.traceId;
+      if (!span.parentSpanId || span.parentSpanId === workerRootId) span.parentSpanId = parentSpanId;
+      const known = open.get(span.spanId);
+      if (known) Object.assign(known, span);
+      else if (this.hasRoom(inv)) inv.children.push(span);
+      else continue;
+      if (span.endMs === undefined) open.set(span.spanId, known ?? span);
+      else open.delete(span.spanId);
+    }
+    for (const log of logs) {
+      if (log.timeMs < inv.root.startMs) continue;
+      if (inv.logCount++ >= MAX_LOG_EVENTS) break;
+      inv.root.events.push(log);
+    }
+  }
+
+  private hasRoom(inv: Invocation): boolean {
+    if (inv.children.length < inv.reducer.softLimit) return true;
+    inv.children = inv.reducer.reduce(inv.children, false);
+    if (inv.children.length < inv.reducer.softLimit) return true;
+    inv.reducer.drop(1, 'span limit');
+    return false;
   }
 
   endInvocation(inv: Invocation, err: unknown, result: unknown): void {
@@ -215,7 +246,7 @@ export class Tracer {
   }
 
   /** Runs the span's finalize hook and turns its payloads into attributes while the budget lasts. */
-  private applyPayloads(span: Span, budget: PayloadBudget): void {
+  applyPayloads(span: Span, budget: PayloadBudget): void {
     try {
       span.finalize?.(span);
     } catch {

@@ -163,8 +163,9 @@ plus flat children per invocation, no context propagation API, no samplers; the 
 exporter would add a few hundred KB and noticeably more init time. The encoder is ~100 lines
 (`src/lib/export/otlp.ts`): hex IDs, nanosecond strings via BigInt, int64 as strings.
 
-Trace IDs: 8 hex chars of unix seconds + 24 random hex chars (`src/lib/utils/ids.ts`), random
-bytes from a pooled `randomFillSync` buffer.
+Trace IDs: 8 hex chars of unix seconds + 24 random hex chars (`src/lib/utils/ids.ts`). Random
+hex comes from `Math.random`, as in OpenTelemetry JS's `RandomIdGenerator`: IDs only need to be unique,
+and `node:crypto` costs ~3 ms to load (on a cold start and in every worker thread).
 
 Payloads are kept as references and serialized at flush time (after the response): the event,
 result, SDK input/output and HTTP bodies go through one `JSON.stringify` with a replacer that
@@ -286,7 +287,8 @@ forever if the environment died. Now the extension reports a long invocation whi
   `rpc.service`/`cloud.region` from the credential scope, `rpc.method` from `X-Amz-Target` or
   `Action=`, and service attributes from the JSON body.
 - **node:http / node:https**: `request` and `get` are wrapped (plus `syncBuiltinESMExports` for
-  ESM named imports); https only once something loads it (see "Tracer init"). The wrappers keep
+  ESM named imports), each only once something loads it (see "Tracer init"; the runtime has http
+  loaded already, a fresh worker thread has neither). The wrappers keep
   a reference to the original, which the layer's own transport uses. Bodies are captured by wrapping `write`/`end` and the response's `emit`,
   so stream flow mode and error-listener semantics are untouched.
 - **fetch**: `globalThis.fetch` is wrapped; response bodies are read from `res.clone()` when the
@@ -294,7 +296,62 @@ forever if the environment died. Now the extension reports a long invocation whi
 - **console**: `log/info/warn/error/debug/trace` become `log` events on the root span.
 - **OpenTelemetry API** (Vercel AI SDK and other libraries): a minimal global tracer provider and
   `AsyncLocalStorage` context manager turn library spans into children of the invocation. See `llm-spans.md`.
+- **worker_threads**: see "Worker threads" below.
 - Calls to the runtime API, the extension port and the Ivy endpoint (host + port) are skipped.
+
+## Worker threads
+
+Apps run jobs in `worker_threads` (for example so a cancelled job can `process.exit()` without taking the runtime
+down). A worker is a separate V8 isolate with its own module cache: none of the patches above exist in it, so its
+calls and logs were invisible. Now (`src/lib/workers/`, `src/worker.ts`, `IVY_CAPTURE_WORKERS=false` turns it off):
+
+1. **Parent** (`parent.ts`). Once something loads `node:worker_threads` (require hook, or the check after the
+   handler loads and at each invocation start, as for https; loading it eagerly costs ~9 ms), `Worker` is replaced
+   with a `Proxy` (so `instanceof` and subclassing keep working). Each new Worker gets `--require
+   /opt/nodejs/ivy/worker.cjs` appended to its `execArgv`. Left out, `execArgv` is inherited and Node silently keeps
+   flags a worker can't use; passed explicitly, it rejects them, and the Lambda runtime always starts Node with some
+   (`--expose-gc`, `--max-semi-space-size`, `--max-old-space-size`; also `--no-experimental-require-module`, which
+   must be kept). So the first Worker tries the parent's `execArgv`, reads the rejected flags from the
+   `ERR_WORKER_INVALID_EXEC_ARGV` message (~0.2 ms, once per process) and remembers the rest. V8 flags are
+   process-wide, so dropping them changes only what `process.execArgv` reports in the worker. If the app passes its
+   own `execArgv` and ours can't be added, or anything else fails, the Worker is created exactly as the app asked,
+   untraced.
+2. **Worker span.** A Worker created during an invocation gets an INTERNAL span `worker <file>` (or `worker <name>`
+   with the `name` option, `worker (eval)` for eval code) under the active span, ended on `exit`. See
+   `span-conventions.md`. The Worker's `emit` is wrapped instead of adding listeners, so an unhandled `'error'`
+   stays unhandled and `listenerCount` is unchanged.
+3. **Worker** (`child.ts`). The bootstrap instruments the thread like a function (http/https, fetch, AWS SDK,
+   console, OpenTelemetry bridge) with one standing invocation that never ends, and posts its finished spans and log
+   events to the parent on the worker's own `parentPort`, marked as an Ivy batch. Payloads become attributes in the
+   worker (functions and class instances can't be posted); the parent applies the invocation's payload budget. It
+   posts every 500 ms, before every message the worker posts (`MessagePort.prototype.postMessage` is wrapped, so the
+   spans of a pool worker's task arrive before its "done"), and from a `process.on('exit')` hook, which also runs on
+   `process.exit()` in a worker. Spans still open when the worker posts are sent as snapshots and sent again when
+   they end; on exit everything goes, open spans included.
+4. **Back in the parent.** Batches are taken out of the Worker's `'message'` events before the app's listeners see
+   them. Node emits every message a worker posted before its `'exit'`, so a job awaited on `exit` has all its spans
+   in the invocation by then. `Tracer.adopt` gives them the invocation's trace ID, re-parents the worker's top-level
+   spans to the worker span (or, for a worker started outside the invocation such as a pool created at init, to the
+   invocation span), updates earlier snapshots in place, skips spans that started before the invocation, and applies
+   the span limit. Collapsing, the payload budget and export then treat them like any other child; log events join
+   the invocation's (same cap).
+
+Choices:
+
+- **parentPort, not a BroadcastChannel.** Creating a `BroadcastChannel` costs ~1.8 ms in a fresh worker, and its
+  messages are not ordered with the app's own; on `parentPort` they are in order with them and arrive before `exit`.
+  The marker that a worker is traced is environment data (`setEnvironmentData`), which the bootstrap removes again:
+  workers started by a worker inherit `--require` but stay untraced, instead of posting batches to app code that
+  does not filter them.
+- **Startup cost per worker.** Every worker is a fresh isolate, so the bootstrap is loaded and compiled each time.
+  It was 16 ms per worker at first; loading `node:http` (~2.6 ms), `node:crypto` (~3.4 ms) and `perf_hooks` (the
+  `performance` global, ~1.1 ms) only when needed, and dropping the BroadcastChannel, brought it to ~6.5 ms over an
+  empty preload on an M-series Mac: ~1.3 ms for `--require` itself, ~3 ms to load and compile the 56 KB bundle,
+  ~3.3 ms to install the instrumentation. Lambda image numbers are in `layer-performance.md`. A V8 code cache
+  (`vm.Script` `cachedData` handed to workers as environment data) would save ~2 ms per worker, but building it
+  takes 6–11 ms in the parent; not done.
+- Not covered: Workers created before the patch (an ESM handler that starts one at import time, before the check
+  after loading), spans not yet posted when a worker is `terminate()`d (no exit hook runs), `child_process`.
 
 ## Tracer init
 
@@ -341,7 +398,7 @@ cold start, `error_type = Timeout`).
 
 ## Size and overhead
 
-`handler.mjs` 32 KB, extension binaries 1.8 MB (x86_64) / 1.5 MB (arm64), `layer.zip` 1.9 MB.
+`handler.mjs` 32 KB, `worker.cjs` 56 KB (loaded only into worker threads), extension binaries 1.8 MB (x86_64) / 1.5 MB (arm64), `layer.zip` 1.9 MB.
 
 Measured on Lambda (eu-west-1, Node.js 22, method and full tables in
 [`layer-performance.md`](layer-performance.md)):
@@ -362,6 +419,8 @@ starts", and do not imply billed duration is unchanged.
 - Undici used directly (`require('undici')`) and the SDK's `undici-http-handler` are not traced.
 - Response streaming handlers and Lambda multi-concurrency (`AWS_LAMBDA_MAX_CONCURRENCY`) are
   not traced (the tracer assumes one invocation at a time).
+- Worker threads started by worker threads, Workers started at import time of an ESM handler, and
+  `child_process` are not traced (see "Worker threads").
 - In the RIE the client response waits for extensions, so e2e round-trip latency includes the
   export; on Lambda it does not.
 - At 128 MB the post-response export takes 40–60 ms of a small CPU share; back-to-back

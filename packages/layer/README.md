@@ -83,6 +83,7 @@ extension idles.
 | `IVY_REDACT_KEYS` | see span conventions | comma-separated; a key is redacted if it contains one of these (case-insensitive, `-`/`_` ignored). Token counts (`max_tokens`, `input_tokens`, `inputTokens`, `x-amzn-bedrock-input-token-count`, …) are kept, and numbers are kept for keys that only match `token`; `token`, `accessToken`, `sessionToken`, `x-auth-token` stay redacted |
 | `IVY_CAPTURE_LOGS` | `true` | record `console.*` calls as span events |
 | `IVY_CAPTURE_OTEL` | `true` | capture spans that libraries create through `@opentelemetry/api` (Vercel AI SDK, …) |
+| `IVY_CAPTURE_WORKERS` | `true` | trace `worker_threads` Workers: a span per worker, with the calls and logs made inside it |
 | `IVY_TIMEOUT_MARGIN_MS` | `100` | how long before the deadline to snapshot spans for a possible timeout |
 | `IVY_EXPORT_TIMEOUT_MS` | `1000` | per-request export timeout |
 | `IVY_FLUSH_BUDGET_MS` | `2000` | base time the extension may spend exporting after each invocation |
@@ -140,8 +141,8 @@ OpenTelemetry context manager.
 Needs Docker, no AWS account. It builds the layer, mounts it at `/opt` in the official
 `public.ecr.aws/lambda/nodejs:22` image (Runtime Interface Emulator, real exec wrapper and
 extension), runs the handlers in [`example/`](example) (CJS, callback-style and ESM; each does
-`fetch`, `node:http` and a DynamoDB call against a fake endpoint), and invokes them with API
-Gateway, SQS, scheduled, error and timeout events.
+`fetch`, `node:http` and a DynamoDB call against a fake endpoint; `example/workers` runs its jobs
+in worker threads), and invokes them with API Gateway, SQS, scheduled, error and timeout events.
 
 ```sh
 pnpm --filter @ivy/layer e2e

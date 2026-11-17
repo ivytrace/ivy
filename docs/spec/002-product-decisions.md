@@ -120,6 +120,14 @@ live in `docs/implementation/`.
 - Cold-start overhead of the layer must be minimal: the Lambda extension is a small Rust binary (the one exception
   to TypeScript everywhere).
 
+## Worker threads
+- Work a function does in `worker_threads` is part of its trace: each Worker started during an invocation is a
+  span, with the calls, library spans and logs from inside the worker under it, and a non-zero exit code (a job
+  stopped with `process.exit()`) shows as a failure. On by default; `IVY_CAPTURE_WORKERS=false` turns it off.
+- The cost per Worker is kept small (a few ms at the worker's start) because it is paid on every job; the function's
+  own cold start and warm invocations without workers do not change. Workers started by workers are not traced.
+  Implementation: `docs/implementation/layer.md`.
+
 ## Large invocations
 - An invocation always shows up in Ivy, even when its spans are too many to keep; repetitive calls are summarised.
 - The invocation span is exported first, on its own, so a failed or dropped export of its children never takes it

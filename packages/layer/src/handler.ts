@@ -9,6 +9,7 @@ import { loadUserHandler } from './lib/loader/user-function.js';
 import { installOtelBridge } from './lib/otel-bridge/index.js';
 import { Tracer, type SpanBatch } from './lib/tracer/tracer.js';
 import { wrapHandler } from './lib/tracer/wrap.js';
+import { instrumentWorkerThreads } from './lib/workers/parent.js';
 
 const STREAMING = Symbol.for('aws.lambda.runtime.handler.streaming');
 
@@ -65,9 +66,11 @@ function createTracer(): Tracer {
 
   const tracer = new Tracer(config, sink, log);
   const checkHttps = instrumentHttp(tracer);
+  const checkWorkers = config.captureWorkers ? instrumentWorkerThreads(tracer, `${import.meta.dirname}/worker.cjs`) : undefined;
   tracer.onInvocationStart = () => {
     link.onInvocationStart();
     checkHttps();
+    checkWorkers?.();
   };
   instrumentFetch(tracer);
   instrumentAwsSdk(tracer);

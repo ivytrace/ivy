@@ -1,15 +1,9 @@
-const POOL_SIZE = 4096;
-const pool = Buffer.allocUnsafe(POOL_SIZE);
-let offset = POOL_SIZE;
-
+// Math.random, like OpenTelemetry JS's RandomIdGenerator: IDs only need to be unique, and node:crypto
+// costs ~3 ms to load (in every worker thread too).
 function randomHex(bytes: number): string {
-  if (offset + bytes > POOL_SIZE) {
-    process.getBuiltinModule('node:crypto').randomFillSync(pool);
-    offset = 0;
-  }
-  const hex = pool.toString('hex', offset, offset + bytes);
-  offset += bytes;
-  return hex;
+  let hex = '';
+  for (let i = 0; i < bytes; i += 4) hex += ((Math.random() * 0x100000000) >>> 0).toString(16).padStart(8, '0');
+  return hex.slice(0, bytes * 2);
 }
 
 /** 128-bit trace ID: 8 hex chars of big-endian unix seconds + 24 random hex chars. */

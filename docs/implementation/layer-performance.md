@@ -96,6 +96,33 @@ no layer 32 ms; Node extension + old tracer +66 ms; Rust extension + old tracer 
 trimmed tracer +13 ms. Extension spawn-to-`register`: Node 47.5 ms, Rust binary 1.9 ms (of which
 most is the spawn itself), through the `sh` launcher 2.2 ms.
 
+## Worker threads
+
+What tracing `worker_threads` adds (`layer.md`, "Worker threads"), measured in November 2026 in the Lambda
+Node.js 22 image (Runtime Interface Emulator, Docker arm64 on an M-series Mac, so absolute times are not Lambda's;
+not yet measured on Lambda). Three variants of the same function, invoked in turn: no layer, the layer with
+`IVY_CAPTURE_WORKERS=false`, and the layer tracing workers.
+
+A small queue consumer (`example/workers`): one job per invocation in a worker thread that loads the handler file,
+does one `fetch` and one DynamoDB call against a fake endpoint, and exits; 60 invocations per variant, ms:
+
+| p50 / p90 | no layer | layer, workers off | layer, workers traced |
+|---|---|---|---|
+| `new Worker()` → first line of the worker's code | 105.8 / 127.8 | 109.5 / 145.7 | 117.2 / 155.3 |
+| the job inside the worker | 58.7 / 80.9 | 62.4 / 76.8 | 64.4 / 101.9 |
+| worker's last line → handler sees `exit` | 2.7 / 8.4 | 2.2 / 8.4 | 4.0 / 10.1 |
+| total | 171.9 / 206.1 | 180.9 / 247.9 | 187.9 / 243.4 |
+
+Tracing workers adds ~7–8 ms to the start of each worker (the bootstrap, see `layer.md`), ~2 ms to the job (first
+use of the instrumentation in a fresh isolate, posting spans) and ~2 ms at exit, at the median; p90 differences are
+within noise at this sample size. Before trimming the bootstrap (lazy http/crypto/perf_hooks, parentPort instead of
+a BroadcastChannel) it was ~16 ms per worker start on the same machine.
+
+A real app's job runner (a 9.5 MB ESM bundle loaded by both the handler and the worker, job lookup against a fake
+DynamoDB endpoint, `process.exit(1)` from the worker; runtime duration from the emulator's `REPORT`, 39 invocations
+per variant): no layer 1017 / 1419 ms, layer with workers off 1080 / 1180 ms, workers traced 1059 / 1248 ms (p50 /
+p90). On a job of about a second the worker overhead is below the noise.
+
 ## Reproducing
 
 The scripts were throwaway (create role, sink function with two URLs, three layer versions,

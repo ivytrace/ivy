@@ -225,6 +225,22 @@ same level. Nothing changes at ingest: the stored line is the original.
   log redaction. Layers before this rule redacted token counts; readers treat `"[redacted]"` counts as missing
   and fall back to other sources (Bedrock's token-count headers).
 
+## Worker threads (Lambda layer)
+
+A `worker_threads` Worker started during an invocation gets a span of its own (see `layer.md`, "Worker threads"):
+
+- name `worker <file name>`, `worker <name>` (the Worker's `name` option) or `worker (eval)`; kind INTERNAL
+- parent: the span active when `new Worker()` ran (a library span, or the invocation span)
+- start: the Worker's creation; end: its `exit` event
+- `thread.id`, `thread.name` (the `name` option), `code.file.path` (the worker's file, when it is one)
+- `process.exit.code`; status ERROR with `Worker exited with code N` for a non-zero code, and an `exception` event
+  for an uncaught error
+
+What the worker does (outgoing calls, AWS SDK, library spans) becomes children of that span, in the invocation's
+trace, with the same conventions as calls made by the handler. Its `console.*` lines are log events on the
+invocation span, like the handler's. Spans of a worker started outside the invocation (a pool created at init) are
+children of the invocation span; spans still open when the invocation ends get `ivy.incomplete`.
+
 ## Library spans (OpenTelemetry API)
 
 The layer registers a minimal global tracer provider on the `@opentelemetry/api` global (see

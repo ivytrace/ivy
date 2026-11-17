@@ -13,18 +13,16 @@ mkdirSync(join(opt, 'nodejs/ivy'), { recursive: true });
 mkdirSync(join(opt, 'extensions'), { recursive: true });
 mkdirSync(join(opt, 'ivy/bin'), { recursive: true });
 
+const common = { bundle: true, platform: 'node', target: 'node20', minify: true, legalComments: 'none', logLevel: 'warning' };
 await build({
-  bundle: true,
-  platform: 'node',
-  target: 'node20',
-  minify: true,
-  legalComments: 'none',
-  logLevel: 'warning',
+  ...common,
   entryPoints: [join(root, 'src/handler.ts')],
   format: 'esm',
   outfile: join(opt, 'nodejs/ivy/handler.mjs'),
   metafile: !!process.env.IVY_METAFILE,
 }).then((r) => r.metafile && writeFileSync(join(out, 'meta.json'), JSON.stringify(r.metafile)));
+// Loaded with --require into every worker thread (see docs/implementation/layer.md, "Worker threads").
+await build({ ...common, entryPoints: [join(root, 'src/worker.ts')], format: 'cjs', outfile: join(opt, 'nodejs/ivy/worker.cjs') });
 
 copyFileSync(join(root, 'layer/ivy-wrapper'), join(opt, 'ivy-wrapper'));
 copyFileSync(join(root, 'layer/ivy-extension'), join(opt, 'extensions/ivy-extension'));
@@ -62,5 +60,6 @@ execFileSync('zip', ['-q', '-r', '-X', join(out, 'layer.zip'), '.'], { cwd: opt 
 
 const size = (p) => `${(statSync(join(opt, p)).size / 1024).toFixed(1)} KB`;
 console.log(`handler.mjs                ${size('nodejs/ivy/handler.mjs')}`);
+console.log(`worker.cjs                 ${size('nodejs/ivy/worker.cjs')}`);
 for (const arch of Object.keys(ARCHES)) console.log(`ivy-extension-${arch.padEnd(12)}${size(`ivy/bin/ivy-extension-${arch}`)}`);
 console.log(`layer.zip                  ${(statSync(join(out, 'layer.zip')).size / 1024).toFixed(1)} KB -> ${join(out, 'layer.zip')}`);

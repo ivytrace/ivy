@@ -1,6 +1,7 @@
 import type { ClientRequest, IncomingMessage, RequestOptions } from 'node:http';
 import { now } from '../tracer/clock.js';
 import type { Tracer } from '../tracer/tracer.js';
+import { isLoaded } from '../utils/builtins.js';
 import { markWrapped } from '../utils/original.js';
 import { onRequire } from './require-hook.js';
 import {
@@ -129,28 +130,28 @@ function patch(tracer: Tracer, name: 'http' | 'https'): void {
   process.getBuiltinModule('node:module').syncBuiltinESMExports();
 }
 
-function isLoaded(name: string): boolean {
-  const list = (process as any).moduleLoadList;
-  return Array.isArray(list) ? list.includes(`NativeModule ${name}`) : true;
-}
-
 /**
- * Patches `node:http` right away (the runtime has loaded it already) and `node:https` only once
- * something loads it, because loading https pulls in tls. CommonJS requires are caught by the
- * require hook; ESM imports of `node:https` by the returned check, which runs after the user
- * handler is loaded and at the start of each invocation.
+ * Patches `node:http` and `node:https` once something loads them: right away if already loaded (the
+ * Lambda runtime loads http), otherwise on first use, because loading them is not free (https pulls in
+ * tls; http alone costs ~2.5 ms in a fresh worker thread). CommonJS requires are caught by the require
+ * hook; ESM imports by the returned check, which runs after the user handler is loaded and at the start
+ * of each invocation.
  */
 export function instrumentHttp(tracer: Tracer): () => void {
-  patch(tracer, 'http');
-  let httpsPatched = false;
-  const patchHttps = () => {
-    httpsPatched = true;
-    patch(tracer, 'https');
+  const patched = { http: false, https: false };
+  const patchIfLoaded = (name: 'http' | 'https', force = false) => {
+    if (patched[name] || !(force || isLoaded(name))) return;
+    patched[name] = true;
+    patch(tracer, name);
   };
   onRequire((request) => {
-    if (!httpsPatched && (request === 'https' || request === 'node:https')) patchHttps();
+    const name = request.startsWith('node:') ? request.slice(5) : request;
+    if (name === 'http' || name === 'https') patchIfLoaded(name, true);
   });
-  return () => {
-    if (!httpsPatched && isLoaded('https')) patchHttps();
+  const check = () => {
+    patchIfLoaded('http');
+    patchIfLoaded('https');
   };
+  check();
+  return check;
 }

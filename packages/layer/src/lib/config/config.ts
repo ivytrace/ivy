@@ -19,6 +19,7 @@ export interface Config {
   exportChunkBytes: number;
   maxQueueSpans: number;
   captureLogs: boolean;
+  captureWorkers: boolean;
   maxSpans: number;
   maxInvocationPayloadBytes: number;
   collapseThreshold: number;
@@ -65,6 +66,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     exportChunkBytes: Math.max(16 * 1024, int(env.IVY_EXPORT_CHUNK_BYTES, 1024 * 1024)),
     maxQueueSpans: int(env.IVY_MAX_QUEUE_SPANS, 2000),
     captureLogs: bool(env.IVY_CAPTURE_LOGS, true),
+    captureWorkers: bool(env.IVY_CAPTURE_WORKERS, true),
     maxSpans: Math.max(10, int(env.IVY_MAX_SPANS, 2000)),
     maxInvocationPayloadBytes: int(env.IVY_MAX_INVOCATION_PAYLOAD_BYTES, 1024 * 1024),
     collapseThreshold: int(env.IVY_COLLAPSE_THRESHOLD, 50),

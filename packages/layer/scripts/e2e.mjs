@@ -130,6 +130,9 @@ const sqs = {
     { messageId: 'm-1', eventSource: 'aws:sqs', eventSourceARN: 'arn:aws:sqs:eu-west-1:123456789012:orders-queue', body: '{}' },
   ],
 };
+const jobs = (...list) => ({
+  Records: list.map((job, i) => ({ messageId: `job-${i}`, eventSource: 'aws:sqs', eventSourceARN: 'arn:aws:sqs:eu-west-1:123456789012:jobs', body: JSON.stringify(job) })),
+});
 const scheduled = { source: 'aws.events', 'detail-type': 'Scheduled Event', resources: ['arn:aws:events:eu-west-1:1:rule/nightly'], detail: {} };
 
 let failed = false;
@@ -159,6 +162,9 @@ try {
   // A 7 s invocation: reported as in progress after IVY_INPROGRESS_AFTER_MS (5 s default), then replaced by the final span.
   const long = startContainer('long', 9115, 'cjs', 'index.handler');
   const baseline = startContainer('baseline', 9106, 'cjs', 'index.handler', { AWS_LAMBDA_EXEC_WRAPPER: '', IVY_ENDPOINT: '' }, { layer: false });
+  // Jobs in worker threads (one of them calls process.exit(130)), with and without the layer.
+  const workers = startContainer('workers', 9116, 'workers', 'index.handler');
+  const workersBaseline = startContainer('workers-baseline', 9117, 'workers', 'index.handler', { AWS_LAMBDA_EXEC_WRAPPER: '', IVY_ENDPOINT: '' }, { layer: false });
 
   console.log('invoking…');
   const results = {
@@ -178,6 +184,7 @@ try {
   results.lateIntake = await invoke(lateIntake, apiGwV2);
   results.importDdb = await invoke(importDdb, { mode: 'dynamodb', items: 3000 });
   results.importLlm = await invoke(importLlm, { mode: 'llm', calls: 300 });
+  results.workers = await invoke(workers, jobs({ id: 'j-1' }, { id: 'j-2', cancel: true }));
   await invoke(long, {});
   const longStarted = Date.now();
   results.long = await invoke(long, { sleepMs: 7000 });
@@ -190,6 +197,7 @@ try {
   check(['aiV6', 'aiV7'].every((k) => /on its way/.test(JSON.parse(results[k].body).reply ?? '')), 'AI SDK handlers ran unchanged');
   check(JSON.parse(results.importError.body).errorType === 'Runtime.ImportModuleError', 'init failure reaches the caller unchanged (Runtime.ImportModuleError)');
   check(/signal: aborted/.test(JSON.parse(results.oom.body).errorMessage ?? ''), 'out of memory crash reaches the caller (Runtime.ExitError)');
+  check(JSON.parse(results.workers.body).results?.map((r) => r.code).join() === '0,130', 'worker thread jobs ran unchanged (exit codes 0 and 130)');
 
   const brokenRuns = [];
   for (let i = 0; i < 3; i++) brokenRuns.push(await invoke(broken, apiGwV2));
@@ -215,6 +223,22 @@ try {
   const init = (name) => logs.get(name).join('').match(/INIT REPORT\(durationMs: ([\d.]+)\)/)?.[1];
   console.log(`  init duration (cold start, single sample): traced ${init('cjs')}ms vs. no layer ${init('baseline')}ms`);
   console.log(`  warm median emulator round trip (incl. extension flush): traced ${tracedMs}ms vs. no layer ${baselineMs}ms`);
+  {
+    // One job per invocation, alternating traced and untraced, after a warm-up each.
+    const runs = { traced: [], baseline: [] };
+    for (const port of [workers, workersBaseline]) await invoke(port, jobs({ id: 'warm-up' }));
+    for (let i = 0; i < 30; i++) {
+      runs.traced.push(JSON.parse((await invoke(workers, jobs({ id: `t-${i}` }))).body).results[0]);
+      runs.baseline.push(JSON.parse((await invoke(workersBaseline, jobs({ id: `b-${i}` }))).body).results[0]);
+    }
+    const p = (list, key, q) => {
+      const v = list.map((r) => r[key]).sort((a, b) => a - b);
+      return v[Math.floor((v.length - 1) * q)].toFixed(1);
+    };
+    for (const key of ['startupMs', 'totalMs', 'exitMs']) {
+      console.log(`  worker job ${key.padEnd(9)} p50/p90: traced ${p(runs.traced, key, 0.5)} / ${p(runs.traced, key, 0.9)} ms vs. no layer ${p(runs.baseline, key, 0.5)} / ${p(runs.baseline, key, 0.9)} ms`);
+    }
+  }
 
   if (externalEndpoint) {
     console.log(`\nspans were sent to ${externalEndpoint}; check the collector / UI.`);
@@ -334,6 +358,18 @@ try {
         finals.length === 1 && finals[0].traceId === p?.traceId && finals[0].spanId === p?.spanId && finals[0].receivedAt >= p.receivedAt && !!attr(finals[0], 'ivy.payload.response'),
         `final span replaces it: same trace and span ID, one final invocation (${finals.length})`,
       );
+    }
+    {
+      const r = rootsBy('workers').find((s) => attr(s, 'faas.coldstart') === true);
+      const inTrace = r ? spans.filter((s) => s.traceId === r.traceId && s !== r) : [];
+      const workerSpans = inTrace.filter((s) => s.name === 'worker index.mjs' && s.parentSpanId === r.spanId);
+      const under = (w) => inTrace.filter((s) => s.parentSpanId === w?.spanId).map((s) => s.name.split(' ')[0]).sort().join(',');
+      const [ok, cancelled] = [...workerSpans].sort((a, b) => Number(a.startTimeUnixNano) - Number(b.startTimeUnixNano));
+      check(workerSpans.length === 2 && attr(ok, 'process.exit.code') === '0' && ok.status.code !== 2, 'worker threads: a span per worker under the invocation, exit code 0');
+      check(!!cancelled && attr(cancelled, 'process.exit.code') === '130' && cancelled.status.code === 2, 'worker threads: process.exit(130) recorded as a failed worker span');
+      check(under(ok) === 'DynamoDB.GetItem,GET' && under(cancelled) === 'DynamoDB.GetItem,GET', `worker threads: fetch and AWS SDK spans nest under their worker (${under(ok)} / ${under(cancelled)})`);
+      const logged = (r?.events ?? []).filter((e) => e.name === 'log').map((e) => attr(e, 'log.message'));
+      check(['j-1', 'j-2'].every((id) => logged.includes(`job ${id} running in a worker thread`)), 'worker threads: console logs of the workers on the invocation');
     }
     const timeoutRoot = rootsBy('timeout')[0];
     check(!!timeoutRoot && attr(timeoutRoot, 'error.type') === 'Timeout', 'timeout recorded with error.type=Timeout');
