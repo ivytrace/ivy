@@ -83,6 +83,7 @@ const ddb = (inv: SpanInput, span: string, count?: number): SpanInput => ({
 });
 
 const a1 = invocation(A.id, 'prj_a1', 'a'.repeat(32), T0, '/orders/{id}');
+a1.logs!.push(['info', JSON.stringify({ level: 'WARN', message: 'slow', path: '/orders/42' })], ['info', JSON.stringify({ level: 50, msg: 'boom' })]);
 const a2 = invocation(A.id, 'prj_a2', 'b'.repeat(32), T0 + 1000, '/carts/{id}');
 const aOld = invocation(A.id, 'prj_a1', 'c'.repeat(32), T0 - 86_400_000, '/old');
 const b1 = invocation(B.id, 'prj_b1', 'd'.repeat(32), T0, '/secret');
@@ -178,7 +179,12 @@ describe.skipIf(!url)('workspace queries in ClickHouse', () => {
     expect(db_calls.rows).toEqual([[a1.trace, 41]]);
     const categories = await query('SELECT DISTINCT category FROM spans ORDER BY category');
     expect(categories.rows).toEqual([['database'], ['invocation']]);
-    const logs = await query('SELECT level, message, trace_id FROM logs ORDER BY trace_id');
+    const json = await query(`SELECT level, JSONExtractString(message, 'path') FROM logs WHERE startsWith(message, '{') ORDER BY level DESC`);
+    expect(json.rows).toEqual([
+      ['warn', '/orders/42'],
+      ['error', ''],
+    ]);
+    const logs = await query(`SELECT level, message, trace_id FROM logs WHERE NOT startsWith(message, '{') ORDER BY trace_id`);
     expect(logs.rows).toEqual([
       ['error', `failed in ${A.id}`, a1.trace],
       ['error', `failed in ${A.id}`, a2.trace],

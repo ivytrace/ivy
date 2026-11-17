@@ -88,8 +88,8 @@ export const QUERY_TABLES: QueryTable[] = [
       col("trace_id", "String", "Trace ID of the invocation."),
       col("span_id", "String", "Span ID of the invocation span."),
       col("function", "String", "Lambda function name."),
-      col("level", "String", "'debug', 'info', 'warn' or 'error'."),
-      col("message", "String", "The log line (at most 4 KB)."),
+      col("level", "String", "'debug', 'info', 'warn' or 'error': a JSON line's own level, else the console method's."),
+      col("message", "String", "The log line (at most 4 KB). JSON lines: JSONExtractString(message, 'key')."),
     ],
   },
 ];

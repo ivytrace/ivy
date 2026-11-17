@@ -165,7 +165,8 @@ Paths below are relative to `/w/:workspace/:project`.
   (init failure, crash), a note under the header says there is no (complete) trace and that the Logs tab holds the
   log tail. The MCP App views' header uses the same components (`InvocationStatus`, `MemoryUsage`, `FailureNote`). The service graph is on the left, with tabs on the right: Overview (error +
   stack, invocation fields, the app's own attributes, event payload, return value), Timeline (waterfall, where expanding a row shows its
-  service-specific details and payloads) and Logs (`log` events). When a trace contains several invocations,
+  service-specific details and payloads) and Logs (`log` events; JSON logger lines as message plus fields, see
+  `span-conventions.md`, "Logs"). When a trace contains several invocations,
   an "Only this invocation" switch scopes the view (this replaces trace-stack's "Filter current invocation").
   The app's own attributes (`customAttributes` in `@ivy/spans`: everything outside the layer's reserved namespaces,
   `span-conventions.md`) are an "Attributes" list under the invocation fields, and also in the invocation row's

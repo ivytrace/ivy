@@ -14,10 +14,13 @@ import {
   isInProgressSpan,
   isInvocationSpan,
   llmUsage,
+  logSeverity,
   missingTraceNote,
   NO_COMPLETION_EXPLANATION,
+  parseStructuredLog,
   spanDeadlineMs,
   spanFailureKind,
+  structuredLogText,
   type LlmMessage,
   type LlmPart,
   type Span,
@@ -247,7 +250,7 @@ function render(trace: Trace, settings: Settings): Line[] {
     const prefix = `${GUTTER}${indent(depth + 1)}`;
     lines.push(...errorLines(span, prefix, settings), ...payloadLines(span, prefix, settings), ...llmLines(span, prefix, settings));
 
-    const logs = logEvents(span).filter((e) => settings.allLogs || /^(warn|error)/i.test(e.attributes["log.severity"] ?? ""));
+    const logs = logEvents(span).filter((e) => settings.allLogs || /^(warn|error)/i.test(logSeverity(e.attributes)));
     const entries: Entry[] = [
       ...node.children.map((child) => ({ node: child, at: startMs(child.span) })),
       ...logs.map((log) => ({ log, at: Date.parse(log.ts) })),
@@ -256,8 +259,10 @@ function render(trace: Trace, settings: Settings): Line[] {
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       if (isLog(entry)) {
-        const severity = entry.log.attributes["log.severity"] || "info";
-        const message = oneLine(entry.log.attributes["log.message"] ?? "", settings.logChars);
+        const raw = entry.log.attributes["log.message"] ?? "";
+        const structured = parseStructuredLog(raw);
+        const severity = logSeverity(entry.log.attributes, structured);
+        const message = oneLine(structured ? structuredLogText(structured) : raw, settings.logChars);
         lines.push({ text: `${columns(offset(entry.at), "")}${indent(depth + 1)}log ${severity}: ${message}`, keep: severity === "error" });
         continue;
       }

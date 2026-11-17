@@ -22,6 +22,18 @@ describe("formatTrace", () => {
     expect(lines[2]).toBe("attributes tenant.id=acme user.id=u-42");
   });
 
+  it("writes JSON log lines compactly, with the JSON's own level", () => {
+    const json = JSON.stringify({ level: "ERROR", name: "Payment", message: "card declined", requestId: "r-1", functionName: "f", orderId: "o-42" });
+    const spans = checkoutOk.spans.map((s) =>
+      s.attributes["ivy.invocation"] === "true"
+        ? { ...s, events: [...s.events, { name: "log", ts: s.start, attributes: { "log.severity": "info", "log.message": json } }] }
+        : s,
+    );
+    const text = formatTrace({ ...checkoutOk, spans });
+    expect(text).toContain("log error: Payment: card declined orderId=o-42");
+    expect(text).not.toContain("requestId");
+  });
+
   it("renders an in-progress invocation as running, and as no completion recorded past its deadline", () => {
     const start = Date.UTC(2026, 10, 14, 12, 0, 0);
     const root = {

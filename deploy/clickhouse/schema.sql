@@ -355,16 +355,31 @@ WHERE (getSettingOrDefault('SQL_ivy_project', '') = '' OR ProjectId = getSetting
     AND Timestamp < fromUnixTimestamp64Milli(toInt64OrZero(getSettingOrDefault('SQL_ivy_to_ms', '0')))
     AND SpanAttributes['ivy.update'] != 'true' AND SpanAttributes['ivy.in_progress'] != 'true';
 
--- `console.*` output: `log` events of invocation spans (span-conventions.md, "Logs").
+-- `console.*` output: `log` events of invocation spans (span-conventions.md, "Logs"). A JSON line's own level (a
+-- string, or pino's numbers) wins over the console method's, as in the dashboard (normalizeLevel in @ivy/spans).
 CREATE OR REPLACE VIEW ivy_query.logs SQL SECURITY INVOKER AS
+WITH
+    event_attributes['log.message'] AS log_message,
+    startsWith(trimLeft(log_message), '{') AS is_json,
+    if(is_json, lower(JSONExtractString(log_message, 'level')), '') AS json_level,
+    if(is_json, JSONExtractUInt(log_message, 'level'), 0) AS json_level_number
 SELECT
     toDateTime64(event_ts, 3) AS ts,
     ProjectId AS project_id,
     TraceId AS trace_id,
     SpanId AS span_id,
     if(ResourceAttributes['faas.name'] != '', ResourceAttributes['faas.name'], ServiceName) AS function,
-    event_attributes['log.severity'] AS level,
-    event_attributes['log.message'] AS message
+    multiIf(
+        json_level IN ('debug', 'trace', 'verbose', 'silly'), 'debug',
+        json_level IN ('info', 'information', 'notice', 'log'), 'info',
+        json_level IN ('warn', 'warning'), 'warn',
+        json_level IN ('error', 'fatal', 'critical', 'crit', 'alert', 'emerg'), 'error',
+        json_level_number >= 50, 'error',
+        json_level_number >= 40, 'warn',
+        json_level_number >= 30, 'info',
+        json_level_number > 0, 'debug',
+        event_attributes['log.severity']) AS level,
+    log_message AS message
 FROM ivy.otel_traces
 ARRAY JOIN `Events.Timestamp` AS event_ts, `Events.Name` AS event_name, `Events.Attributes` AS event_attributes
 WHERE (getSettingOrDefault('SQL_ivy_project', '') = '' OR ProjectId = getSettingOrDefault('SQL_ivy_project', ''))

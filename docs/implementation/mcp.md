@@ -42,7 +42,7 @@ trace 6af84d409a1b… · request 8f1c2d3e-… · eu-west-1 · 2026-11-14T12:00:0
   trace ID, request ID, region, start time, memory, span count. Traces without an Ivy invocation span (plain
   OTel producers) get a header from the root span.
 - One line per span: offset from the trace start, duration, two spaces of indentation per level, the
-  description from the UI's describers, status (`ok`/`ERROR`). Logs sit between the spans at their time.
+  description from the UI's describers, status (`ok`/`ERROR`). Logs sit between the spans at their time; JSON logger lines as `name: message key=value …` at their own level (`span-conventions.md`, "Logs").
 - Detail lines under a span: `!` error with type, message and stack frames (Node internals, the Lambda runtime
   and the Ivy layer wrapper are dropped); `req:`/`res:` payloads.
 - Payloads are shrunk structurally (strings over 120 chars, arrays over 5 items, nesting over 5 levels), then cut to

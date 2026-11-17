@@ -191,6 +191,15 @@ long hex and long mixed segments become `{id}`); otherwise the span name.
 - `log.severity`: `debug` | `info` | `warn` | `error`
 - `log.message`: string, capped at 4 KB
 
+Readers recognize lines from JSON loggers (a JSON object: Powertools, pino, winston, …; `parseStructuredLog` in
+`@ivy/spans`). Their own level (`level`/`severity`, names or pino's numbers) replaces `log.severity`, which only
+says which console method wrote the line and is usually `info` for JSON loggers. `message`/`msg` is the message,
+`name` a label, and Lambda and logger context every line repeats (`requestId`, `functionName`, `awsRegion`, `time`,
+`pid`, … `LOG_CONTEXT_KEYS`) is left out of the line. The dashboard's Logs tab shows the remaining fields under the
+message, fields with the same value on every JSON line once above the lines ("In every line"), and the full JSON on
+click; the text format (`@ivy/format`) writes `name: message key=value …`; the Query page's `logs` view uses the
+same level. Nothing changes at ingest: the stored line is the original.
+
 ## Payload capping and redaction
 
 - Each `ivy.payload.*` value is capped at `IVY_MAX_PAYLOAD_BYTES` (default 16 KB).

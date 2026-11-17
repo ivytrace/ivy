@@ -40,7 +40,7 @@ Database `ivy_query`, all `SQL SECURITY INVOKER` (they run with the caller's rig
 |---|---|
 | `invocations` | one per invocation (from `ivy.invocations`); `http_route` is the route template when the trigger gives one, else the path |
 | `spans` | every span except update spans and in-progress records, with flattened columns (`category`, `aws_service`, `db_system`, `http_host`, …), `calls` (1, or the call count of a collapsed summary span) and the attribute maps |
-| `logs` | `log` events of invocation spans: level and message |
+| `logs` | `log` events of invocation spans: level (a JSON line's own level when it has one) and message (`JSONExtractString(message, 'key')` reads JSON lines) |
 
 They show the project and time range the page is looking at, from the settings `SQL_ivy_project` ('' = all projects)
 and `SQL_ivy_from_ms` / `SQL_ivy_to_ms` that the API sets per query. These are a convenience, not a boundary: a user

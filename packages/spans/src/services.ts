@@ -2,6 +2,7 @@ import { collapsedBaseName, collapsedInfo, type CollapsedInfo } from "./collapse
 import { failureLabel, invocationResources, spanFailureKind } from "./failures.js";
 import { describeLlm, formatTokens, llmNote, type LlmSpan } from "./llm.js";
 import { repairTruncatedJson } from "./repair-json.js";
+import { parseStructuredLog, type StructuredLog } from "./structured-log.js";
 import type { Span } from "./types.js";
 
 export type ServiceIcon =
@@ -600,9 +601,17 @@ export function getException(span: Span): SpanException | undefined {
 
 export interface LogLine {
   ts: string;
+  /** The JSON line's own level when it has one (JSON loggers often write every level with console.log), else the console method's. */
   severity: "debug" | "info" | "warn" | "error" | string;
   message: string;
   spanId: string;
+  /** Set for lines written by a JSON logger. */
+  structured: StructuredLog | null;
+}
+
+/** A `log` event's level: the JSON line's own level when it has one, else the console method's (`log.severity`). */
+export function logSeverity(attributes: Record<string, string>, structured = parseStructuredLog(attributes["log.message"] ?? "")): string {
+  return structured?.level ?? (attributes["log.severity"] || "info");
 }
 
 export function getLogs(spans: Span[]): LogLine[] {
@@ -610,12 +619,11 @@ export function getLogs(spans: Span[]): LogLine[] {
     .flatMap((span) =>
       span.events
         .filter((e) => e.name === "log")
-        .map((e) => ({
-          ts: e.ts,
-          severity: e.attributes["log.severity"] || "info",
-          message: e.attributes["log.message"] ?? "",
-          spanId: span.span_id,
-        })),
+        .map((e) => {
+          const message = e.attributes["log.message"] ?? "";
+          const structured = parseStructuredLog(message);
+          return { ts: e.ts, severity: logSeverity(e.attributes, structured), message, spanId: span.span_id, structured };
+        }),
     )
     .sort((a, b) => a.ts.localeCompare(b.ts));
 }

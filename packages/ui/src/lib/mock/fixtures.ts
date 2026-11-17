@@ -698,6 +698,15 @@ function logsFor(inv: MockInvocation, startMs: number): SpanEvent[] {
     logs.push(log(33, "info", "Creating payment intent for cus_Q1w2e3 (4999 EUR)"));
     if (inv.status === "error") logs.push(log(160, "warn", "Stripe returned 402 card_declined"));
   }
+  if (inv.function === "auth-getProfile") {
+    // A JSON logger: the Logs tab shows message and fields, and the Lambda context once.
+    const context = { awsRegion: inv.region, functionName: inv.function, functionVersion: "$LATEST", stage: "production", buildId: "ff08b025f416", requestId: inv.request_id };
+    const route = { method: inv.http_method, path: inv.http_path };
+    logs.push(log(2, "info", JSON.stringify({ level: "INFO", name: "Request", message: `${inv.http_method} ${inv.http_path}`, ...context, ...route })));
+    logs.push(
+      log(inv.duration_ms - 2, "info", JSON.stringify({ level: inv.status === "error" ? "ERROR" : "INFO", name: "Response", message: `${inv.http_method} ${inv.http_path} (${inv.http_status ?? 200}) - ${Math.round(inv.duration_ms)}ms`, ...context, status: inv.http_status ?? 200, ...route, duration: Math.round(inv.duration_ms) })),
+    );
+  }
   if (inv.function === SUPPORT_FUNCTION) logs.push(log(4, "info", "Answering ticket for cus_ada"));
   if (inv.function === TRIAGE_FUNCTION) logs.push(log(4, "info", "Triaging ticket tkt_4410"));
   if (inv.status === "error") logs.push(log(inv.duration_ms - 2, "error", `${inv.error_type}: ${inv.error_message}`));
