@@ -2,6 +2,7 @@ import type { IvyData } from '@ivy/mcp';
 import type { ErrorGroup, Invocation, Trace } from '@ivy/spans';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
+import { runWorkspaceQuery } from '../clickhouse/workspace-query.js';
 import { errorGroups } from '../data/errors.js';
 import { listInvocations } from '../data/invocations.js';
 import { projectNames } from '../data/projects.js';
@@ -63,6 +64,13 @@ export function apiData(c: Context, workspaces: WorkspaceSource): IvyData<ApiWor
       api(async () => {
         const scope = await scopeOf(w, query.project);
         return scope ? ((await errorGroups(scope, range(query), query.function, await namesFor(scope))) as ErrorGroup[]) : [];
+      }),
+    query: (w, query) =>
+      api(async () => {
+        const scope = await scopeOf(w, query.project);
+        if (!scope) throw new Error(`Workspace ${w.slug} has no project ${query.project}`);
+        const { sql, limit = 100 } = query;
+        return runWorkspaceQuery({ tenant: scope.tenant, projectId: scope.projectId, range: range(query), sql, maxRows: limit });
       }),
   };
 }

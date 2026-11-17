@@ -19,11 +19,12 @@ export function Menu() {
   const projects = useProjects(desktop ? undefined : scope?.workspace);
   const workspace = scope?.workspace;
   const project = scope?.project ?? ALL_PROJECTS;
-  const link = (page: "functions" | "invocations" | "errors") => (scope ? pageLink(scope, page) : `/${page}`);
+  const link = (page: "functions" | "invocations" | "errors" | "query") => (scope ? pageLink(scope, page) : `/${page}`);
   const links = [
     { to: link("functions"), label: "Functions" },
     { to: link("invocations"), label: "Invocations" },
     { to: link("errors"), label: "Errors" },
+    { to: link("query"), label: "Query" },
     { to: workspace ? settingsLink(workspace) : "/settings", label: "Settings", match: workspace ? `/w/${workspace}/settings` : "/settings" },
   ];
 

@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS ivy.invocations
     `trigger` LowCardinality(String),
     `http_method` LowCardinality(String),
     `http_path` String CODEC(ZSTD(1)),
+    `http_route` String CODEC(ZSTD(1)),
     `http_status` UInt16,
     `error_type` LowCardinality(String),
     `error_message` String CODEC(ZSTD(1)),
@@ -88,6 +89,7 @@ ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `failure_phase` LowCardinal
 ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `synthetic` Bool AFTER `failure_phase`;
 ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `init_duration_ms` Float32 AFTER `synthetic`;
 ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `error_frame` String CODEC(ZSTD(1)) AFTER `error_message`;
+ALTER TABLE ivy.invocations ADD COLUMN IF NOT EXISTS `http_route` String CODEC(ZSTD(1)) AFTER `http_path`;
 
 -- Dropped and recreated (rather than IF NOT EXISTS) so a re-run picks up changes to the query.
 -- Spans inserted during the few milliseconds in between are not copied into `invocations`.
@@ -131,6 +133,7 @@ SELECT
     if(SpanAttributes['ivy.trigger.source'] != '', SpanAttributes['ivy.trigger.source'], 'unknown') AS trigger,
     SpanAttributes['http.request.method'] AS http_method,
     SpanAttributes['url.path'] AS http_path,
+    SpanAttributes['http.route'] AS http_route,
     toUInt16OrZero(SpanAttributes['http.response.status_code']) AS http_status,
     err_type AS error_type,
     err_message AS error_message,
@@ -273,6 +276,145 @@ CREATE ROW POLICY OR REPLACE ivy_project ON ivy.invocations_in_progress AS RESTR
     USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
 CREATE ROW POLICY OR REPLACE ivy_project ON ivy.function_throttles AS RESTRICTIVE
     USING getSettingOrDefault('SQL_ivy_project', '') = '' OR project_id = getSettingOrDefault('SQL_ivy_project', '') TO ALL;
+
+-- Query page (docs/implementation/query.md): members run their own SQL against the views in `ivy_query`, as the
+-- ClickHouse user `ivy_q_<workspace ID>` that the API creates with the role `ivy_query`. The role's row policies
+-- give that user its own workspace's rows and nothing else; the views only add the project and time range the
+-- page is looking at (the SQL_ivy_* settings, which the user may change: they are not a security boundary). Column
+-- descriptions for the page and the MCP tool are in packages/spans/src/query.ts; keep them in sync.
+CREATE DATABASE IF NOT EXISTS ivy_query;
+
+CREATE OR REPLACE VIEW ivy_query.invocations SQL SECURITY INVOKER AS
+SELECT
+    i.ts AS ts,
+    i.project_id AS project_id,
+    i.function AS function,
+    i.region AS region,
+    i.status AS status,
+    i.duration_ms AS duration_ms,
+    i.cold_start AS cold_start,
+    i.init_duration_ms AS init_duration_ms,
+    i.memory_used_mb AS memory_used_mb,
+    i.memory_limit_mb AS memory_limit_mb,
+    i.trigger AS trigger,
+    i.http_method AS http_method,
+    if(i.http_route != '', i.http_route, i.http_path) AS http_route,
+    i.http_path AS http_path,
+    i.http_status AS http_status,
+    i.error_type AS error_type,
+    i.error_message AS error_message,
+    i.failure_phase AS failure_phase,
+    i.request_id AS request_id,
+    i.trace_id AS trace_id,
+    i.span_id AS span_id
+FROM ivy.invocations AS i
+WHERE (getSettingOrDefault('SQL_ivy_project', '') = '' OR i.project_id = getSettingOrDefault('SQL_ivy_project', ''))
+    AND i.ts >= fromUnixTimestamp64Milli(toInt64OrZero(getSettingOrDefault('SQL_ivy_from_ms', '0')))
+    AND i.ts < fromUnixTimestamp64Milli(toInt64OrZero(getSettingOrDefault('SQL_ivy_to_ms', '0')));
+
+-- Update spans (late report data) and in-progress records are internal and left out.
+CREATE OR REPLACE VIEW ivy_query.spans SQL SECURITY INVOKER AS
+WITH
+    if(SpanAttributes['db.system.name'] != '', SpanAttributes['db.system.name'], SpanAttributes['db.system']) AS db_sys,
+    SpanAttributes['rpc.service'] AS rpc_service
+SELECT
+    toDateTime64(Timestamp, 3) AS ts,
+    ProjectId AS project_id,
+    TraceId AS trace_id,
+    SpanId AS span_id,
+    ParentSpanId AS parent_span_id,
+    if(ResourceAttributes['faas.name'] != '', ResourceAttributes['faas.name'], ServiceName) AS function,
+    SpanName AS name,
+    lower(SpanKind) AS kind,
+    multiIf(
+        SpanAttributes['ivy.invocation'] = 'true', 'invocation',
+        SpanAttributes['gen_ai.system'] != '' OR SpanAttributes['gen_ai.provider.name'] != '' OR SpanAttributes['gen_ai.request.model'] != ''
+            OR SpanAttributes['openinference.span.kind'] != '' OR startsWith(SpanName, 'ai.') OR rpc_service = 'BedrockRuntime', 'llm',
+        db_sys != '' OR rpc_service IN ('DynamoDB', 'RDSData'), 'database',
+        SpanAttributes['rpc.system'] = 'aws-api', 'aws',
+        SpanAttributes['http.request.method'] != '', 'http',
+        'other') AS category,
+    Duration / 1e6 AS duration_ms,
+    multiIf(StatusCode = 'Error', 'error', StatusCode = 'Ok', 'ok', 'unset') AS status,
+    StatusMessage AS status_message,
+    greatest(toUInt64OrZero(SpanAttributes['ivy.collapsed.count']), 1) AS calls,
+    rpc_service AS aws_service,
+    SpanAttributes['rpc.method'] AS aws_operation,
+    db_sys AS db_system,
+    if(SpanAttributes['db.operation.name'] != '', SpanAttributes['db.operation.name'], SpanAttributes['db.operation']) AS db_operation,
+    if(SpanAttributes['db.query.text'] != '', SpanAttributes['db.query.text'], SpanAttributes['db.statement']) AS db_statement,
+    SpanAttributes['http.request.method'] AS http_method,
+    SpanAttributes['url.full'] AS http_url,
+    SpanAttributes['server.address'] AS http_host,
+    toUInt16OrZero(SpanAttributes['http.response.status_code']) AS http_status,
+    SpanAttributes AS attributes,
+    ResourceAttributes AS resource_attributes
+FROM ivy.otel_traces
+WHERE (getSettingOrDefault('SQL_ivy_project', '') = '' OR ProjectId = getSettingOrDefault('SQL_ivy_project', ''))
+    AND Timestamp >= fromUnixTimestamp64Milli(toInt64OrZero(getSettingOrDefault('SQL_ivy_from_ms', '0')))
+    AND Timestamp < fromUnixTimestamp64Milli(toInt64OrZero(getSettingOrDefault('SQL_ivy_to_ms', '0')))
+    AND SpanAttributes['ivy.update'] != 'true' AND SpanAttributes['ivy.in_progress'] != 'true';
+
+-- `console.*` output: `log` events of invocation spans (span-conventions.md, "Logs").
+CREATE OR REPLACE VIEW ivy_query.logs SQL SECURITY INVOKER AS
+SELECT
+    toDateTime64(event_ts, 3) AS ts,
+    ProjectId AS project_id,
+    TraceId AS trace_id,
+    SpanId AS span_id,
+    if(ResourceAttributes['faas.name'] != '', ResourceAttributes['faas.name'], ServiceName) AS function,
+    event_attributes['log.severity'] AS level,
+    event_attributes['log.message'] AS message
+FROM ivy.otel_traces
+ARRAY JOIN `Events.Timestamp` AS event_ts, `Events.Name` AS event_name, `Events.Attributes` AS event_attributes
+WHERE (getSettingOrDefault('SQL_ivy_project', '') = '' OR ProjectId = getSettingOrDefault('SQL_ivy_project', ''))
+    AND Timestamp >= fromUnixTimestamp64Milli(toInt64OrZero(getSettingOrDefault('SQL_ivy_from_ms', '0')))
+    AND Timestamp < fromUnixTimestamp64Milli(toInt64OrZero(getSettingOrDefault('SQL_ivy_to_ms', '0')))
+    AND event_name = 'log' AND SpanAttributes['ivy.invocation'] = 'true' AND SpanAttributes['ivy.in_progress'] != 'true';
+
+-- The views run with the caller's rights (SQL SECURITY INVOKER), so the role reads the tables behind them, and the
+-- tenant policies below apply. No other grants: no ivy_control, no system tables (select_from_system_db_requires_grant
+-- is on in the server's default config), no table functions (url, file, s3, remote need grants of their own).
+CREATE ROLE IF NOT EXISTS ivy_query;
+GRANT SELECT ON ivy_query.* TO ivy_query;
+GRANT SELECT ON ivy.otel_traces TO ivy_query;
+GRANT SELECT ON ivy.invocations TO ivy_query;
+
+-- The workspace is the user's name: ivy_q_<tenant ID>. Fails closed: any other name matches no tenant. On every span
+-- table, also those the role can't read, so a later grant can't open one up.
+CREATE ROW POLICY OR REPLACE ivy_query_tenant ON ivy.otel_traces AS RESTRICTIVE
+    USING TenantId = replaceOne(currentUser(), 'ivy_q_', '') TO ivy_query;
+CREATE ROW POLICY OR REPLACE ivy_query_tenant ON ivy.invocations AS RESTRICTIVE
+    USING tenant_id = replaceOne(currentUser(), 'ivy_q_', '') TO ivy_query;
+CREATE ROW POLICY OR REPLACE ivy_query_tenant ON ivy.invocations_hourly AS RESTRICTIVE
+    USING tenant_id = replaceOne(currentUser(), 'ivy_q_', '') TO ivy_query;
+CREATE ROW POLICY OR REPLACE ivy_query_tenant ON ivy.invocations_in_progress AS RESTRICTIVE
+    USING tenant_id = replaceOne(currentUser(), 'ivy_q_', '') TO ivy_query;
+CREATE ROW POLICY OR REPLACE ivy_query_tenant ON ivy.function_throttles AS RESTRICTIVE
+    USING tenant_id = replaceOne(currentUser(), 'ivy_q_', '') TO ivy_query;
+
+-- Read only, and limits a query can lower but not raise. Only the scope settings and limits marked
+-- CHANGEABLE_IN_READONLY can be set at all (by the API or in the query's SETTINGS clause).
+CREATE SETTINGS PROFILE OR REPLACE ivy_query SETTINGS
+    readonly = 1 CONST,
+    max_execution_time = 30 MAX 30 CHANGEABLE_IN_READONLY,
+    max_rows_to_read = 1000000000 MAX 1000000000 CHANGEABLE_IN_READONLY,
+    max_memory_usage = 2000000000 MAX 2000000000 CHANGEABLE_IN_READONLY,
+    max_threads = 4 MAX 4 CHANGEABLE_IN_READONLY,
+    max_result_rows = 10000 MAX 10000 CHANGEABLE_IN_READONLY,
+    max_result_bytes = 10000000 MAX 10000000 CHANGEABLE_IN_READONLY,
+    result_overflow_mode = 'break' CONST,
+    max_concurrent_queries_for_user = 4 CONST,
+    session_timezone = 'UTC' CHANGEABLE_IN_READONLY,
+    SQL_ivy_project = '' CHANGEABLE_IN_READONLY,
+    SQL_ivy_from_ms = '0' CHANGEABLE_IN_READONLY,
+    SQL_ivy_to_ms = '0' CHANGEABLE_IN_READONLY;
+
+-- Per workspace (one user each).
+CREATE QUOTA OR REPLACE ivy_query KEYED BY user_name
+    FOR INTERVAL 1 minute MAX queries = 60,
+    FOR INTERVAL 1 hour MAX execution_time = 1800
+    TO ivy_query;
 
 -- Control plane. Small, mutable tables: every update inserts a full row, ReplacingMergeTree
 -- keeps the newest version, reads use FINAL.
@@ -596,3 +738,20 @@ CREATE TABLE IF NOT EXISTS ivy_control.job_leases
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (name, holder)
 TTL toDateTime(expires_at) + INTERVAL 1 DAY;
+
+-- Saved queries of the Query page, shared by the workspace's members (docs/implementation/query.md). The defaults
+-- (packages/spans/src/query.ts) are saved into each workspace under IDs derived from their keys, once.
+CREATE TABLE IF NOT EXISTS ivy_control.saved_queries
+(
+    `tenant_id` String,
+    `id` String,
+    `name` String,
+    `sql` String,
+    `created_by` String DEFAULT '',
+    `created_at` DateTime64(3, 'UTC'),
+    `updated_by` String DEFAULT '',
+    `updated_at` DateTime64(3, 'UTC'),
+    `deleted` UInt8 DEFAULT 0
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (tenant_id, id);

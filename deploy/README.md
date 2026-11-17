@@ -31,7 +31,7 @@ Environment variables (set in your shell or a `deploy/.env` file):
 | `IVY_DIGEST_TO` | | comma-separated extra digest recipients for the `default` workspace (installs without sign-in have no members) |
 | `IVY_ALERTS_INTERVAL_SECONDS` | `60` | how often the alert evaluator runs; `0` turns alerts and the digest off in that API process |
 | `IVY_INGEST_API_KEY` | `dev-ingest-key` | ingest key created on first start in an ordinary project "Default" of the `default` workspace (rename or archive it like any project) |
-| `IVY_SECRET_KEY` | | encrypts the per-project auto-trace keys; needed for auto-trace into any project other than the one of `IVY_INGEST_API_KEY` |
+| `IVY_SECRET_KEY` | | encrypts the per-project auto-trace keys; needed for auto-trace into any project other than the one of `IVY_INGEST_API_KEY`. Also derives the passwords of the Query page's per-workspace ClickHouse users (falls back to `IVY_CLICKHOUSE_PASSWORD`; `docs/implementation/query.md`) |
 | `IVY_SHARDS` | | shard map for several cells (`tenancy.md`); one shard by default |
 | `IVY_INGEST_TRUST_PROXY`, `IVY_INGEST_MAX_BODY_BYTES` | off, 10 MiB | ingest: client IP from `X-Forwarded-For`; body limit |
 | `IVY_RETENTION_DAYS` | `30` | applied when the ClickHouse volume is first created |

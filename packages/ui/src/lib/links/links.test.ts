@@ -129,6 +129,8 @@ describe("all projects", () => {
     expect(switchProjectLink("/w/acme/checkout-prod/invocations", all)).toBe("/w/acme/all/invocations");
     expect(switchProjectLink("/w/acme/all/errors", scope)).toBe("/w/acme/checkout-prod/errors");
     expect(switchProjectLink("/w/acme/all/functions/", scope)).toBe("/w/acme/checkout-prod/functions");
+    expect(switchProjectLink("/w/acme/all/query", scope, "?q=qry_1")).toBe("/w/acme/checkout-prod/query?q=qry_1");
+    expect(switchProjectLink("/w/acme/all/errors", scope, "?function=f")).toBe("/w/acme/checkout-prod/errors");
   });
 
   it("opens Functions when the page makes no sense in the target (a trace, settings)", () => {

@@ -176,6 +176,9 @@ Paths below are relative to `/w/:workspace/:project`.
   (`ErrorTemplate`), variants, occurrences, first and last seen. A group with several distinct messages expands (chevron
   or "N variants") to its most frequent messages with counts, each linking to its trace. Buttons: the sample trace, and
   `invocations?function=…&group=<fingerprint>` (the list shows a removable "One error group" filter).
+- `/query?q=<saved query ID>`: SQL over the views `invocations`, `spans` and `logs` of the current project (or all
+  projects) and time range, with saved queries and a schema panel on the left, a CodeMirror editor with completion,
+  and the results as a table (trace IDs link to the trace; CSV download). Lazy-loaded. See `query.md`.
 - `/w/:workspace/settings/aws`: AWS accounts (see `auto-trace.md`). A "Connect AWS account" dialog (account ID, stack
   region, regions → quick-create link opened in a new tab, or template download + upload
   instructions when there is no link → verify, polled every 10 s), one card per account (status, regions, last sync,

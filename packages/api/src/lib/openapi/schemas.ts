@@ -365,4 +365,25 @@ export const schemas = {
   NotificationItem: object({ workspace: object({ id: str, slug: str, name: str }), digest: bool }),
   Notifications: object({ email: nstr, digest_available: bool, items: { type: 'array', items: ref('NotificationItem') } }),
   NotificationUpdate: object({ workspace: { type: 'string', description: 'Slug or ID.' }, digest: bool }),
+  QueryRun: object(
+    {
+      sql: { type: 'string', description: 'One ClickHouse SELECT over the views `invocations`, `spans` and `logs`. No FORMAT clause.' },
+      since: { type: 'string', pattern: '^\\d+[mhd]$', default: '24h', description: 'Relative time range the views show.' },
+      from: { ...time, description: 'Range start; overrides since.' },
+      to: { ...time, description: 'Range end. Default now.' },
+      limit: { type: 'integer', minimum: 1, maximum: 10000, default: 1000, description: 'Rows returned at most.' },
+    },
+    ['sql'],
+  ),
+  QueryResult: object({
+    columns: { type: 'array', items: object({ name: str, type: { type: 'string', description: 'ClickHouse type, e.g. `UInt64`.' } }) },
+    rows: { type: 'array', items: { type: 'array', items: {} }, description: 'One array per row, in column order (ClickHouse JSON values).' },
+    truncated: { type: 'boolean', description: 'More rows than `limit`; only the first `limit` are returned.' },
+    stats: object({ rows_read: int, bytes_read: int, elapsed_ms: int }),
+    range: object({ from: time, to: time }),
+  }),
+  SavedQuery: object({ id: str, name: str, sql: str, created_by: nstr, created_at: time, updated_by: nstr, updated_at: time }),
+  SavedQueryList: list('SavedQuery'),
+  SavedQueryCreate: object({ name: str, sql: str }),
+  SavedQueryUpdate: object({ name: str, sql: str }, []),
 };

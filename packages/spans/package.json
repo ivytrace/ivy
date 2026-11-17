@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./error-template": "./src/error-template.ts",
-    "./error-template-vectors": "./src/error-template.vectors.ts"
+    "./error-template-vectors": "./src/error-template.vectors.ts",
+    "./query": "./src/query.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -34,7 +34,7 @@ function ListLink({ to, active, children }: { to: string; active: boolean; child
 
 /** Workspaces and projects as lists (All projects first). */
 function ScopeLists({ scope }: { scope: Scope }) {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const workspaces = useWorkspaces();
   const projects = useProjects(scope.workspace);
   const onSettings = pathname.startsWith(`/w/${scope.workspace}/settings`);
@@ -51,14 +51,14 @@ function ScopeLists({ scope }: { scope: Scope }) {
         </Section>
       )}
       <Section title="Project">
-        <ListLink to={switchProjectLink(pathname, { workspace: scope.workspace, project: ALL_PROJECTS })} active={isActive(ALL_PROJECTS)}>
+        <ListLink to={switchProjectLink(pathname, { workspace: scope.workspace, project: ALL_PROJECTS }, search)} active={isActive(ALL_PROJECTS)}>
           <span className="inline-flex items-center gap-2">
             <Layers className="size-4" /> All projects
           </span>
         </ListLink>
         <div className="mx-3 my-1 border-t" />
         {projects.data?.items.map((p) => (
-          <ListLink key={p.id} to={switchProjectLink(pathname, { workspace: scope.workspace, project: p.slug })} active={isActive(p.slug)}>
+          <ListLink key={p.id} to={switchProjectLink(pathname, { workspace: scope.workspace, project: p.slug }, search)} active={isActive(p.slug)}>
             {p.name}
           </ListLink>
         ))}

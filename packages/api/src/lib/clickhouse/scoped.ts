@@ -21,6 +21,7 @@ export const TENANT_SCOPED_TABLES = [
   'digest_settings',
   'notification_prefs',
   'digest_sends',
+  'saved_queries',
 ];
 
 /** Span tables, keyed (tenant, project, …): reads also need a project filter, or an explicit "all projects". */

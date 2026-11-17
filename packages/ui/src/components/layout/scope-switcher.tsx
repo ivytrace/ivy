@@ -31,7 +31,7 @@ const Divider = () => <div className="-mx-1 my-1 border-t" />;
 /** `Workspace / Project ▾` breadcrumb with a switcher on each part. */
 export function ScopeSwitcher({ workspace, project }: { workspace: string; project: string | null }) {
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const multi = useMultiWorkspace();
   const workspaces = useWorkspaces();
   const projects = useProjects(workspace);
@@ -47,7 +47,7 @@ export function ScopeSwitcher({ workspace, project }: { workspace: string; proje
     setProjectOpen(false);
     navigate(to);
   };
-  const toProject = (slug: string) => go(switchProjectLink(pathname, { workspace, project: slug }));
+  const toProject = (slug: string) => go(switchProjectLink(pathname, { workspace, project: slug }, search));
 
   return (
     <div className="flex min-w-0 items-center gap-1 text-sm">

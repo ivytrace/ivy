@@ -1,6 +1,7 @@
 import { HTTPException } from 'hono/http-exception';
 import type { AuthUser } from '../auth/user.js';
 import { awsStore } from '../aws/store.js';
+import { dropQueryUser } from '../clickhouse/workspace-query.js';
 import { notify } from '../hooks/run.js';
 import { forgetMemberships } from './members.js';
 import { forgetProjects } from './projects.js';
@@ -75,6 +76,10 @@ export async function deleteWorkspace(workspace: TenantRecord, confirm: unknown)
   }
   await store.deleteTenant(workspace);
   forgetProjects(workspace.id);
+  // Its Query page user; nothing routes to a deleted workspace any more, so a failure here only leaves it unused.
+  dropQueryUser({ id: workspace.id, shardId: workspace.shard_id }).catch((err) =>
+    console.warn(`Could not drop the query user of workspace ${workspace.id}: ${err instanceof Error ? err.message : err}`),
+  );
 }
 
 export const presentWorkspace = (w: TenantRecord, role: MemberRole) => ({

@@ -92,6 +92,8 @@ const router = createBrowserRouter([
               { path: "functions", element: <Functions /> },
               { path: "invocations", element: <Invocations /> },
               { path: "errors", element: <Errors /> },
+              // Lazy: the SQL editor (CodeMirror) is only needed here.
+              { path: "query", lazy: async () => ({ Component: (await import("@/routes/query/page")).default }) },
               {
                 path: "traces/:traceId",
                 lazy: async () => ({ Component: (await import("@/routes/traces/page")).default }),

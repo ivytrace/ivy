@@ -3,6 +3,7 @@ import { registerViewTools, type ViewHtml } from "../apps/views.js";
 import type { IvyData } from "../data/types.js";
 import { registerErrorTools } from "../tools/errors.js";
 import { registerInvocationTools } from "../tools/invocations.js";
+import { registerQueryTools } from "../tools/query.js";
 import { registerTraceTools } from "../tools/traces.js";
 import { registerWorkspaceTools } from "../tools/workspaces.js";
 
@@ -26,6 +27,7 @@ export function createIvyMcpServer(data: IvyData, options: IvyMcpServerOptions =
   registerInvocationTools(server, data);
   registerTraceTools(server, data);
   registerErrorTools(server, data);
+  registerQueryTools(server, data);
   registerViewTools(server, data, options.views);
   return server;
 }

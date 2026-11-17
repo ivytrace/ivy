@@ -78,6 +78,7 @@ export const openApiDocument = {
     { name: 'Workspaces', description: 'Workspaces, members and invitations (workspaces-projects.md).' },
     { name: 'Projects', description: 'Projects and their ingest keys.' },
     { name: 'Traces', description: 'Functions, invocations, traces, errors and stats, per project (or workspace-wide).' },
+    { name: 'Query', description: 'Your own SQL over invocations, spans and logs, and the workspace’s saved queries (query.md).' },
     { name: 'Auto-trace', description: 'AWS account connections, opt-in tracing rules and the state of their functions (auto-trace.md).' },
     { name: 'Alerts', description: 'Slack alerts per project, the weekly email digest and your notification settings (alerts.md).' },
     { name: 'Meta', description: 'Health, configuration and this document.' },
@@ -266,6 +267,45 @@ export const openApiDocument = {
           query('bucket', 'Bucket size; default keeps about 100 points or fewer.', { type: 'string', enum: ['1m', '5m', '15m', '1h', '1d'] }),
         ],
         responses: { 200: json(ref('Timeseries')), ...bad, ...notFound },
+      },
+    },
+    '/api/w/{workspace}/p/{project}/query': {
+      post: {
+        tags: ['Query'], summary: 'Run SQL over the project’s invocations, spans and logs', operationId: 'runQuery', parameters: [ws, prj],
+        description:
+          'Runs as the workspace’s own read-only ClickHouse user, which sees only this workspace’s rows. The views ' +
+          '`invocations`, `spans` and `logs` show the project and time range of the request. Limits: 30 s, 1 billion ' +
+          'rows read, 60 queries a minute per workspace. SQL errors and limits answer 400 with ClickHouse’s message.',
+        requestBody: body('QueryRun'),
+        responses: { 200: json(ref('QueryResult')), 400: error('Invalid SQL, a limit, or no access'), ...notFound, 429: error('Too many queries') },
+      },
+    },
+    '/api/w/{workspace}/query': {
+      post: {
+        tags: ['Query'], summary: 'Run SQL over every project of the workspace', operationId: 'runWorkspaceQuery', parameters: [ws],
+        requestBody: body('QueryRun'),
+        responses: { 200: json(ref('QueryResult')), 400: error('Invalid SQL, a limit, or no access'), ...notFound, 429: error('Too many queries') },
+      },
+    },
+    '/api/w/{workspace}/queries': {
+      get: {
+        tags: ['Query'], summary: 'Saved queries of the workspace', operationId: 'listSavedQueries', parameters: [ws],
+        description: 'Includes the default queries Ivy saves into every workspace once (until deleted).',
+        responses: { 200: json(ref('SavedQueryList')), ...notFound },
+      },
+      post: {
+        tags: ['Query'], summary: 'Save a query', operationId: 'createSavedQuery', parameters: [ws],
+        requestBody: body('SavedQueryCreate'), responses: { 201: json(ref('SavedQuery'), 'Created'), ...bad, ...notFound },
+      },
+    },
+    '/api/w/{workspace}/queries/{id}': {
+      patch: {
+        tags: ['Query'], summary: 'Rename or change a saved query', operationId: 'updateSavedQuery', parameters: [ws, path('id', 'Saved query ID.')],
+        requestBody: body('SavedQueryUpdate'), responses: { 200: json(ref('SavedQuery')), ...bad, ...notFound },
+      },
+      delete: {
+        tags: ['Query'], summary: 'Delete a saved query', operationId: 'deleteSavedQuery', parameters: [ws, path('id', 'Saved query ID.')],
+        responses: { 200: json(object({ deleted: { type: 'boolean' } })), ...notFound },
       },
     },
     '/api/w/{workspace}/stats/timeseries': {

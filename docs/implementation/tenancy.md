@@ -163,6 +163,9 @@ The background auto-trace sync runs outside requests; it works per account and a
    sessions have no tenant. So the policy protects against a missing `WHERE`, not against code that bypasses the query
    helper; the static test covers that. A separate read-only ClickHouse user for the API with a fail-closed policy is
    the stronger follow-up. The control tables have no row policy (the cross-tenant lookups above need them).
+3. **User-written SQL** (the Query page, `query.md`) doesn't go through either guard: it runs as a ClickHouse user per
+   workspace (`ivy_q_<tenant ID>`, role `ivy_query`) whose restrictive row policies are fail-closed on the user name,
+   with no grants outside the query views and a read-only profile.
 
 ## Auto-trace key
 

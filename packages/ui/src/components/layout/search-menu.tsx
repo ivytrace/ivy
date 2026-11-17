@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { AppWindowIcon, CircleXIcon, CpuIcon, ListIcon, SearchIcon, WaypointsIcon } from "lucide-react";
+import { AppWindowIcon, CircleXIcon, CpuIcon, DatabaseIcon, ListIcon, SearchIcon, WaypointsIcon } from "lucide-react";
 
 import {
   CommandDialog,
@@ -92,6 +92,12 @@ export function SearchMenu() {
               <CircleXIcon className="mr-2 size-4" />
               Errors
             </CommandItem>
+            {scope && (
+              <CommandItem onSelect={() => go(pageLink(scope, "query"))}>
+                <DatabaseIcon className="mr-2 size-4" />
+                Query
+              </CommandItem>
+            )}
           </CommandGroup>
           {scope && functions.length > 0 && (
             <>

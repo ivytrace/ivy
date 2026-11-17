@@ -5,6 +5,7 @@ import { createAlertsMock } from "./alerts.ts";
 import { createAwsMock, type MockOptions } from "./aws.ts";
 import { buildTrace, INVOCATIONS, type MockInvocation } from "./fixtures.ts";
 import { liveRows, progressRows } from "./progress.ts";
+import { defaultSavedQueries, mockQuery, type MockSavedQuery } from "./query.ts";
 import { mockUsage, MOCK_BILLING_URL } from "./usage.ts";
 import { newInvitation, newKey, newProject, newWorkspace, seedWorkspaces, slugFrom, slugOk, type MockWorkspace } from "./workspaces.ts";
 import { THROTTLED_MESSAGE, THROTTLES, type MockThrottle } from "./throttles.ts";
@@ -377,12 +378,64 @@ export function createMockHandler(options: MockOptions = {}) {
       const { project: _p, ...out } = k;
       return json(200, out);
     }
+    if (rest === "/query" && method === "POST") return runQuery(ws, p.slug, body);
     if (method !== "GET") return json(405, { error: "Method not allowed" });
     return data(ws, p.slug, rest, params) ?? notFound();
   }
 
+  const savedQueries = new Map<string, MockSavedQuery[]>();
+  const queriesOf = (ws: MockWorkspace) => {
+    if (!savedQueries.has(ws.id)) savedQueries.set(ws.id, defaultSavedQueries());
+    return savedQueries.get(ws.id)!;
+  };
+
+  function runQuery(ws: MockWorkspace, project: string | null, body: Record<string, unknown>): MockResponse {
+    const projectIds = ids(ws);
+    const pool = poolOf(ws, project).map((r) => ({ ...r, project_id: projectIds.get(r.project) }));
+    const res = mockQuery(String(body.sql ?? ""), pool);
+    if (res.status !== 200) return json(res.status, res.body);
+    const now = Date.now();
+    const since = { "15m": 900_000, "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000 }[String(body.since ?? "24h")] ?? 86_400_000;
+    const from = body.from ? String(body.from) : new Date(now - since).toISOString();
+    const to = body.to ? String(body.to) : new Date(now).toISOString();
+    return json(200, { ...res.body, range: { from, to } });
+  }
+
+  function queryRoutes(ws: MockWorkspace, rest: string, method: string, body: Record<string, unknown>): MockResponse | null {
+    const list = queriesOf(ws);
+    const now = new Date().toISOString();
+    if (rest === "/queries" && method === "GET") return json(200, { items: list });
+    if (rest === "/queries" && method === "POST") {
+      const name = String(body.name ?? "").trim();
+      if (!name || !String(body.sql ?? "").trim()) return json(400, { error: "name is required" });
+      const q = { id: `qry_${Math.random().toString(36).slice(2, 12)}`, name, sql: String(body.sql), created_by: "you@example.com", created_at: now, updated_by: "you@example.com", updated_at: now };
+      list.push(q);
+      return json(201, q);
+    }
+    const one = rest.match(/^\/queries\/([^/]+)$/);
+    if (!one) return null;
+    const q = list.find((x) => x.id === one[1]);
+    if (!q) return notFound("Saved query not found");
+    if (method === "PATCH") {
+      if (typeof body.name === "string" && body.name.trim()) q.name = body.name.trim();
+      if (typeof body.sql === "string" && body.sql.trim()) q.sql = body.sql;
+      q.updated_at = now;
+      return json(200, q);
+    }
+    if (method === "DELETE") {
+      list.splice(list.indexOf(q), 1);
+      return json(200, { deleted: true });
+    }
+    return null;
+  }
+
   function workspaceRoutes(ws: MockWorkspace, rest: string, method: string, params: URLSearchParams, body: Record<string, unknown>): MockResponse {
     if (rest === "" && method === "GET") return json(200, present(ws));
+    if (rest === "/query" && method === "POST") return runQuery(ws, null, body);
+    if (rest.startsWith("/queries")) {
+      const res = queryRoutes(ws, rest, method, body);
+      if (res) return res;
+    }
     if (rest === "" && method === "PATCH") {
       if (typeof body.name === "string" && body.name.trim()) ws.name = body.name.trim();
       if (typeof body.slug === "string" && body.slug !== ws.slug) {

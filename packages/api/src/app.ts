@@ -47,6 +47,11 @@ import { deleteMember } from './routes/members/delete.js';
 import { getMembers } from './routes/members/get.js';
 import { patchMember } from './routes/members/patch.js';
 import { getProject, getProjects } from './routes/projects/get.js';
+import { deleteSavedQueryRoute } from './routes/queries/delete.js';
+import { getSavedQueries } from './routes/queries/get.js';
+import { patchSavedQuery } from './routes/queries/patch.js';
+import { postSavedQuery } from './routes/queries/post.js';
+import { postQuery } from './routes/query/post.js';
 import { patchProject } from './routes/projects/patch.js';
 import { postProject } from './routes/projects/post.js';
 import { getTimeseries } from './routes/stats/timeseries.js';
@@ -138,6 +143,14 @@ export function createApp(options: { uiDir: string; access?: WorkspaceAccess }) 
   app.get(`${ws}/errors`, allProjects(), getErrors);
   app.get(`${ws}/invocations`, allProjects(), getInvocations);
   app.get(`${ws}/stats/timeseries`, allProjects(), getTimeseries);
+
+  // Query page: members' own SQL (as the workspace's ClickHouse user), and the workspace's saved queries.
+  app.post(`${prj}/query`, postQuery);
+  app.post(`${ws}/query`, allProjects(), postQuery);
+  app.get(`${ws}/queries`, getSavedQueries);
+  app.post(`${ws}/queries`, postSavedQuery);
+  app.patch(`${ws}/queries/:id`, patchSavedQuery);
+  app.delete(`${ws}/queries/:id`, deleteSavedQueryRoute);
 
   // AWS accounts and auto-trace, per workspace.
   app.get(`${ws}/aws/setup`, getAwsSetup);

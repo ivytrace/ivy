@@ -5,3 +5,4 @@ export { trimPayload } from "./lib/payload/trim.js";
 export { formatTrace, type Detail, type FormatTraceOptions } from "./lib/trace/format-trace.js";
 export { callKey, spanLabel } from "./lib/trace/label.js";
 export { rootInvocation } from "./lib/trace/tree.js";
+export { formatQueryResult } from "./lib/query/format-query.js";

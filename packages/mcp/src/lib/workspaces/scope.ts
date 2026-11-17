@@ -74,5 +74,6 @@ export function scoped<W extends Workspace>(data: IvyData<W>, args: { project?: 
     invocations: (w, query) => data.invocations(w, { ...query, project }),
     trace: (w, traceId) => data.trace(w, traceId, project),
     errors: (w, query) => data.errors(w, { ...query, project }),
+    query: (w, query) => data.query(w, { ...query, project }),
   };
 }

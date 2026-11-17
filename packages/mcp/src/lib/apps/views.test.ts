@@ -15,6 +15,7 @@ const data: IvyData = {
   invocations: async () => [],
   trace: async (_w, id) => [checkoutFailed, queueFailed].find((t) => t.trace_id === id) ?? null,
   errors: async () => [],
+  query: async () => ({ columns: [], rows: [], truncated: false, stats: { rows_read: 0, bytes_read: 0, elapsed_ms: 0 } }),
 };
 const HTML: ViewHtml = { waterfall: "<!doctype html><title>waterfall</title>", graph: "<!doctype html><title>graph</title>" };
 

@@ -131,7 +131,7 @@ const textOf = (result: unknown) => ((result as CallToolResult).content[0] as { 
 describe('MCP endpoint in the API', () => {
   it('serves every tool through the API route handlers, scoped to the request tenant', async () => {
     const client = await connect(appWith());
-    expect((await client.listTools()).tools).toHaveLength(8);
+    expect((await client.listTools()).tools).toHaveLength(9);
 
     const calls = {
       find_failing_invocations: { function: 'checkout-createOrder' },
@@ -246,7 +246,7 @@ describe('MCP endpoint in the API', () => {
     expect(apiToken.headers.get('www-authenticate')).toContain('error="invalid_token"');
 
     const client = await connect(app, { authorization: 'Bearer mcp-token' });
-    expect((await client.listTools()).tools).toHaveLength(8);
+    expect((await client.listTools()).tools).toHaveLength(9);
     expect(verifyAccessToken).toHaveBeenCalledWith('mcp-token', { audience: 'https://ivy.example.com/mcp', mcpClients: true });
   });
 

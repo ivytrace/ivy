@@ -59,6 +59,10 @@ overview and errors across all projects) read the tenant's range and group by `p
   the project is in the primary key, so it prunes by range and needs no index of its own, and the existing indexes
   work within the (tenant, project) range. A trace lookup is now `TenantId`/`ProjectId` prefix + hour buckets +
   TraceId bloom filter.
+- `invocations.http_route`: the invocation span's `http.route` (route template, if the trigger gives one), for the
+  Query page; '' on rows from before it was added.
+- The Query page's views (database `ivy_query`), role, row policies and settings profile are in the same file; see
+  `query.md`.
 - `invocations` fields: `error_type` = `error.type` or the `exception` event's type, and `error_message` =
   status message or `exception.message`, and `error_frame` = the top in-app stack frame (`file:function`) of the
   `exception` event. The error group fingerprint and message template are computed from these at query time

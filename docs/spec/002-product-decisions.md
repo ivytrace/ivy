@@ -195,6 +195,19 @@ live in `docs/implementation/`.
 - Self-hosters get the `on-error-group-created` hook for their own integrations. Implementation:
   `docs/implementation/alerts.md`.
 
+## Query
+- A Query page lets workspace members run their own SQL (ClickHouse) over the invocations, spans and logs of the
+  current project (or all projects) and time range, e.g. the slowest API routes or invocations with 30+ database
+  calls. The same is available to agents as the MCP tool `run_query` and in the API.
+- The SQL runs as a read-only ClickHouse user per workspace whose row policies only let that workspace's rows through;
+  queries are limited (30 s, rows read, memory, result size, queries per minute per workspace). Users query curated
+  views (`invocations`, `spans`, `logs`), not the raw tables.
+- The editor completes tables, columns (with descriptions) and functions. Saved queries belong to the workspace and are
+  shared by all its members; every workspace starts with a few default queries it can edit or delete.
+- An AI mode that writes SQL from a prompt may come later, as a helper that fills the editor. It is not a security
+  measure: the guards are the same with or without it.
+- Implementation: `docs/implementation/query.md`.
+
 ## Ingest
 - The ingest router becomes a small Rust service (its own image) that authenticates keys, enforces quotas and writes
   spans straight to ClickHouse, replacing both the Node router and the OpenTelemetry Collector on the ingest path.

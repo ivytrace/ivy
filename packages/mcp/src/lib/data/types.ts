@@ -1,4 +1,4 @@
-import type { ErrorGroup, Invocation, Trace } from "@ivy/spans";
+import type { ErrorGroup, Invocation, QueryResult, Trace } from "@ivy/spans";
 
 /** A workspace (tenant) the caller is a member of. */
 export interface Workspace {
@@ -30,6 +30,17 @@ export interface ErrorQuery {
   since?: string;
 }
 
+export interface SqlQuery {
+  /** One ClickHouse SELECT over the Query page's views (`invocations`, `spans`, `logs`). */
+  sql: string;
+  /** Project slug or ID within the workspace; omit for all of its projects. */
+  project?: string;
+  since?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
 /**
  * What the MCP tools read. Every read is for exactly one workspace; the tools fan out over the
  * caller's workspaces themselves (see workspaces/fan-out.ts). The API implements this on top of its
@@ -42,4 +53,6 @@ export interface IvyData<W extends Workspace = Workspace> {
   /** null when the trace is not in this workspace. */
   trace(workspace: W, traceId: string, project?: string): Promise<Trace | null>;
   errors(workspace: W, query: ErrorQuery): Promise<ErrorGroup[]>;
+  /** Runs SQL as the workspace's read-only query user (docs/implementation/query.md). */
+  query(workspace: W, query: SqlQuery): Promise<QueryResult>;
 }

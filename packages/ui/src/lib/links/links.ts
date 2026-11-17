@@ -11,7 +11,7 @@ export interface Scope {
   project: string;
 }
 
-export type ProjectPage = "functions" | "invocations" | "errors";
+export type ProjectPage = "functions" | "invocations" | "errors" | "query";
 
 const enc = encodeURIComponent;
 
@@ -49,12 +49,13 @@ export const alertsLink = (workspace: string, project?: string) => `${settingsLi
 export const usageLink = (workspace: string) => settingsLink(workspace, "usage");
 
 /**
- * Where the project switcher goes: the same list page (Functions, Invocations, Errors) in the other
- * project or under `all`. Everything else (a trace, settings) opens the target's Functions.
+ * Where the project switcher goes: the same list page (Functions, Invocations, Errors, Query) in the other
+ * project or under `all`; Query keeps its saved query (`search`), which belongs to the workspace. Everything
+ * else (a trace, settings) opens the target's Functions.
  */
-export function switchProjectLink(pathname: string, to: Scope): string {
-  const page = /^\/w\/[^/]+\/[^/]+\/(functions|invocations|errors)\/?$/.exec(pathname)?.[1] as ProjectPage | undefined;
-  return pageLink(to, page ?? "functions");
+export function switchProjectLink(pathname: string, to: Scope, search = ""): string {
+  const page = /^\/w\/[^/]+\/[^/]+\/(functions|invocations|errors|query)\/?$/.exec(pathname)?.[1] as ProjectPage | undefined;
+  return `${pageLink(to, page ?? "functions")}${page === "query" ? search : ""}`;
 }
 
 /** The workspace and project of a dashboard path; `project` is null on settings pages. */

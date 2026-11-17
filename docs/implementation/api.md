@@ -605,6 +605,21 @@ contract (envelope, kinds, timeouts, environment, payload types) is `hooks.md`. 
 
 Public Ivy has no plans or limits; a workspace without a limits record is unlimited.
 
+## Query (`docs/implementation/query.md`)
+
+### `POST /api/w/:workspace/p/:project/query`, `POST /api/w/:workspace/query`
+Body `{ "sql": "SELECT …", "since"?: "24h", "from"?, "to"?, "limit"?: 1000 }` (limit 1–10,000). Runs the SQL as the
+workspace's read-only ClickHouse user over the views `invocations`, `spans` and `logs`, which show the project (or,
+workspace-wide, every project) and the time range. Response:
+`{ "columns": [{ "name", "type" }], "rows": [[…]], "truncated": bool, "stats": { "rows_read", "bytes_read", "elapsed_ms" }, "range": { "from", "to" } }`.
+Rows are arrays in column order with ClickHouse's JSON values. SQL errors and limits: 400 `{ "error": <ClickHouse's
+message> }`; the per-workspace quota or concurrency limit: 429.
+
+### `GET /api/w/:workspace/queries`, `POST …/queries`, `PATCH …/queries/:id`, `DELETE …/queries/:id`
+The workspace's saved queries, `{ id, name, sql, created_by, created_at, updated_by, updated_at }` (`created_by` /
+`updated_by`: email, null without sign-in). The list includes the default queries until deleted. POST takes
+`{ name, sql }` (201), PATCH `{ name?, sql? }`; any member may change or delete any saved query.
+
 ## OpenAPI
 
 ### `GET /api/openapi.json`
@@ -619,7 +634,7 @@ API reference page (Scalar, loaded from its CDN).
 ### `POST /mcp`
 Remote MCP server (Streamable HTTP, stateless, JSON responses) with the tools `list_workspaces`,
 `find_failing_invocations`, `search_invocations`, `list_error_groups`, `get_trace_summary`, `compare_invocations`,
-and the MCP Apps tools `render_waterfall` and `render_graph` (views served as `ui://ivy/*.html` resources). Tools
+`run_query` (SQL as on the Query page, one workspace at a time), and the MCP Apps tools `render_waterfall` and `render_graph` (views served as `ui://ivy/*.html` resources). Tools
 cover every workspace the caller is a member of, one tenant-scoped read per workspace, unless given `workspace`;
 an optional `project` (slug or ID) narrows them to that project. Without it they read through the same workspace-wide
 data functions as the routes above (`lib/data/*` with an all-projects scope), so results match the dashboard's

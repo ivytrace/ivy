@@ -5,7 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Hono } from "hono";
 import { describe, expect, it } from "vitest";
-import type { InvocationQuery, IvyData, Workspace } from "../data/types.js";
+import type { InvocationQuery, IvyData, SqlQuery, Workspace } from "../data/types.js";
 import { mcpRoutes } from "./routes.js";
 
 interface Seed {
@@ -30,7 +30,7 @@ const staging: Seed = {
 };
 const broken: Seed = { workspace: { id: "ten_x", name: "Broken", slug: "broken" }, invocations: [], traces: [], errors: [], broken: true };
 
-type Call = { workspace: string; method: string; query?: InvocationQuery };
+type Call = { workspace: string; method: string; query?: InvocationQuery | SqlQuery };
 
 function fakeData(seeds: Seed[], calls: Call[] = []): IvyData {
   const seed = (w: Workspace) => {
@@ -55,6 +55,20 @@ function fakeData(seeds: Seed[], calls: Call[] = []): IvyData {
     async errors(w, query) {
       calls.push({ workspace: w.slug, method: "errors" });
       return seed(w).errors.filter((g) => !query.function || g.function === query.function);
+    },
+    async query(w, query) {
+      calls.push({ workspace: w.slug, method: "query", query });
+      seed(w);
+      if (query.sql.includes("nope")) throw new Error("Unknown expression identifier `nope`");
+      return {
+        columns: [
+          { name: "http_route", type: "String" },
+          { name: "p95_ms", type: "Float64" },
+        ],
+        rows: [["/orders/{id}", 340]],
+        truncated: false,
+        stats: { rows_read: 1200, bytes_read: 1, elapsed_ms: 12 },
+      };
     },
   };
 }
@@ -96,6 +110,7 @@ describe("MCP server", () => {
       "list_workspaces",
       "render_graph",
       "render_waterfall",
+      "run_query",
       "search_invocations",
     ]);
     for (const tool of tools) {
@@ -183,7 +198,7 @@ describe("MCP server", () => {
   it("compare_invocations picks the latest successful run in the same workspace", async () => {
     const calls: Call[] = [];
     const text = textOf(await call([staging, prod], "compare_invocations", { trace_id: checkoutFailed.trace_id }, calls));
-    expect(calls.filter((c) => c.query?.status === "ok")).toEqual([
+    expect(calls.filter((c) => c.query && "status" in c.query && c.query.status === "ok")).toEqual([
       { workspace: "shop-production", method: "invocations", query: { function: "checkout-createOrder", status: "ok", since: "7d", limit: 1 } },
     ]);
     expect(text.split("\n").slice(0, 2)).toEqual(["[shop-production]", "B is the latest successful invocation of checkout-createOrder."]);
@@ -236,7 +251,7 @@ describe("MCP auth", () => {
     const users: string[] = [];
     const app = mcpRoutes({ data: () => fakeData([prod]), auth, onAuthenticated: (_c, user) => users.push(user.sub) });
     const client = await connect(app, { authorization: "Bearer good" });
-    expect((await client.listTools()).tools).toHaveLength(8);
+    expect((await client.listTools()).tools).toHaveLength(9);
     expect(users.length).toBeGreaterThan(0);
   });
 
@@ -245,6 +260,29 @@ describe("MCP auth", () => {
     expect((await app.request("/.well-known/oauth-protected-resource")).status).toBe(404);
     expect((await app.request("/.well-known/oauth-protected-resource/mcp")).status).toBe(404);
     const client = await connect(app);
-    expect((await client.listTools()).tools).toHaveLength(8);
+    expect((await client.listTools()).tools).toHaveLength(9);
+  });
+});
+
+describe("run_query", () => {
+  it("runs in one workspace, with the project and range, and prints the rows", async () => {
+    const calls: Call[] = [];
+    const result = await call([prod], "run_query", { sql: "SELECT http_route, p95_ms FROM invocations", project: "checkout-prod", since: "7d" }, calls);
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toBe(
+      "[shop-production/checkout-prod], last 7d: 1 row, read 1,200 rows in 12 ms\nhttp_route | p95_ms\n/orders/{id} | 340",
+    );
+    expect(calls).toEqual([
+      { workspace: "shop-production", method: "query", query: { sql: "SELECT http_route, p95_ms FROM invocations", project: "checkout-prod", since: "7d", limit: 100 } },
+    ]);
+  });
+
+  it("needs a workspace when you have several, and passes SQL errors on", async () => {
+    const several = await call([prod, staging], "run_query", { sql: "SELECT 1" });
+    expect(several.isError).toBe(true);
+    expect(textOf(several)).toContain("pass `workspace` (one of shop-production, staging)");
+    const bad = await call([prod, staging], "run_query", { sql: "SELECT nope", workspace: "staging" });
+    expect(bad.isError).toBe(true);
+    expect(textOf(bad)).toContain("Unknown expression identifier `nope`");
   });
 });
