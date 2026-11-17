@@ -50,7 +50,7 @@ export default function SettingsLayout() {
                 )
               }
             >
-              <Icon className="size-4" />
+              <Icon className="size-4 shrink-0" />
               <span className="flex-1">{label}</span>
               {badge ? <NewBadge count={badge} /> : null}
             </NavLink>
