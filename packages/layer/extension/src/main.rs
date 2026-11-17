@@ -484,7 +484,8 @@ mod tests {
         assert_eq!(sent.len(), 2, "one provisional and one final invocation span");
         let (at, provisional) = &sent[0];
         let elapsed = at.duration_since(started);
-        assert!(elapsed >= Duration::from_millis(150) && elapsed < Duration::from_millis(400), "sent after the threshold, not before ({elapsed:?})");
+        // The threshold runs on wall-clock milliseconds (truncated), `started` is a precise Instant: allow that rounding.
+        assert!(elapsed >= Duration::from_millis(148) && elapsed < Duration::from_millis(400), "sent after the threshold, not before ({elapsed:?})");
         assert_eq!(spans::attr(provisional, "ivy.in_progress").unwrap()["boolValue"], true);
         assert_eq!(spans::attr(provisional, "ivy.invocation").unwrap()["boolValue"], true);
         assert_eq!(spans::attr(provisional, "ivy.deadline_ms").unwrap()["intValue"], (ctx.start_ms + 10_000).to_string());
