@@ -52,6 +52,9 @@ describe("mock API: workspaces and data", () => {
     const [one] = page1.items;
     const byAttribute = call<InvocationsResponse>("GET", `${P}/invocations?since=7d&q=${encodeURIComponent(`faas.invocation_id=${one.request_id}`)}`).body;
     expect(byAttribute.items.map((i) => i.span_id)).toEqual([one.span_id]);
+    const keys = call<{ items: { key: string; spans: number }[] }>("GET", `${P}/invocations/attributes?since=7d`).body.items.map((k) => k.key);
+    expect(keys).toContain("faas.invocation_id");
+    expect(keys).not.toContain("ivy.payload.request");
 
     // Other projects don't see it; all projects do, labelled.
     expect(call<{ items: FunctionSummary[] }>("GET", "/api/w/acme/p/billing-api-prod/functions?since=7d").body.items.map((f) => f.name)).not.toContain(

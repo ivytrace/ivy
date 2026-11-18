@@ -155,6 +155,8 @@ export const schemas = {
     items: { type: 'array', items: ref('Invocation') },
     next_cursor: { ...nstr, description: 'Pass as `cursor` for the next page; null on the last page.' },
   }),
+  AttributeKey: object({ key: str, spans: { type: 'integer', description: 'Spans carrying the attribute.' } }),
+  AttributeKeyList: list('AttributeKey'),
   SpanEvent: object({ ts: time, name: str, attributes: strMap }),
   Span: object({
     span_id: str,

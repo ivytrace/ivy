@@ -146,6 +146,21 @@ function invocations(pool: Row[], params: URLSearchParams, ids?: Map<string, str
   };
 }
 
+/** Attribute keys of the newest invocations' spans, most used first; payloads and headers left out like the API. */
+function attributeKeys(pool: Row[], params: URLSearchParams) {
+  const counts = new Map<string, number>();
+  for (const row of inRange(pool, params).slice(0, 200)) {
+    for (const span of buildTrace(row)) {
+      for (const key of Object.keys(span.attributes)) counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  return [...counts]
+    .filter(([key]) => !/^ivy\.(payload|http)\./.test(key))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 100)
+    .map(([key, spans]) => ({ key, spans }));
+}
+
 /** The API's `key=value` span attribute terms (`invocation-search.ts`), split from the free text. */
 function searchTerms(q: string) {
   const terms: [string, string][] = [];
@@ -325,6 +340,7 @@ export function createMockHandler(options: MockOptions = {}) {
     if (rest === "/functions") return json(200, { items: functions(pool, throttles, params, all, ids(ws)) });
     if (rest === "/errors") return json(200, { items: errors(pool, throttles, params, all, ids(ws)) });
     if (rest === "/invocations") return json(200, invocations(pool, params, all ? ids(ws) : undefined));
+    if (rest === "/invocations/attributes") return json(200, { items: attributeKeys(pool, params) });
     if (rest === "/stats/timeseries") {
       // Workspace-wide, `project` narrows to one project (a function name used in several projects).
       const only = all && params.get("project");

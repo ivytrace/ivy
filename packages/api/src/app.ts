@@ -39,6 +39,7 @@ import { getHealth } from './routes/health/get.js';
 import { deleteInvitation } from './routes/invitations/delete.js';
 import { getInvitationByToken, getInvitations } from './routes/invitations/get.js';
 import { postAcceptInvitation, postInvitation } from './routes/invitations/post.js';
+import { getInvocationAttributes } from './routes/invocations/attributes.js';
 import { getInvocations } from './routes/invocations/get.js';
 import { deleteKey } from './routes/keys/delete.js';
 import { getKeys } from './routes/keys/get.js';
@@ -136,12 +137,14 @@ export function createApp(options: { uiDir: string; access?: WorkspaceAccess }) 
   // Data: per project, and workspace-wide where it makes sense (explicitly all projects).
   app.get(`${prj}/functions`, getFunctions);
   app.get(`${prj}/invocations`, getInvocations);
+  app.get(`${prj}/invocations/attributes`, getInvocationAttributes);
   app.get(`${prj}/traces/:traceId`, getTrace);
   app.get(`${prj}/errors`, getErrors);
   app.get(`${prj}/stats/timeseries`, getTimeseries);
   app.get(`${ws}/functions`, allProjects(), getFunctions);
   app.get(`${ws}/errors`, allProjects(), getErrors);
   app.get(`${ws}/invocations`, allProjects(), getInvocations);
+  app.get(`${ws}/invocations/attributes`, allProjects(), getInvocationAttributes);
   app.get(`${ws}/stats/timeseries`, allProjects(), getTimeseries);
 
   // Query page: members' own SQL (as the workspace's ClickHouse user), and the workspace's saved queries.

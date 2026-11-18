@@ -155,6 +155,11 @@ Paths below are relative to `/w/:workspace/:project`.
 - `/invocations?function=&status=&q=&live=`: filters (and the Live toggle, below) live in the URL so links can deep-link into a filtered list.
   The search box takes the API's `q`, so `key=value` span attribute terms work there; its placeholder mentions
   `key=value` and its tooltip explains it.
+  It suggests attribute keys (`components/invocations/invocation-search.tsx`, logic in
+  `lib/search/attribute-suggestions.ts`): the keys from `…/invocations/attributes`, fetched on first focus, filtered
+  by the word at the caret (keys starting with it, then keys containing it; the eight most used when it is empty).
+  Nothing is suggested once the word has its `=`. Picking one (click, or arrow keys then Enter/Tab) replaces the word
+  with `key=`; Enter without a highlighted suggestion searches as before, so free-text search is unchanged.
   Uses cursor pagination (a stack of `next_cursor`s for Previous/Next). With `function` set, the function's
   charts are shown, as on trace-stack's per-function page. Under `all` the list and charts cover every project that
   has the function, and rows link to their project's trace.

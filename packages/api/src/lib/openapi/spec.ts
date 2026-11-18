@@ -230,6 +230,19 @@ export const openApiDocument = {
         responses: { 200: json(ref('InvocationList')), ...bad, ...notFound },
       },
     },
+    '/api/w/{workspace}/p/{project}/invocations/attributes': {
+      get: {
+        tags: ['Traces'], summary: 'Span attribute keys in use, most used first', operationId: 'listInvocationAttributes',
+        description: 'The keys `key=value` terms in the invocation search (`q`) can name: up to 100, counted over the last 24 hours of the range at most. Payload and header attributes are left out.',
+        parameters: [ws, prj, ...range], responses: { 200: json(ref('AttributeKeyList')), ...bad, ...notFound },
+      },
+    },
+    '/api/w/{workspace}/invocations/attributes': {
+      get: {
+        tags: ['Traces'], summary: 'Span attribute keys in use in every project of the workspace', operationId: 'listWorkspaceInvocationAttributes',
+        parameters: [ws, ...range], responses: { 200: json(ref('AttributeKeyList')), ...bad, ...notFound },
+      },
+    },
     '/api/w/{workspace}/p/{project}/traces/{traceId}': {
       get: {
         tags: ['Traces'], summary: 'All spans of a trace', operationId: 'getTrace',

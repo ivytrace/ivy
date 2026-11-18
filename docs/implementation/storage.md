@@ -99,6 +99,9 @@ overview and errors across all projects) read the tenant's range and group by `p
   on `mapValues(SpanAttributes)` serves `SpanAttributes[key] = value`; no new index was needed. Verified with
   `EXPLAIN indexes = 1` on 2M spans in one hour: 4 of 245 granules read. Both the final and the in-progress branch of
   the list apply the filter. Parsing is in `packages/api/src/lib/data/invocation-search.ts`.
+- **`…/invocations/attributes`:** `arrayJoin(mapKeys(SpanAttributes))` grouped and counted on `otel_traces`, top 100.
+  It reads only the map's keys, but of every span in the window, so the window is the last 24 hours of the range at
+  most and the dashboard asks only once the search box has focus.
 - **`…/errors`:** the fingerprint and template computed per failed row (`error-grouping.md`), grouped by
   fingerprint and raw message, then by fingerprint (counts, variants, top messages).
 

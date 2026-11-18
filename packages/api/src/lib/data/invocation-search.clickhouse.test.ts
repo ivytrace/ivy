@@ -2,6 +2,7 @@ import { createClient, type ClickHouseClient } from '@clickhouse/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { setClientsForTests } from '../clickhouse/client.js';
 import { schemaStatements } from '../clickhouse/test-schema.js';
+import { attributeKeys } from './attribute-keys.js';
 import { listInvocations } from './invocations.js';
 
 /**
@@ -57,7 +58,7 @@ describe.skipIf(!url)('invocation search by span attribute in ClickHouse', () =>
     // Two SQS invocations with one child span per record, and the same job ID in another project.
     const rows = [
       span(a.trace, a.span, '', T0, { ...invocation('req-a'), 'messaging.batch.message_count': '2' }),
-      span(a.trace, 'a000000000000001', a.span, T0 + 5, { 'job.id': 'msg-1', 'job.task': 'import', 'job.reason': 'manual retry', 'job.attempt': '3' }),
+      span(a.trace, 'a000000000000001', a.span, T0 + 5, { 'job.id': 'msg-1', 'job.task': 'import', 'job.reason': 'manual retry', 'job.attempt': '3', 'ivy.payload.request': '{}' }),
       span(a.trace, 'a000000000000002', a.span, T0 + 9, { 'job.id': 'msg-2', 'job.task': 'export', 'job.urgent': 'true' }),
       span(b.trace, b.span, '', T0 + 1000, invocation('req-b')),
       span(b.trace, 'b000000000000001', b.span, T0 + 1005, { 'job.id': 'msg-3', 'job.task': 'import' }),
@@ -96,5 +97,20 @@ describe.skipIf(!url)('invocation search by span attribute in ClickHouse', () =>
     expect(await search('job.id=msg-3 job.task=export')).toEqual([]);
     expect(await search('job.task=import req-b')).toEqual(['req-b']);
     expect(await search('job.task=import req-c')).toEqual([]);
+  });
+
+  it('lists the attribute keys in use, most used first, without payload attributes', async () => {
+    const keys = await attributeKeys(scope, range);
+    expect(keys.slice(0, 5)).toEqual([
+      { key: 'job.id', spans: 3 },
+      { key: 'job.task', spans: 3 },
+      { key: 'faas.invocation_id', spans: 2 },
+      { key: 'ivy.invocation', spans: 2 },
+      { key: 'ivy.trigger.source', spans: 2 },
+    ]);
+    expect(keys.map((k) => k.key)).not.toContain('ivy.payload.request');
+    expect((await attributeKeys({ tenant, projectId: null }, range))[0]).toEqual({ key: 'job.id', spans: 4 });
+    // Only the last 24 hours of a longer range are read.
+    expect(await attributeKeys(scope, { from: T0 - 3_600_000, to: T0 + 3 * 86_400_000 })).toEqual([]);
   });
 });

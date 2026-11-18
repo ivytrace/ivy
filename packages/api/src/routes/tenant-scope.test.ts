@@ -44,6 +44,7 @@ const PROJECT_ROUTES = [
   '/invocations',
   '/invocations?function=f&status=error&q=abc&limit=5&cursor=' + Buffer.from(JSON.stringify([1, 'x'])).toString('base64url'),
   '/invocations?q=' + encodeURIComponent('job.id=abc123 job.reason="manual retry" timeout'),
+  '/invocations/attributes?since=7d',
   '/errors?function=f',
   '/stats/timeseries?since=24h',
   '/stats/timeseries?since=1h&bucket=1m&function=f',
@@ -69,7 +70,7 @@ describe('project scoping of data queries', () => {
     }
   });
 
-  it.each(['/invocations', '/invocations?function=f&status=error&q=abc&limit=5', '/invocations?q=job.id%3Dabc', '/stats/timeseries?since=24h', '/stats/timeseries?since=1h&bucket=1m&function=f'])(
+  it.each(['/invocations', '/invocations?function=f&status=error&q=abc&limit=5', '/invocations?q=job.id%3Dabc', '/invocations/attributes', '/stats/timeseries?since=24h', '/stats/timeseries?since=1h&bucket=1m&function=f'])(
     'workspace-wide %s reads all projects of the tenant, explicitly',
     async (route) => {
       const res = await (await appFor(workspace)).request(`/api/w/acme${route}`);
@@ -166,7 +167,7 @@ describe('project scoping of data queries', () => {
     const other = await testWorkspace('Other', 'other');
     await createProject(other.id, { name: 'Secret', slug: 'secret' });
     const app = await appFor(workspace);
-    for (const route of ['/invocations', '/stats/timeseries', '/stats/timeseries?project=secret', '/functions', '/errors']) {
+    for (const route of ['/invocations', '/invocations/attributes', '/stats/timeseries', '/stats/timeseries?project=secret', '/functions', '/errors']) {
       expect((await app.request(`/api/w/other${route}`)).status).toBe(404);
       expect((await app.request(`/api/w/${other.id}${route}`)).status).toBe(404);
     }

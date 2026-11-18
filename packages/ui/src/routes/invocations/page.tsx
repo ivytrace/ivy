@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Search, X } from "lucide-react";
+import { X } from "lucide-react";
 
 import { DataTable } from "@/components/tables/data-table";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
 import { Elapsed, InProgressStatus, rowProgress } from "@/components/common/in-progress";
+import { InvocationSearch } from "@/components/invocations/invocation-search";
 import { LiveBanner, LiveToggle } from "@/components/common/live";
 import { ColdStart, InvocationStatus } from "@/components/common/status";
 import { TimeseriesChart } from "@/components/stats/timeseries-chart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltipped } from "@/components/ui/tooltipped";
 import { useTimeRange } from "@/components/layout/time-range";
@@ -183,13 +183,9 @@ export default function Invocations() {
   const { range, setRange } = useTimeRange();
   const { fn, status, q, group, live, update } = useFilterParams();
   const [cursors, setCursors] = useState<string[]>([]);
-  const [search, setSearch] = useState(q ?? "");
 
   const filterKey = JSON.stringify([range, fn, status, q, group]);
-  useEffect(() => {
-    setCursors([]);
-    setSearch(q ?? "");
-  }, [filterKey, q]);
+  useEffect(() => setCursors([]), [filterKey]);
 
   const cursor = cursors[cursors.length - 1];
   const { data, error, isLoading, isValidating, mutate } = useInvocations(range, {
@@ -273,24 +269,7 @@ export default function Invocations() {
       )}
 
       <div className="flex flex-wrap items-center gap-3 py-4">
-        <form
-          className="relative w-full sm:w-auto"
-          onSubmit={(e) => {
-            e.preventDefault();
-            update({ q: search.trim() || undefined });
-          }}
-        >
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Request/trace ID, error, path, key=value…"
-            title='Matches a request ID, trace ID, error message or HTTP path. key=value matches a span attribute on any span of the invocation, e.g. job.id=abc123 or job.reason="manual retry".'
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onBlur={() => search.trim() !== (q ?? "") && update({ q: search.trim() || undefined })}
-            className="h-8 w-full pl-9 sm:w-80"
-            aria-label="Search invocations"
-          />
-        </form>
+        <InvocationSearch q={q} range={range} onSearch={(next) => update({ q: next })} />
         <Select value={fn ?? ALL} onValueChange={(v) => update({ function: v === ALL ? undefined : v })}>
           <SelectTrigger className="h-8 min-w-0 flex-1 sm:w-56 sm:flex-none" aria-label="Function">
             <SelectValue placeholder="All functions" />

@@ -270,6 +270,14 @@ to `last_seen`, no HTTP, error or memory fields, and `trigger` `unknown`. Client
 In-progress rows come from `invocations_in_progress` (`storage.md`), so counts, charts, error groups and usage never
 include them.
 
+### `GET …/invocations/attributes`
+The span attribute keys in use, for suggesting `key=value` search terms: up to 100, most used first (`spans` is the
+number of spans carrying the key). Takes the time range, of which at most the last 24 hours are read.
+`ivy.payload.*` and `ivy.http.*` (bodies, header maps) are left out: an exact-value match on them is no use.
+```json
+{ "items": [ { "key": "http.response.status_code", "spans": 5120 }, { "key": "job.task", "spans": 840 } ] }
+```
+
 ### `GET …/traces/:traceId`
 All spans of a trace, sorted by start time.
 ```json

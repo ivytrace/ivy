@@ -200,6 +200,12 @@ export interface ListResponse<T> {
   items: T[];
 }
 
+export interface AttributeKey {
+  key: string;
+  /** Spans carrying the attribute. */
+  spans: number;
+}
+
 export interface InvocationsResponse extends ListResponse<Invocation> {
   next_cursor: string | null;
 }

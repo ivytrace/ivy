@@ -118,6 +118,9 @@ live in `docs/implementation/`.
   handler creates per SQS record with `@opentelemetry/api`, has that attribute with exactly that value. Values match
   as text (numbers and booleans too), can be quoted (`job.reason="manual retry"`), several terms must all match, and
   they combine with the free-text search.
+- The search box suggests attribute keys while typing (`http.response.status_code=`, `job.task=`): the keys in use in
+  the project's own spans, most used first, so an app's own attributes show up next to the standard ones. Picking one
+  fills in `key=`, ready for the value.
 
 ## Performance
 - Cold-start overhead of the layer must be minimal: the Lambda extension is a small Rust binary (the one exception

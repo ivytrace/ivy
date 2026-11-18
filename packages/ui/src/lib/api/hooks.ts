@@ -5,6 +5,7 @@ import { buildUrl, fetchJson, rangeParams, type QueryParams } from "./client";
 import type {
   AlertsResponse,
   ApiKey,
+  AttributeKey,
   AwsAccount,
   AwsFunction,
   AwsSetup,
@@ -121,6 +122,12 @@ export interface InvocationFilters {
 export function useInvocations(range: TimeRange, filters: InvocationFilters, options?: SWRConfiguration<InvocationsResponse>) {
   const scope = useScope();
   return useApi<InvocationsResponse>(buildUrl(`${scopePath(scope)}/invocations`, { ...rangeParams(range), ...(filters as QueryParams) }), options);
+}
+
+/** Span attribute keys in use in the current scope, most used first: suggestions for `key=value` search terms. */
+export function useAttributeKeys(range: TimeRange, enabled = true) {
+  const scope = useScope();
+  return useApi<ListResponse<AttributeKey>>(enabled ? buildUrl(`${scopePath(scope)}/invocations/attributes`, rangeParams(range)) : null);
 }
 
 /**
