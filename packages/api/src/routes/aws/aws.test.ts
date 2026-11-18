@@ -416,4 +416,27 @@ describe('AWS account routes', () => {
     await settle(a.id);
     expect(lambda.commandCalls(ListFunctionsCommand).length).toBeGreaterThan(0);
   });
+
+  it('syncs only the function an event names, and ignores failed calls and calls by its own role', async () => {
+    const a = await connected();
+    const stored = (await mem.store.getAccount('default', a.id))!;
+    const post = async (detail: Record<string, unknown>, region = 'eu-west-1') => {
+      const init = { ...json({ account: ACCOUNT_ID, region, detail }), headers: { 'content-type': 'application/json', 'x-ivy-event-secret': stored.event_secret } };
+      const res = await app.request('/api/aws/events', init);
+      await settle(a.id);
+      return (await res.json()) as Record<string, unknown>;
+    };
+    lambda.on(GetFunctionConfigurationCommand).resolves({ FunctionName: 'orders', FunctionArn: fnArn('orders'), Runtime: 'nodejs22.x', RevisionId: 'r2' });
+    lambda.resetHistory();
+
+    expect(await post({ errorCode: 'AccessDenied', requestParameters: { functionName: 'orders' } })).toMatchObject({ ignored: 'failed call' });
+    const own = { userIdentity: { sessionContext: { sessionIssuer: { arn: stored.role_arn } } }, requestParameters: { functionName: 'orders' } };
+    expect(await post(own)).toMatchObject({ ignored: "Ivy's own call" });
+    expect(await post({ requestParameters: { functionName: 'orders' } }, 'us-east-1')).toMatchObject({ ignored: 'region not synced' });
+    expect(lambda.calls()).toHaveLength(0);
+
+    expect(await post({ requestParameters: { functionName: fnArn('orders') }, responseElements: { functionName: 'orders' } })).toMatchObject({ accepted: true });
+    expect(lambda.commandCalls(GetFunctionConfigurationCommand).map((c) => c.args[0].input.FunctionName)).toEqual(['orders']);
+    expect(lambda.commandCalls(ListFunctionsCommand)).toHaveLength(0);
+  });
 });

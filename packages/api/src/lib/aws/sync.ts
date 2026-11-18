@@ -19,6 +19,12 @@ const PROPAGATION_DELAYS_MS = [5_000, 10_000, 15_000];
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
+/** Stacks from before the template granted `lambda:GetLayerVersion` on all layers can't update functions with other layers. */
+const updateFailure = (err: unknown) =>
+  /not authorized to perform: lambda:GetLayerVersion/.test(message(err))
+    ? "Update failed: the role can't read one of this function's other layers (lambda:GetLayerVersion). Update the Ivy stack with the current template."
+    : `Update failed: ${message(err)}`;
+
 export const settingKey = (accountId: string, region: string, name: string) => `${accountId}/${region}/${name}`;
 
 export function accountRegions(account: AwsAccount): string[] {
@@ -85,10 +91,10 @@ export async function processFunction(account: AwsAccount, region: string, fn: L
           plan = decide(fresh, ctx);
           if (plan.update) await applyUpdate(ctx.lambda, fresh, plan.update);
         } catch (retryErr) {
-          plan = { state: 'error', reason: `Update failed: ${message(retryErr)}`, update: null };
+          plan = { state: 'error', reason: updateFailure(retryErr), update: null };
         }
       } else {
-        plan = { state: 'error', reason: `Update failed: ${message(err)}`, update: null };
+        plan = { state: 'error', reason: updateFailure(err), update: null };
       }
     }
   }

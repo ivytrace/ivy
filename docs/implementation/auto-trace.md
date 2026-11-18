@@ -26,8 +26,8 @@ account traces nothing. Code lives in `packages/api/src/lib/aws/` and `packages/
    new one named after the stack), filters by name/stack/tag/region and traces all matches (a rule) or a selection
    (manual choices), and can exclude single functions. `POST …/aws/rules/dry-run` previews what a rule would select.
 6. **Sync: attach.** Each rule change, manual choice or interval sync plans every function (below): `PublishLayerVersion`
-   if needed, `UpdateFunctionConfiguration` for functions that change, one batch of status rows into ClickHouse. Traces
-   arrive after each function's next invocation.
+   if needed, `UpdateFunctionConfiguration` for functions that change, one batch of the status rows that changed into
+   ClickHouse. Traces arrive after each function's next invocation.
 7. **Stay in sync.** A background loop in the API process re-syncs every connected account every
    `IVY_AWS_SYNC_INTERVAL_SECONDS` (default 300). New functions that match an enabled rule are traced on the next sync;
    the others stay `available` and count as "new" in the UI until the user has looked at the list
@@ -108,7 +108,10 @@ No new datastore. `deploy/clickhouse/schema.sql` adds, in the control-plane data
   They are kept apart from `aws_functions` so a sync that read a function before a manual choice can't overwrite the choice.
 - Read-modify-write races (a sync finishing while the user edits regions) are narrowed by re-reading the account right
   before saving sync results; the worst case is a lost `last_sync_at`/`error` update that the next sync rewrites.
-- Volumes are tiny (rows per function, rewritten once per sync interval), well within what ReplacingMergeTree merges away.
+- A sync only writes the function rows that changed (anything but the timestamps; `functionChanged` in `store.ts`),
+  plus deletion rows for functions that are gone. So `updated_at` is when the row last changed, not when it was last
+  checked (`last_sync_at` on the account is that). Rewriting every row on every sync was the largest write load on a
+  busy instance: about 0.5 M rows an hour for a few accounts whose events kept syncs running back to back.
 - The layer version per account/region is not stored: it is found again with `ListLayerVersions` (cached in memory).
 
 ### AWS identity
@@ -133,9 +136,14 @@ Ivy only uses the AWS SDK as a client; nothing of Ivy runs in AWS.
   With `?account=<id>` all defaults are filled in for the download-and-upload path.
 - Role policy (least privilege): `lambda:ListFunctions`, `GetFunction`, `GetFunctionConfiguration`,
   `UpdateFunctionConfiguration`, `ListLayerVersions`, `tag:GetResources` and `cloudwatch:GetMetricData` (throttles, see
-  "Throttles" below; it has no resource-level permissions) on `*`; `PublishLayerVersion` and
-  `GetLayerVersion` only on `arn:…:lambda:*:<acct>:layer:ivy-trace-nodejs[:*]`. Trust: the principal, with an
-  `sts:ExternalId` condition. The role is tagged `ivy:component`.
+  "Throttles" below; it has no resource-level permissions) on `*`; `PublishLayerVersion` only on
+  `arn:…:lambda:*:<acct>:layer:ivy-trace-nodejs[:*]`; `GetLayerVersion` on every layer (`arn:…:lambda:*:*:layer:*:*`).
+  Trust: the principal, with an `sts:ExternalId` condition. The role is tagged `ivy:component`.
+- Why `GetLayerVersion` on every layer: `UpdateFunctionConfiguration` with `Layers` checks it for each layer in the
+  list, so adding Ivy's layer to a function that already has others (its own, or a public one such as a headless
+  browser) needs it on those too. Stacks created before the template granted it can't trace such functions: the
+  function shows `error` with a reason that says to update the stack with the current template. It only reads layer
+  metadata; cross-account layers still need their owner's layer policy to allow it, as they do for the function.
 - One template per connection: every value (trusted principal, external ID, role name, events URL, event secret) is a
   parameter whose default is this connection's value; the event secret is `NoEcho`. So the file can be uploaded as is,
   and a quick-create link needs no `param_…` values, which keeps the external ID and the secret out of URLs.
@@ -171,11 +179,23 @@ Note: the zip is rebuilt per image build and `zip` stores mtimes, so each image 
 - **Optional: EventBridge.** When `IVY_PUBLIC_URL` is an `https://` URL, the template parameters `EventsUrl`
   (`<public url>/api/aws/events`) and `EventSecret` get defaults and the stack also creates an EventBridge connection
   (API key header `x-ivy-event-secret`), an API destination, a role for it and a rule on CloudTrail `CreateFunction*` /
-  `UpdateFunctionConfiguration*` events from `lambda.amazonaws.com`. `POST /api/aws/events` looks the connection up by
-  secret, checks the event's `account`, and syncs that region. Caveats:
+  `UpdateFunctionConfiguration*` events from `lambda.amazonaws.com`, leaving out failed calls (`errorCode` exists) and
+  calls by Ivy's role (`userIdentity.arn` starting with `…:assumed-role/<role name>/`). `POST /api/aws/events` looks
+  the connection up by secret, checks the event's `account`, and syncs the one function the event names
+  (`responseElements.functionName`, else `requestParameters.functionName`, which may be an ARN) with
+  `triggerFunctionSync`; an event without a function name syncs its region. Repeated events for a function that is
+  syncing are merged into one follow-up run, and a function that can't be read (deleted meanwhile) falls back to a
+  sync of its region. Caveats:
   - "AWS API Call via CloudTrail" events need a CloudTrail trail in the account.
   - Rules are regional: only functions in the stack region get immediate events; other regions rely on polling.
-  - Ivy's own `UpdateFunctionConfiguration` calls also fire the rule; the resulting sync is a no-op.
+  - The route also drops failed calls, calls by the connection's role (`sessionIssuer.arn` = `role_arn`) and regions
+    the connection doesn't sync, because stacks created before the pattern filtered them still send them. Before
+    that, a function whose update failed caused a loop: each sync retried the update, CloudTrail recorded the failed
+    call, the event started another sync of the whole region, and so on, once a second (the destination's rate limit).
+  - A call without `userIdentity.arn` (none expected for these API calls) doesn't match the pattern; polling picks the
+    change up.
+  - Syncing per function matters for deploys: a stack update changing 50 functions sends 50 events, which used to be
+    50 syncs of the whole region.
   - The endpoint must stay reachable without user auth once OIDC lands (M3 auth is not built yet).
 
 ### Attach logic (`lib/aws/attach.ts`, pure and unit-tested)

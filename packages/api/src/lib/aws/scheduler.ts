@@ -1,17 +1,30 @@
 import { syncIntervalMs } from './config.js';
 import { awsStore } from './store.js';
-import { syncAccount } from './sync.js';
+import { syncAccount, syncFunction } from './sync.js';
 import type { AwsAccount } from './types.js';
 
 const running = new Map<string, Promise<void>>();
 /** Regions requested while a sync was running; `null` means all regions. */
 const queued = new Map<string, Set<string> | null>();
+/** Single-function syncs, keyed `<account key>/<region>/<name>`. */
+const runningFunctions = new Map<string, Promise<void>>();
+const queuedFunctions = new Set<string>();
 
 const keyOf = (a: Pick<AwsAccount, 'tenant_id' | 'id'>) => `${a.tenant_id}/${a.id}`;
 
 export const isSyncing = (account: AwsAccount) => running.has(keyOf(account));
 
-export const syncInProgress = (account: AwsAccount) => running.get(keyOf(account)) ?? Promise.resolve();
+/** Resolves once no account or function sync of this account is running (including follow-up runs). */
+export async function syncInProgress(account: AwsAccount): Promise<void> {
+  const key = keyOf(account);
+  for (;;) {
+    const pending = [...runningFunctions].filter(([k]) => k.startsWith(`${key}/`)).map(([, run]) => run);
+    const whole = running.get(key);
+    if (whole) pending.push(whole);
+    if (!pending.length) return;
+    await Promise.all(pending);
+  }
+}
 
 /**
  * Starts a sync unless one is already running for this account in this process; requests that
@@ -37,6 +50,33 @@ export function triggerSync(account: AwsAccount, regions?: string[]): Promise<vo
       if (latest && latest.status !== 'pending') void triggerSync(latest, next ? [...next] : undefined);
     });
   running.set(key, run);
+  return run;
+}
+
+/**
+ * Syncs one function (from an EventBridge event). Like `triggerSync`, a request that arrives while the same
+ * function is syncing runs once afterwards. Falls back to a sync of the region when the function can't be read
+ * (e.g. it was deleted).
+ */
+export function triggerFunctionSync(account: AwsAccount, region: string, name: string): Promise<void> {
+  const key = `${keyOf(account)}/${region}/${name}`;
+  const current = runningFunctions.get(key);
+  if (current) {
+    queuedFunctions.add(key);
+    return current;
+  }
+
+  const run = syncFunction(account, region, name)
+    .then(() => undefined)
+    .catch((err) => {
+      console.warn(`aws sync ${key} failed, syncing the region`, err);
+      return triggerSync(account, [region]);
+    })
+    .finally(() => {
+      runningFunctions.delete(key);
+      if (queuedFunctions.delete(key)) void triggerFunctionSync(account, region, name);
+    });
+  runningFunctions.set(key, run);
   return run;
 }
 

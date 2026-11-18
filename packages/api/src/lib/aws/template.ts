@@ -94,8 +94,15 @@ export function buildTemplate(params: TemplateParams): Record<string, unknown> {
                   {
                     Sid: 'IvyLayer',
                     Effect: 'Allow',
-                    Action: ['lambda:PublishLayerVersion', 'lambda:GetLayerVersion'],
+                    Action: ['lambda:PublishLayerVersion'],
                     Resource: [sub(layerArn), sub(`${layerArn}:*`)],
+                  },
+                  {
+                    // UpdateFunctionConfiguration needs it on every layer in the function's list, not only Ivy's.
+                    Sid: 'Layers',
+                    Effect: 'Allow',
+                    Action: ['lambda:GetLayerVersion'],
+                    Resource: sub('arn:${AWS::Partition}:lambda:*:*:layer:*:*'),
                   },
                   {
                     // Lambda throttles (AWS/Lambda Throttles); GetMetricData has no resource-level permissions.
@@ -163,6 +170,10 @@ export function buildTemplate(params: TemplateParams): Record<string, unknown> {
             detail: {
               eventSource: ['lambda.amazonaws.com'],
               eventName: [{ prefix: 'CreateFunction' }, { prefix: 'UpdateFunctionConfiguration' }],
+              errorCode: [{ exists: false }],
+              userIdentity: {
+                arn: [{ 'anything-but': { prefix: sub('arn:${AWS::Partition}:sts::${AWS::AccountId}:assumed-role/${IvyTraceRole}/') } }],
+              },
             },
           },
           Targets: [

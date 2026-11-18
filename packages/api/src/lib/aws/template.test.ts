@@ -51,9 +51,14 @@ describe('CloudFormation template', () => {
     for (const name of ['EventsConnection', 'EventsDestination', 'EventsRole', 'FunctionChangesRule']) {
       expect(doc.Resources[name].Condition).toBe('EventsEnabled');
     }
-    expect(doc.Resources.FunctionChangesRule.Properties.EventPattern.detail.eventName).toEqual([
-      { prefix: 'CreateFunction' },
-      { prefix: 'UpdateFunctionConfiguration' },
+    const statements = role.Policies[0].PolicyDocument.Statement;
+    expect(statements.find((s: { Sid: string }) => s.Sid === 'Layers').Resource).toEqual({ 'Fn::Sub': 'arn:${AWS::Partition}:lambda:*:*:layer:*:*' });
+
+    const pattern = doc.Resources.FunctionChangesRule.Properties.EventPattern.detail;
+    expect(pattern.eventName).toEqual([{ prefix: 'CreateFunction' }, { prefix: 'UpdateFunctionConfiguration' }]);
+    expect(pattern.errorCode).toEqual([{ exists: false }]);
+    expect(pattern.userIdentity.arn).toEqual([
+      { 'anything-but': { prefix: { 'Fn::Sub': 'arn:${AWS::Partition}:sts::${AWS::AccountId}:assumed-role/${IvyTraceRole}/' } } },
     ]);
   });
 

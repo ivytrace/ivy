@@ -66,6 +66,9 @@ live in `docs/implementation/`.
   `ivy:trace=false` still wins over force. If the other tracer sets its wrapper back (e.g. its own auto-trace
   integration), Ivy doesn't fight it: it removes its layer, shows a distinct "set back" conflict, and only forces
   again when the user asks.
+- **Functions with other layers.** The connection's role may read any Lambda layer (`lambda:GetLayerVersion` on all
+  layers), so Ivy can add its layer to functions that already use other layers. Without it AWS rejects the update
+  and those functions can't be traced.
 - The CloudFormation quick-create link must not carry secrets. A deployment can publish each connection's template
   through a hook; without that hook Ivy offers a template download.
 

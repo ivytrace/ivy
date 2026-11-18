@@ -12,8 +12,8 @@ export interface AwsStore {
   findAccountByEventSecret(secret: string): Promise<AwsAccount | null>;
   listFunctions(tenant: string, accountId?: string): Promise<FunctionStatus[]>;
   /**
-   * Upserts `rows` (keeping each known function's `first_seen_at`) and marks functions of that
-   * account/region that are not in `rows` as deleted.
+   * Upserts the rows of `rows` that changed (keeping each known function's `first_seen_at`) and marks
+   * functions of that account/region that are not in `rows` as deleted.
    */
   replaceRegionFunctions(tenant: string, accountId: string, region: string, rows: FunctionStatus[]): Promise<void>;
   saveFunction(row: FunctionStatus): Promise<void>;
@@ -70,6 +70,15 @@ const accountRow = (a: AwsAccount, deleted = 0) => ({
   deleted,
 });
 
+const sortedTags = (tags: Record<string, string>) => JSON.stringify(Object.entries(tags ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+
+/** Whether storing `next` over `prev` would change anything a reader sees (everything but the timestamps). */
+export function functionChanged(prev: FunctionStatus | undefined, next: FunctionStatus): boolean {
+  if (!prev) return true;
+  const fields = ['function_arn', 'runtime', 'state', 'reason', 'project_id', 'project_source', 'rule_id', 'conflict', 'wrapper', 'stack', 'last_modified'] as const;
+  return fields.some((f) => prev[f] !== next[f]) || sortedTags(prev.tags) !== sortedTags(next.tags);
+}
+
 const functionRow = (f: FunctionStatus, deleted = 0) => ({ ...f, first_seen_at: iso(f.first_seen_at), updated_at: version(), deleted });
 
 const ruleRow = (r: ProjectRule, deleted = 0) => ({ ...r, created_at: iso(r.created_at), updated_at: version(), deleted });
@@ -125,22 +134,25 @@ export const clickhouseStore: AwsStore = {
        WHERE tenant_id = {tenant:String} AND account_id = {accountId:String} AND region = {region:String} AND NOT deleted`,
       { accountId, region },
     );
-    const seen = new Map(existing.map((r) => [r.function_name, r.first_seen_at]));
+    const byName = new Map(existing.map((r) => [r.function_name, r]));
     const keep = new Set(rows.map((r) => r.function_name));
+    const changed = rows.filter((r) => functionChanged(byName.get(r.function_name), r));
     const gone = existing.filter((r) => !keep.has(r.function_name));
+    if (!changed.length && !gone.length) return;
     await insert('aws_functions', [
-      ...rows.map((r) => functionRow({ ...r, first_seen_at: seen.get(r.function_name) ?? r.first_seen_at })),
+      ...changed.map((r) => functionRow({ ...r, first_seen_at: byName.get(r.function_name)?.first_seen_at ?? r.first_seen_at })),
       ...gone.map((r) => functionRow(r, 1)),
     ]);
   },
 
   async saveFunction(row) {
-    const [existing] = await scoped<{ first_seen_at: number }>(
+    const [existing] = await scoped<FunctionStatus>(
       row.tenant_id,
-      `SELECT toUnixTimestamp64Milli(first_seen_at) AS first_seen_at FROM aws_functions FINAL
+      `SELECT ${FUNCTION_COLUMNS} FROM aws_functions FINAL
        WHERE tenant_id = {tenant:String} AND account_id = {a:String} AND region = {r:String} AND function_name = {f:String} AND NOT deleted`,
       { a: row.account_id, r: row.region, f: row.function_name },
     );
+    if (!functionChanged(existing, row)) return;
     await insert('aws_functions', [functionRow({ ...row, first_seen_at: existing?.first_seen_at ?? row.first_seen_at })]);
   },
 

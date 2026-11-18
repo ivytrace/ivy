@@ -192,6 +192,34 @@ describe('syncAccount', () => {
     expect(lambda.commandCalls(UpdateFunctionConfigurationCommand)).toHaveLength(0);
   });
 
+  it('only stores rows that changed', async () => {
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [config('done', { Layers: [{ Arn: LAYER_V2 }], Environment: { Variables: IVY_ENV } }), config('py', { Runtime: 'python3.12' })] });
+    await syncAccount(account);
+    const before = Object.fromEntries((await mem.store.listFunctions('default')).map((f) => [f.function_name, f.updated_at]));
+    await new Promise((r) => setTimeout(r, 5));
+
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [config('done', { Layers: [{ Arn: LAYER_V2 }], Environment: { Variables: IVY_ENV } }), config('py', { Runtime: 'python3.13' })] });
+    await syncAccount(account);
+    const after = Object.fromEntries((await mem.store.listFunctions('default')).map((f) => [f.function_name, f.updated_at]));
+    expect(after.done).toBe(before.done);
+    expect(after.py).toBeGreaterThan(before.py);
+  });
+
+  it('tells the user to update the stack when another layer of the function is unreadable', async () => {
+    lambda.on(ListFunctionsCommand).resolves({ Functions: [config('pdf', { Layers: [{ Arn: 'arn:aws:lambda:eu-west-1:111111111111:layer:chromium:3' }] })] });
+    lambda
+      .on(UpdateFunctionConfigurationCommand)
+      .rejects(
+        Object.assign(new Error(`User: x is not authorized to perform: lambda:GetLayerVersion on resource: arn:aws:lambda:eu-west-1:111111111111:layer:chromium:3`), {
+          name: 'AccessDeniedException',
+        }),
+      );
+    await syncAccount(account);
+    const [row] = await mem.store.listFunctions('default');
+    expect(row.state).toBe('error');
+    expect(row.reason).toMatch(/Update the Ivy stack with the current template/);
+  });
+
   it('replans against the new revision when the function changed meanwhile', async () => {
     lambda.on(ListFunctionsCommand).resolves({ Functions: [config('a')] });
     lambda

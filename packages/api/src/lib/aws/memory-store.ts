@@ -1,4 +1,4 @@
-import type { AwsStore } from './store.js';
+import { functionChanged, type AwsStore } from './store.js';
 import type { AwsAccount, FunctionSetting, FunctionStatus, ProjectRule } from './types.js';
 
 /** In-memory AwsStore with the same semantics as the ClickHouse one. Used by tests. */
@@ -36,17 +36,15 @@ export function memoryStore() {
       return [...functions.values()].filter((f) => f.tenant_id === tenant && (!accountId || f.account_id === accountId)).map(copy);
     },
     async replaceRegionFunctions(tenant, accountId, region, rows) {
-      const seen = new Map<string, number>();
+      const keep = new Set(rows.map((r) => r.function_name));
       for (const [k, f] of functions) {
-        if (f.tenant_id === tenant && f.account_id === accountId && f.region === region) {
-          seen.set(f.function_name, f.first_seen_at);
-          functions.delete(k);
-        }
+        if (f.tenant_id === tenant && f.account_id === accountId && f.region === region && !keep.has(f.function_name)) functions.delete(k);
       }
-      for (const r of rows) functions.set(fnKey(r), copy({ ...r, first_seen_at: seen.get(r.function_name) ?? r.first_seen_at }));
+      for (const r of rows) await store.saveFunction(r);
     },
     async saveFunction(row) {
       const existing = functions.get(fnKey(row));
+      if (!functionChanged(existing, row)) return;
       functions.set(fnKey(row), copy({ ...row, first_seen_at: existing?.first_seen_at ?? row.first_seen_at }));
     },
     async deleteAccountFunctions(tenant, accountId) {
