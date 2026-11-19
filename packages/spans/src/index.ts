@@ -12,3 +12,4 @@ export * from "./repair-json.js";
 export * from "./custom-attributes.js";
 export * from "./query.js";
 export * from "./structured-log.js";
+export * from "./cost.js";

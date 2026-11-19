@@ -121,6 +121,9 @@ live in `docs/implementation/`.
 - The search box suggests attribute keys while typing (`http.response.status_code=`, `job.task=`): the keys in use in
   the project's own spans, most used first, so an app's own attributes show up next to the standard ones. Picking one
   fills in `key=`, ready for the value.
+- Hovering the billed duration on a trace estimates what the invocation cost: configured memory × billed duration at
+  AWS's list price for the function's architecture (x86_64 or arm64), plus the request, and the same per million
+  invocations. It is a rough figure: no free tier, Savings Plans, regional price differences or extra ephemeral storage.
 
 ## Performance
 - Cold-start overhead of the layer must be minimal: the Lambda extension is a small Rust binary (the one exception

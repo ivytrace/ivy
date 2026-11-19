@@ -4,7 +4,7 @@ import { ExternalLink, ScrollText } from "lucide-react";
 
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/states";
 import { Elapsed, InProgressNote, InProgressStatus, spanProgress } from "@/components/common/in-progress";
-import { ColdStart, InvocationStatus, MemoryUsage } from "@/components/common/status";
+import { BilledDuration, ColdStart, InvocationStatus, MemoryUsage } from "@/components/common/status";
 import { PayloadPreview } from "@/components/stats/payload-preview";
 import { ErrorBlock } from "@/components/trace/error-block";
 import { FailureNote } from "@/components/trace/failure-note";
@@ -103,7 +103,9 @@ function Summary({ invocation, traceId, usage }: { invocation: Span; traceId: st
         {res.billedDurationMs !== null && (
           <>
             <dt className="hidden md:block">Billed</dt>
-            <dd className="mr-4 hidden font-semibold text-foreground md:block">{formatDuration(res.billedDurationMs)}</dd>
+            <dd className="mr-4 hidden font-semibold text-foreground md:block">
+              <BilledDuration invocation={invocation} billedMs={res.billedDurationMs} />
+            </dd>
           </>
         )}
         {res.initDurationMs !== null && (

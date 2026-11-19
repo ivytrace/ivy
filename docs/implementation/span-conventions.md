@@ -23,6 +23,7 @@ work, lookups are just slower.
 | `faas.name` | function name |
 | `faas.version` | `$LATEST` |
 | `faas.max_memory` | memory limit in bytes |
+| `host.arch` | `amd64` or `arm64` (the function's architecture; prices the cost estimate) |
 | `telemetry.sdk.name` | `ivy-layer` |
 
 ### Set by the server, not by producers

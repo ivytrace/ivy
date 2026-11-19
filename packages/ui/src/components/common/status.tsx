@@ -1,7 +1,9 @@
 import { CheckCircle2, CircleX, Hourglass, MemoryStick, PowerOff, SnowflakeIcon, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltipped } from "@/components/ui/tooltipped";
-import { failureLabel, type FailureKind } from "@/lib/spans/services";
+import { failureLabel, formatUsd, invocationCost, type FailureKind } from "@/lib/spans/services";
+import type { Span } from "@/lib/spans/types";
+import { formatDuration } from "@/lib/utils/format";
 
 export function HttpStatusBadge({ status }: { status: number | string }) {
   const s = String(status);
@@ -78,6 +80,28 @@ export function ColdStart() {
 }
 
 /** Memory used against the limit, e.g. `84 / 128 MB`, red when the limit was reached. */
+/** Billed duration, with an estimate of what the invocation cost on hover. */
+export function BilledDuration({ invocation, billedMs }: { invocation: Span; billedMs: number }) {
+  const cost = invocationCost(invocation);
+  if (!cost) return <>{formatDuration(billedMs)}</>;
+  return (
+    <Tooltipped
+      title={
+        <div className="max-w-64 space-y-1">
+          <div className="font-semibold">≈ {formatUsd(cost.usd)} per invocation</div>
+          <div className="text-muted-foreground">
+            {cost.memoryMb} MB × {formatDuration(cost.billedMs)} on {cost.arch}
+            {cost.archKnown ? "" : " (assumed)"}, plus the request. {formatUsd(cost.usd * 1_000_000)} per million like this.
+          </div>
+          <div className="text-muted-foreground">AWS list price, before free tier and Savings Plans.</div>
+        </div>
+      }
+    >
+      <span className="cursor-help underline decoration-muted-foreground/50 decoration-dotted underline-offset-4">{formatDuration(billedMs)}</span>
+    </Tooltipped>
+  );
+}
+
 export function MemoryUsage({ used, limit }: { used: number; limit: number | null }) {
   const full = limit !== null && used >= limit;
   return (

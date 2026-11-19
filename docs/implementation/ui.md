@@ -168,7 +168,10 @@ Paths below are relative to `/w/:workspace/:project`.
   links. Failures outside the handler get a `FailureBadge` ("Init failed", "Out of memory", "Timed out", "Crashed")
   here, in the invocation list and on the errors page; when the extension had to create the invocation span itself
   (init failure, crash), a note under the header says there is no (complete) trace and that the Logs tab holds the
-  log tail. The MCP App views' header uses the same components (`InvocationStatus`, `MemoryUsage`, `FailureNote`). The service graph is on the left, with tabs on the right: Overview (error +
+  log tail. The MCP App views' header uses the same components (`InvocationStatus`, `BilledDuration`, `MemoryUsage`, `FailureNote`).
+  `BilledDuration` shows a cost estimate on hover (`invocationCost` in `@ivy/spans`): memory limit in GB × billed
+  seconds × the GB-second rate for `host.arch` (x86_64 assumed when a trace predates that attribute), plus the
+  per-request fee. The rates are us-east-1 list prices hard-coded in `cost.ts`; update them there if AWS changes them. The service graph is on the left, with tabs on the right: Overview (error +
   stack, invocation fields, the app's own attributes, event payload, return value), Timeline (waterfall, where expanding a row shows its
   service-specific details and payloads) and Logs (`log` events; JSON logger lines as message plus fields, see
   `span-conventions.md`, "Logs"). When a trace contains several invocations,

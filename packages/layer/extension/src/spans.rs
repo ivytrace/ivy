@@ -258,6 +258,7 @@ pub fn env_resource(env: &dyn Fn(&str) -> Option<String>, account_id: Option<&st
         kv("cloud.platform", Attr::Str("aws_lambda".into())),
         kv("faas.name", Attr::Str(name)),
         kv("telemetry.sdk.name", Attr::Str("ivy-layer".into())),
+        kv("host.arch", Attr::Str(host_arch().into())),
     ];
     if let Some(region) = env("AWS_REGION").or_else(|| env("AWS_DEFAULT_REGION")) {
         attrs.push(kv("cloud.region", Attr::Str(region)));
@@ -272,6 +273,15 @@ pub fn env_resource(env: &dyn Fn(&str) -> Option<String>, account_id: Option<&st
         attrs.push(kv("faas.max_memory", Attr::Int(mb * 1024 * 1024)));
     }
     Value::Array(attrs)
+}
+
+/// OpenTelemetry `host.arch` values, matching the tracer's.
+fn host_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        other => other,
+    }
 }
 
 pub fn function_name(resource: &Value) -> Option<String> {

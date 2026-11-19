@@ -4,7 +4,7 @@ import { useApp } from "@modelcontextprotocol/ext-apps/react";
 import { Maximize2, Minimize2 } from "lucide-react";
 
 import { Elapsed, InProgressNote, InProgressStatus, spanProgress } from "@/components/common/in-progress";
-import { ColdStart, InvocationStatus, MemoryUsage } from "@/components/common/status";
+import { BilledDuration, ColdStart, InvocationStatus, MemoryUsage } from "@/components/common/status";
 import { ErrorBlock } from "@/components/trace/error-block";
 import { FailureNote } from "@/components/trace/failure-note";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -103,7 +103,11 @@ function Header({ data, invocation, actions }: { data: ViewData; invocation: Spa
             {progress ? <Elapsed progress={progress} /> : formatDuration(invocation.duration_ms)}
             {a["faas.coldstart"] === "true" && <ColdStart />}
           </span>
-          {res.billedDurationMs !== null && <span>billed {formatDuration(res.billedDurationMs)}</span>}
+          {res.billedDurationMs !== null && (
+            <span>
+              billed <BilledDuration invocation={invocation} billedMs={res.billedDurationMs} />
+            </span>
+          )}
           {res.initDurationMs !== null && <span>init {formatDuration(res.initDurationMs)}</span>}
           {res.memoryUsedMb !== null && <MemoryUsage used={res.memoryUsedMb} limit={res.memoryLimitMb} />}
         </div>

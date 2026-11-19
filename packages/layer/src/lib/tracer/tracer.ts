@@ -297,6 +297,7 @@ export class Tracer {
       'telemetry.sdk.name': 'ivy-layer',
       'telemetry.sdk.language': 'nodejs',
       'process.runtime.version': process.versions.node,
+      'host.arch': process.arch === 'x64' ? 'amd64' : process.arch,
     };
     const region = env.AWS_REGION ?? env.AWS_DEFAULT_REGION;
     if (region) attrs['cloud.region'] = region;
