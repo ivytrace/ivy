@@ -274,6 +274,14 @@ lives here.
 | Secrets Manager | `rpc.service=SecretsManager` | method · `SecretId` | secret |
 | Other AWS | `rpc.system=aws-api` | `rpc.service` icon "aws" · method | |
 | HTTP | CLIENT span with `http.request.method` or `url.full` | method · `url.full` – status | URL, host (`server.address`), port, status. Request/response headers come from `ivy.http.*.headers`. Known hosts (Slack, Shopify, Chargebee, Todoist, CloudFront, legacy S3/SES/EventBridge hostnames) get their own icon |
+| Anything else (app-defined spans) | none of the above | `name`, icon "custom" (a white wrench on a transparent background, so CSS sets its colour) | |
+
+**Scope tints.** App-defined spans are tinted by `otel.scope.name` (set by the layer's OTel bridge to the tracer
+name): `scopeTint` hashes the scope (FNV-1a) into `SCOPE_TINTS` (teal, blue, indigo, lime), so `worker`, `job` and
+`agent` look different and keep their colour everywhere. Spans without a scope stay grey. The palette deliberately
+leaves out every colour already used for a service icon or waterfall bar, plus the near neighbours of state colours
+(cyan next to sky = external/in progress, yellow next to amber = stalled, emerald next to green = S3). `tint` is on
+`SpanDescription` and `GraphNode`; `src/lib/spans/tint.ts` maps it to the icon background and bar classes.
 
 **Collapsed calls and omitted spans** (`collapsed.ts` in `@ivy/spans`; attributes in `span-conventions.md`). A
 summary span (`ivy.collapsed.count`, named e.g. `DynamoDB.PutItem × 1,184`) is described like the calls it stands for:

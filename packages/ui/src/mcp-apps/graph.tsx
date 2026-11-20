@@ -25,7 +25,7 @@ function SpanRow({ span, open, onToggle }: { span: Span; open: boolean; onToggle
         className={cn("flex w-full items-center gap-2 px-4 py-2 text-left text-sm hover:bg-muted/40", open && "bg-muted/30")}
       >
         <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
-        <ServiceIcon icon={d.icon} label={d.serviceLabel} />
+        <ServiceIcon icon={d.icon} tint={d.tint} label={d.serviceLabel} />
         <span className={cn("min-w-0 flex-1 truncate", d.isError && "text-red-400")}>
           <SpanTitle description={d} />
         </span>
@@ -54,7 +54,7 @@ function NodePanel({ node, spans, onClose }: { node: GraphNode; spans: Span[]; o
     <div className="border-t">
       <div className="flex items-center justify-between gap-2 px-4 py-2">
         <div className="flex min-w-0 items-center gap-2 text-sm">
-          <ServiceIcon icon={node.icon} label={node.label} />
+          <ServiceIcon icon={node.icon} tint={node.tint} label={node.label} />
           <span className="truncate font-medium">{node.label}</span>
           <span className="shrink-0 text-xs text-muted-foreground">
             {node.isTrigger ? "trigger" : `${spans.length} span${spans.length === 1 ? "" : "s"}`}

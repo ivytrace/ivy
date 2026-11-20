@@ -14,6 +14,7 @@ import {
 
 import { buildServiceGraph, type GraphNode } from "@/lib/spans/graph";
 import { serviceIconUrl } from "@/lib/spans/icon-url";
+import { TINT_CLASSES } from "@/lib/spans/tint";
 import type { Span } from "@/lib/spans/types";
 import { cn } from "@/lib/utils/cn";
 
@@ -26,6 +27,7 @@ function ServiceNode({ data }: NodeProps<FlowNode>) {
     <div
       className={cn(
         "relative size-10 cursor-pointer rounded-full bg-zinc-500 bg-cover bg-center ring-offset-2 ring-offset-background",
+        data.tint && TINT_CLASSES[data.tint].icon,
         data.isError && "ring-2 ring-red-400",
       )}
       style={{ backgroundImage: `url("${serviceIconUrl(data.icon, "large")}")` }}

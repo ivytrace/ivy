@@ -124,6 +124,10 @@ live in `docs/implementation/`.
 - Hovering the billed duration on a trace estimates what the invocation cost: configured memory × billed duration at
   AWS's list price for the function's architecture (x86_64 or arm64), plus the request, and the same per million
   invocations. It is a rough figure: no free tier, Savings Plans, regional price differences or extra ephemeral storage.
+- Spans an app creates itself (not AWS, HTTP or LLM calls) get a wrench icon, not the Lambda logo, so they don't
+  read as another function. Their icon and waterfall bar are coloured by the span's instrumentation scope
+  (`otel.scope.name`), so e.g. `worker`, `job` and `agent` spans look different; the colours never reuse one that
+  already means a service or a state. Spans without a scope are grey.
 
 ## Performance
 - Cold-start overhead of the layer must be minimal: the Lambda extension is a small Rust binary (the one exception

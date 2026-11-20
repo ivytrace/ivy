@@ -7,6 +7,7 @@ import { SpanDetails } from "@/components/trace/span-details";
 import { CollapsedBadge, SpanTitle } from "@/components/trace/span-title";
 import { describeSpan, inProgressState, type ServiceIcon as Icon } from "@/lib/spans/services";
 import type { WaterfallRow } from "@/lib/spans/tree";
+import { TINT_CLASSES } from "@/lib/spans/tint";
 import { cn } from "@/lib/utils/cn";
 import { formatDuration } from "@/lib/utils/format";
 
@@ -75,7 +76,13 @@ export function Waterfall({
           const open = openIds.has(row.span.span_id);
           const progress = spanProgress(row.span);
           const stalled = progress && inProgressState(progress.deadlineMs, now) === "no_completion";
-          const color = d.isError ? "bg-red-400" : stalled ? "bg-amber-400" : progress ? "bg-sky-400" : (BAR_COLORS[d.icon] ?? "bg-zinc-400");
+          const color = d.isError
+            ? "bg-red-400"
+            : stalled
+              ? "bg-amber-400"
+              : progress
+                ? "bg-sky-400"
+                : ((d.tint && TINT_CLASSES[d.tint].bar) ?? BAR_COLORS[d.icon] ?? "bg-zinc-400");
           return (
             <div key={row.span.span_id} id={`span-${row.span.span_id}`} className="transition-colors">
               <button
@@ -91,7 +98,7 @@ export function Waterfall({
                   <ChevronRight
                     className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
                   />
-                  <ServiceIcon icon={d.icon} label={d.serviceLabel} />
+                  <ServiceIcon icon={d.icon} tint={d.tint} label={d.serviceLabel} />
                   <span className={cn("min-w-0 flex-1 truncate", d.isError && "text-red-400")}>
                     <SpanTitle description={d} stackNote badge={false} />
                   </span>

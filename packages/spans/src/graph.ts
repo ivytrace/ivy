@@ -1,10 +1,11 @@
-import { describeSpan, isInvocationSpan, triggerIcon, triggerLabel, type ServiceIcon } from "./services.js";
+import { describeSpan, isInvocationSpan, triggerIcon, triggerLabel, type ScopeTint, type ServiceIcon } from "./services.js";
 import type { Span } from "./types.js";
 
 export type GraphNode = {
   id: string;
   label: string;
   icon: ServiceIcon;
+  tint?: ScopeTint;
   spanIds: string[];
   instances: number;
   isTrigger: boolean;
@@ -58,6 +59,7 @@ export function buildServiceGraph(spans: Span[]): { nodes: GraphNode[]; edges: G
         id,
         label: d.graphLabel,
         icon: d.isInvocation ? "lambda" : d.icon,
+        tint: d.tint,
         spanIds: [span.span_id],
         instances: d.collapsed?.count ?? 1,
         isTrigger: false,

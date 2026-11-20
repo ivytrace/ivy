@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeSpan, getException, getLogs, parsePayload, parseStringArray } from "./services.js";
+import { describeSpan, getException, getLogs, parsePayload, parseStringArray, SCOPE_TINTS } from "./services.js";
 import type { Span } from "./types.js";
 
 const span = (overrides: Partial<Span> & { attributes?: Record<string, string> }): Span => ({
@@ -238,6 +238,17 @@ describe("describeSpan", () => {
     const c = describeSpan(span({ attributes: aws("DynamoDB", "GetItem", { "aws.dynamodb.table_names": '["u"]' }) }));
     expect(a.groupingKey).toBe(b.groupingKey);
     expect(a.groupingKey).not.toBe(c.groupingKey);
+  });
+
+  it("gives app-defined spans the custom icon, tinted by their scope", () => {
+    const tintOf = (scope?: string) =>
+      describeSpan(span({ kind: "INTERNAL", name: "step", attributes: scope ? { "otel.scope.name": scope } : {} }));
+    expect(tintOf().icon).toBe("custom");
+    expect(tintOf().tint).toBeUndefined();
+    expect(tintOf("agent").tint).toBe(tintOf("agent").tint);
+    const tints = ["worker", "job", "agent"].map((s) => tintOf(s).tint);
+    expect(new Set(tints).size).toBe(3);
+    expect(tints.every((t) => SCOPE_TINTS.includes(t!))).toBe(true);
   });
 
   it("describes the invocation span", () => {

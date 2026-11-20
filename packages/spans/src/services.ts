@@ -10,6 +10,7 @@ export type ServiceIcon =
   | "apigw"
   | "chargebee"
   | "cloudfront"
+  | "custom"
   | "cloudwatch"
   | "dynamodb"
   | "eventBridge"
@@ -31,8 +32,22 @@ export interface SpanField {
   value: string;
 }
 
+/** Colours for app-defined spans, picked per `otel.scope.name`; none is used by a service icon or bar. */
+export const SCOPE_TINTS = ["teal", "blue", "indigo", "lime"] as const;
+export type ScopeTint = (typeof SCOPE_TINTS)[number];
+
+/** FNV-1a, so a scope keeps its colour across traces and views. */
+export function scopeTint(scope: string | undefined): ScopeTint | undefined {
+  if (!scope) return undefined;
+  let hash = 0x811c9dc5;
+  for (const char of scope) hash = Math.imul(hash ^ char.codePointAt(0)!, 0x01000193) >>> 0;
+  return SCOPE_TINTS[hash % SCOPE_TINTS.length];
+}
+
 export interface SpanDescription {
   icon: ServiceIcon;
+  /** App-defined spans only: colour of the `custom` icon and bar, from the instrumentation scope. */
+  tint?: ScopeTint;
   serviceLabel: string;
   operation: string;
   target?: string;
@@ -554,7 +569,8 @@ export function describeSpan(original: Span): SpanDescription {
       : isHttpSpan(span)
         ? describeHttp(span)
         : {
-            icon: "function" as ServiceIcon,
+            icon: "custom" as ServiceIcon,
+            tint: scopeTint(a["otel.scope.name"]),
             serviceLabel: span.kind === "INTERNAL" ? "Internal" : span.kind,
             operation: span.name,
             target: undefined,
