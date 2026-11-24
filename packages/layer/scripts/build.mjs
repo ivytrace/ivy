@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,21 +31,9 @@ await build({ ...common, target: 'node24', entryPoints: [join(root, 'src/web.ts'
 copyFileSync(join(opt, 'nodejs/ivy/worker.cjs'), join(web, 'worker.cjs'));
 copyFileSync(join(root, 'web/README.md'), join(web, 'README.md'));
 copyFileSync(join(root, '../../LICENSE'), join(web, 'LICENSE'));
-const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-const webPackage = {
-  name: '@ivytrace/lambda-web',
-  version,
-  description: 'Ivy tracing for AWS Lambda Web Functions',
-  type: 'module',
-  exports: { '.': './index.mjs' },
-  files: ['index.mjs', 'worker.cjs', 'README.md'],
-  engines: { node: '>=24' },
-  license: 'MIT',
-  homepage: 'https://ivytrace.dev',
-  repository: { type: 'git', url: 'git+https://github.com/ivytrace/ivy.git', directory: 'packages/layer/web' },
-  keywords: ['aws', 'lambda', 'web-functions', 'tracing', 'opentelemetry'],
-};
-writeFileSync(join(web, 'package.json'), JSON.stringify(webPackage, null, 2) + '\n');
+copyFileSync(join(root, 'web/package.json'), join(web, 'package.json'));
+// `--web-only` (the npm release job) skips the layer's extension and zip.
+if (process.argv.includes('--web-only')) process.exit(0);
 
 copyFileSync(join(root, 'layer/ivy-wrapper'), join(opt, 'ivy-wrapper'));
 copyFileSync(join(root, 'layer/ivy-extension'), join(opt, 'extensions/ivy-extension'));

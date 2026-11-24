@@ -5,7 +5,7 @@
 | workflow | trigger | does |
 |---|---|---|
 | `ci.yml` | pull requests, pushes to branches other than `main`, and called by `release.yml` | `pnpm install --frozen-lockfile`, `pnpm -r typecheck`, `pnpm -r test` |
-| `release.yml` | push to `main` in `ivytrace/ivy` only | CI, then builds `packages/api/Dockerfile` for `linux/amd64` + `linux/arm64` and pushes `ghcr.io/ivytrace/ivy-api:<sha>` and `:main`, then, optionally, triggers a downstream deploy (see below) |
+| `release.yml` | push to `main` in `ivytrace/ivy` only | CI, then publishes `@ivytrace/lambda-web` to npm when its version is new (see below), builds `packages/api/Dockerfile` for `linux/amd64` + `linux/arm64` and pushes `ghcr.io/ivytrace/ivy-api:<sha>` and `:main`, then, optionally, triggers a downstream deploy (see below) |
 
 - The image is the same one self-hosters can run (`image: ghcr.io/ivytrace/ivy-api:main` instead of `build:` in
   `deploy/docker-compose.yml`). It contains the API and the dashboard build.
@@ -22,6 +22,21 @@
   repos) and is pushed by digest; the `image` job then joins both digests into the multi-arch `:<sha>` and `:main`
   tags. This replaced a QEMU build whose emulated arm64 half took over 10 minutes. Each architecture keeps its own
   GitHub Actions build cache.
+
+## npm: `@ivytrace/lambda-web`
+
+The Web Functions tracer (`docs/implementation/layer.md`, "Lambda Web Functions") is published from the `npm` job in
+`release.yml`. Its manifest, version included, is `packages/layer/web/package.json`; `pnpm --filter @ivy/layer
+build:web` builds the package into `packages/layer/dist/web/` without the layer's Rust extension.
+
+- **Releasing:** bump `version` in `packages/layer/web/package.json` and push to `main`. The job publishes when that
+  version isn't on npm yet and does nothing otherwise, so every other push to `main` is a no-op for npm.
+- **No token.** npm trusted publishing: the package trusts GitHub Actions for `ivytrace/ivy`, workflow `release.yml`,
+  with direct `npm publish` allowed (not only staged publishing), so a version bump goes live without a manual
+  approval. The job gets an OIDC token (`id-token: write`) and npm attaches provenance automatically. Forks can't
+  publish: the OIDC claims name the repository and workflow.
+- Node 24's bundled npm (11.5.1 or later) supports trusted publishing; no `npm install -g npm` step.
+- The old `NPM_TOKEN` repository secret is unused.
 
 ## One-time setup
 

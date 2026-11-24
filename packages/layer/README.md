@@ -10,7 +10,7 @@ Runtimes: tested on `nodejs22.x`; `nodejs20.x` should work (needs Node ≥ 20.16
 ships as a static binary per architecture behind a small launcher.
 
 Lambda Web Functions (an HTTP server instead of a handler) don't support layers; they are traced with the npm
-package built to `dist/web/` (`@ivytrace/lambda-web`, see [`web/README.md`](web/README.md)).
+package built to `dist/web/` (`@ivytrace/lambda-web`, see [`web/README.md`](web/README.md); `pnpm build:web` builds only that, and bumping `web/package.json`'s version releases it to npm from CI).
 
 ## Build
 

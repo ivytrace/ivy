@@ -1,0 +1,31 @@
+{
+  "name": "@ivytrace/lambda-web",
+  "version": "0.1.0",
+  "description": "Ivy tracing for AWS Lambda Web Functions",
+  "type": "module",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "worker.cjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT",
+  "homepage": "https://ivytrace.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ivytrace/ivy.git",
+    "directory": "packages/layer/web"
+  },
+  "keywords": [
+    "aws",
+    "lambda",
+    "web-functions",
+    "tracing",
+    "opentelemetry"
+  ]
+}
