@@ -40,6 +40,9 @@ const webPackage = {
   files: ['index.mjs', 'worker.cjs', 'README.md'],
   engines: { node: '>=24' },
   license: 'MIT',
+  homepage: 'https://ivytrace.dev',
+  repository: { type: 'git', url: 'git+https://github.com/ivytrace/ivy.git', directory: 'packages/layer/web' },
+  keywords: ['aws', 'lambda', 'web-functions', 'tracing', 'opentelemetry'],
 };
 writeFileSync(join(web, 'package.json'), JSON.stringify(webPackage, null, 2) + '\n');
 
