@@ -30,6 +30,7 @@ mkdirSync(web, { recursive: true });
 await build({ ...common, target: 'node24', entryPoints: [join(root, 'src/web.ts')], format: 'esm', outfile: join(web, 'index.mjs') });
 copyFileSync(join(opt, 'nodejs/ivy/worker.cjs'), join(web, 'worker.cjs'));
 copyFileSync(join(root, 'web/README.md'), join(web, 'README.md'));
+copyFileSync(join(root, '../../LICENSE'), join(web, 'LICENSE'));
 const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const webPackage = {
   name: '@ivytrace/lambda-web',
