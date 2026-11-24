@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,6 +23,25 @@ await build({
 }).then((r) => r.metafile && writeFileSync(join(out, 'meta.json'), JSON.stringify(r.metafile)));
 // Loaded with --require into every worker thread (see docs/implementation/layer.md, "Worker threads").
 await build({ ...common, entryPoints: [join(root, 'src/worker.ts')], format: 'cjs', outfile: join(opt, 'nodejs/ivy/worker.cjs') });
+
+// Lambda Web Functions have no layers: the tracer ships as an npm package, preloaded with NODE_OPTIONS=--import.
+const web = join(out, 'web');
+mkdirSync(web, { recursive: true });
+await build({ ...common, target: 'node24', entryPoints: [join(root, 'src/web.ts')], format: 'esm', outfile: join(web, 'index.mjs') });
+copyFileSync(join(opt, 'nodejs/ivy/worker.cjs'), join(web, 'worker.cjs'));
+copyFileSync(join(root, 'web/README.md'), join(web, 'README.md'));
+const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+const webPackage = {
+  name: '@ivytrace/lambda-web',
+  version,
+  description: 'Ivy tracing for AWS Lambda Web Functions',
+  type: 'module',
+  exports: { '.': './index.mjs' },
+  files: ['index.mjs', 'worker.cjs', 'README.md'],
+  engines: { node: '>=24' },
+  license: 'MIT',
+};
+writeFileSync(join(web, 'package.json'), JSON.stringify(webPackage, null, 2) + '\n');
 
 copyFileSync(join(root, 'layer/ivy-wrapper'), join(opt, 'ivy-wrapper'));
 copyFileSync(join(root, 'layer/ivy-extension'), join(opt, 'extensions/ivy-extension'));
@@ -62,4 +81,5 @@ const size = (p) => `${(statSync(join(opt, p)).size / 1024).toFixed(1)} KB`;
 console.log(`handler.mjs                ${size('nodejs/ivy/handler.mjs')}`);
 console.log(`worker.cjs                 ${size('nodejs/ivy/worker.cjs')}`);
 for (const arch of Object.keys(ARCHES)) console.log(`ivy-extension-${arch.padEnd(12)}${size(`ivy/bin/ivy-extension-${arch}`)}`);
+console.log(`web/index.mjs              ${(statSync(join(web, 'index.mjs')).size / 1024).toFixed(1)} KB -> ${web}`);
 console.log(`layer.zip                  ${(statSync(join(out, 'layer.zip')).size / 1024).toFixed(1)} KB -> ${join(out, 'layer.zip')}`);

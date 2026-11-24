@@ -380,6 +380,51 @@ function, almost all of it module loading rather than our own code:
   `NODE_COMPILE_CACHE` for the user's whole process (their modules and child processes too) with
   a read-only directory. Not shipped.
 
+## Lambda Web Functions
+
+[Web Functions](https://docs.aws.amazon.com/lambda/latest/dg/web-functions.html) (October 2026) run the app's own
+HTTP server: Lambda sets `AWS_LAMBDA_HTTP_ENDPOINT` (`host:port`), the server listens on it, and requests arrive as
+plain HTTP/1.1 with a `lambda-web-request-id` header. One environment serves up to 128 requests at once in one Node.js
+process. The developer guide mentions no layers, extensions, Telemetry API or `AWS_LAMBDA_EXEC_WRAPPER`, and the
+revision config has no layers field, so none of the layer's pieces apply. What the tracer does instead:
+
+- **Delivery: an npm package.** `src/web.ts` is built to `dist/web/` (`index.mjs`, `worker.cjs`, `package.json`
+  named `@ivytrace/lambda-web`). The user installs it and sets `NODE_OPTIONS=--import @ivytrace/lambda-web` on the
+  revision. `NODE_OPTIONS` is not a reserved variable, and `--import` resolves a bare specifier from the working
+  directory, which is the package root. The alternative, `AWS_LAMBDA_NODEJS_ENTRYPOINT` pointing at a wrapper that
+  imports the app, would replace the user's own entry point setting; `--import` leaves it alone.
+- **Requests are invocations.** `lib/web/server.ts` wraps `http.Server.prototype.emit`: each `request` event starts an
+  invocation (`ivy.trigger.source = aws:lambda-web`, request ID from `lambda-web-request-id`, endpoint from
+  `lambda-web-endpoint-name`) and runs the app's handler in it. It ends on the response's `finish`, or on `close`
+  before `finish` (`error.type = ConnectionClosed`). The request (method, URL, headers, body) and response (status,
+  headers, body) are the invocation's payloads, shaped like an HTTP event and result, so redaction, the payload
+  budget and "5xx marks the invocation failed" work unchanged. Express's matched route becomes `http.route`.
+- **Concurrency.** `Tracer.active` was a field (one invocation at a time). `enableConcurrency()` backs it with an
+  `AsyncLocalStorage`, and `runInvocation(inv, fn)` runs code in an invocation's context. All instrumentations
+  already ask `tracer.active`, so they needed no change. Listeners on the request and response (body parsers,
+  `req.on('end')`) run in the HTTP parser's async context rather than the one `emit('request')` ran in, so both
+  emitters are bound to the invocation too, as OpenTelemetry's HTTP instrumentation does. Worker threads report to
+  the invocation that started them (`adopt(inv, …)`).
+- **Export from the process.** No extension, and the process keeps running between requests (billing is active CPU
+  time, not wall-clock duration), so `lib/web/exporter.ts` feeds the existing `ExportQueue` and flushes 100 ms after
+  a request finishes, gathering whatever finished meanwhile. Lambda sends `SIGTERM` and allows 1 s before removing an
+  environment; the exporter's listener (prepended) flushes with an 800 ms budget and then, if it was the only
+  listener, sends `SIGTERM` again without itself so the process ends as it would have. Known loss: an app whose own
+  handler calls `process.exit()` synchronously ends the process before the flush, losing requests from the last
+  ~100 ms.
+- **What is not there.** No platform data (init duration, billed duration, memory from `platform.report`, crashes,
+  out-of-memory, timeouts): Lambda's system logs have `platform.requestComplete` and friends, but only in CloudWatch.
+  A request Lambda times out (`timeoutSeconds`) shows as `ConnectionClosed` if Lambda closes the connection;
+  otherwise it stays unfinished. No in-progress records. Auto-trace does not list or change Web Functions
+  (`auto-trace.md`).
+- **Function name**: `AWS_LAMBDA_FUNCTION_NAME` if Lambda sets it (not documented), else `IVY_FUNCTION_NAME`, else the
+  endpoint name.
+- **Verification**: `lib/web/*.test.ts` (concurrent requests with interleaved calls and logs, listener-style body
+  reading, bodies and redaction, closed connections, export batching) and `pnpm --filter @ivy/layer e2e:web`, which
+  installs the built package into a sample app's `node_modules`, starts it with the documented `NODE_OPTIONS`, sends
+  concurrent requests and `SIGTERM`, and checks the exported spans and that the process still ends on `SIGTERM`. Not
+  yet run on AWS.
+
 ## Handler semantics
 
 The wrapper keeps the user handler's arity and `AsyncFunction`-ness because the runtime reads
@@ -418,7 +463,8 @@ starts", and do not imply billed duration is unchanged.
 - No trace context propagation (incoming `traceparent`/X-Ray headers, outgoing injection).
 - Undici used directly (`require('undici')`) and the SDK's `undici-http-handler` are not traced.
 - Response streaming handlers and Lambda multi-concurrency (`AWS_LAMBDA_MAX_CONCURRENCY`) are
-  not traced (the tracer assumes one invocation at a time).
+  not traced (the event-function tracer assumes one invocation at a time; the concurrent mode Web Functions use
+  could cover multi-concurrency later).
 - Worker threads started by worker threads, Workers started at import time of an ESM handler, and
   `child_process` are not traced (see "Worker threads").
 - In the RIE the client response waits for extensions, so e2e round-trip latency includes the

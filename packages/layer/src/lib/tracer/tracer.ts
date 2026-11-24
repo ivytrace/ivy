@@ -1,3 +1,4 @@
+import type { AsyncLocalStorage } from 'node:async_hooks';
 import type { Config } from '../config/config.js';
 import { chunkSpans } from '../export/chunks.js';
 import { encodeSpan, toKeyValues, type OtlpKeyValue, type OtlpSpan } from '../export/otlp.js';
@@ -43,7 +44,9 @@ const MAX_LOG_EVENTS = 500;
 const MAX_LOG_BYTES = 4 * 1024;
 
 export class Tracer {
-  active: Invocation | undefined;
+  private current: Invocation | undefined;
+  /** Set for Web Functions, where requests run concurrently: each request's invocation lives in its async context. */
+  private scope: AsyncLocalStorage<Invocation> | undefined;
   readonly isSecret: KeyMatcher;
   private coldStart = true;
   private resource: OtlpKeyValue[] | undefined;
@@ -58,12 +61,25 @@ export class Tracer {
     this.isSecret = createKeyMatcher(config.redactKeys);
   }
 
-  startInvocation(event: unknown, context: LambdaContext): Invocation {
+  /** The invocation that the running code belongs to. */
+  get active(): Invocation | undefined {
+    return this.scope ? this.scope.getStore() : this.current;
+  }
+
+  /** Switches to concurrent invocations: `active` comes from the async context `runInvocation` starts. */
+  enableConcurrency(): void {
+    this.scope ??= new (process.getBuiltinModule('node:async_hooks').AsyncLocalStorage)();
+  }
+
+  runInvocation<T>(inv: Invocation, fn: () => T): T {
+    return this.scope ? this.scope.run(inv, fn) : fn();
+  }
+
+  startInvocation(event: unknown, context: LambdaContext, trigger: Trigger = detectTrigger(event)): Invocation {
     this.onInvocationStart?.();
     anchorClock();
     const start = now();
     const functionName = context.functionName ?? process.env.AWS_LAMBDA_FUNCTION_NAME ?? 'unknown';
-    const trigger = detectTrigger(event);
     const root = createSpan(newTraceId(start), functionName, trigger.kind, start);
     if (context.awsRequestId) Object.assign(root, invocationIds(context.awsRequestId, start));
     const requestId = context.awsRequestId ?? root.spanId;
@@ -85,7 +101,7 @@ export class Tracer {
       root.spanId,
     );
     const inv: Invocation = { requestId, root, children: [], trigger, event, logCount: 0, reducer, done: false };
-    this.active = inv;
+    if (!this.scope) this.current = inv;
 
     const remaining = context.getRemainingTimeInMillis?.();
     if (typeof remaining === 'number' && remaining > this.config.timeoutMarginMs + 50) {
@@ -115,14 +131,13 @@ export class Tracer {
   }
 
   /**
-   * Adds spans and log events recorded by a worker thread to the current invocation. Spans that were
+   * Adds spans and log events recorded by a worker thread to an invocation. Spans that were
    * children of the worker's own root become children of `parentSpanId`; spans that started before
    * this invocation belong to an earlier one and are skipped. A span sent while still open is updated
    * when it comes again.
    */
-  adopt(spans: Span[], logs: SpanEvent[], workerRootId: string, parentSpanId: string): void {
-    const inv = this.active;
-    if (!inv || inv.done) return;
+  adopt(inv: Invocation, spans: Span[], logs: SpanEvent[], workerRootId: string, parentSpanId: string): void {
+    if (inv.done) return;
     const open = (inv.openWorkerSpans ??= new Map());
     for (const span of spans) {
       if (span.startMs < inv.root.startMs) continue;
@@ -153,7 +168,7 @@ export class Tracer {
   endInvocation(inv: Invocation, err: unknown, result: unknown): void {
     if (inv.done) return;
     inv.done = true;
-    if (this.active === inv) this.active = undefined;
+    if (this.current === inv) this.current = undefined;
     if (inv.timer) clearTimeout(inv.timer);
     this.complete(inv.root, inv, err, result);
     setImmediate(() => this.flush(inv, true));

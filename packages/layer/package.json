@@ -8,6 +8,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "e2e": "node scripts/e2e.mjs",
+    "e2e:web": "node scripts/e2e-web.mjs",
     "test:extension": "cargo test --locked --manifest-path extension/Cargo.toml"
   },
   "devDependencies": {

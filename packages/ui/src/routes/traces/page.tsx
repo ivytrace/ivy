@@ -48,18 +48,21 @@ function ConsoleLinks({ invocation }: { invocation: Span }) {
   const name = invocation.name;
   const requestId = invocation.attributes["faas.invocation_id"];
   if (!region) return null;
+  const web = invocation.attributes["ivy.trigger.source"] === "aws:lambda-web";
   const lambdaUrl = `https://${region}.console.aws.amazon.com/lambda/home?region=${region}#/functions/${encodeURIComponent(name)}?tab=monitoring`;
-  const logGroup = encodeURIComponent(encodeURIComponent(`/aws/lambda/${name}`)).replace(/%/g, "$");
+  const logGroup = encodeURIComponent(encodeURIComponent(`/aws/lambda/${web ? "web/" : ""}${name}`)).replace(/%/g, "$");
   const logsUrl = `https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#logsV2:log-groups/log-group/${logGroup}/log-events${requestId ? `$3FfilterPattern$3D$2522${requestId}$2522` : ""}`;
   return (
     <div className="hidden gap-2 md:flex">
-      <Tooltipped title="Open in AWS Console">
-        <Button variant="outline" size="icon" asChild>
-          <a href={lambdaUrl} target="_blank" rel="noreferrer" aria-label="Open in AWS Console">
-            <ExternalLink className="size-4" />
-          </a>
-        </Button>
-      </Tooltipped>
+      {!web && (
+        <Tooltipped title="Open in AWS Console">
+          <Button variant="outline" size="icon" asChild>
+            <a href={lambdaUrl} target="_blank" rel="noreferrer" aria-label="Open in AWS Console">
+              <ExternalLink className="size-4" />
+            </a>
+          </Button>
+        </Tooltipped>
+      )}
       <Tooltipped title="Open CloudWatch Logs">
         <Button variant="outline" size="icon" asChild>
           <a href={logsUrl} target="_blank" rel="noreferrer" aria-label="Open CloudWatch Logs">

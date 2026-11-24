@@ -72,6 +72,16 @@ live in `docs/implementation/`.
 - The CloudFormation quick-create link must not carry secrets. A deployment can publish each connection's template
   through a hook; without that hook Ivy offers a template download.
 
+## Lambda Web Functions
+- Node.js Lambda Web Functions are supported: each HTTP request the function's server handles is an invocation in
+  Ivy, with the same calls, logs, payloads and errors as an event function. The trigger shows as "Web endpoint".
+- Web Functions don't support layers, so they are traced with an npm package (`@ivytrace/lambda-web`) loaded through
+  `NODE_OPTIONS=--import @ivytrace/lambda-web`, plus the usual `IVY_ENDPOINT` and `IVY_API_KEY`. Setup is manual:
+  auto-trace does not list or change Web Functions.
+- Platform data that comes from the Lambda extension (init and billed duration, crashes, out of memory, timeouts) is
+  not available for Web Functions. Their billing (active CPU time per environment) has no per-request billed duration.
+- Python Web Functions (in preview at AWS) are out of scope, like Python event functions.
+
 ## Agents (AI-native)
 - No CLI. Agents use the **MCP server** or the **HTTP API** (with an OpenAPI spec).
 - The MCP server covers **all of the user's workspaces** at once; every result says which workspace it is from.

@@ -50,9 +50,12 @@ One per invocation. It is the span the `invocations` table is built from.
 - `faas.invocation_id`: AWS request ID
 - `faas.coldstart`: bool
 - `faas.trigger`: `http` | `pubsub` | `datasource` | `timer` | `other`
-- `ivy.trigger.source`: `aws:apigateway` | `aws:apigatewayv2` | `aws:alb` | `aws:function-url` | `aws:sqs` | `aws:sns` | `aws:s3` | `aws:dynamodb` | `aws:eventbridge` | `aws:scheduled` | `aws:kinesis` | `aws:lambda` (direct) | `unknown`
+- `ivy.trigger.source`: `aws:apigateway` | `aws:apigatewayv2` | `aws:alb` | `aws:function-url` | `aws:sqs` | `aws:sns` | `aws:s3` | `aws:dynamodb` | `aws:eventbridge` | `aws:scheduled` | `aws:kinesis` | `aws:lambda` (direct) | `aws:lambda-web` (a request to a Lambda Web Function's own server) | `unknown`
 - `cloud.resource_id`: invoked function ARN
 - HTTP triggers: `http.request.method`, `url.path`, `http.route` (if known), `http.response.status_code`
+- Web Functions: `aws.lambda.web.endpoint` (the endpoint name). `faas.invocation_id` is the `lambda-web-request-id`
+  header; `cloud.resource_id` is absent. The payloads are `{ method, url, headers, body }` and
+  `{ statusCode, headers, body }` (JSON bodies parsed, others as text).
 - `ivy.payload.request`: event, JSON string, size-capped (see below)
 - `ivy.payload.response`: handler result, JSON string, size-capped
 - `ivy.memory_used_mb`: number (best effort, from the tracer; `ivy.memory_max_used_mb` from the platform report wins when present)

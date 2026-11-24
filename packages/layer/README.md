@@ -9,6 +9,9 @@ Runtimes: tested on `nodejs22.x`; `nodejs20.x` should work (needs Node ≥ 20.16
 `process.getBuiltinModule`). One zip for x86_64 and arm64: the tracer is JS, and the extension
 ships as a static binary per architecture behind a small launcher.
 
+Lambda Web Functions (an HTTP server instead of a handler) don't support layers; they are traced with the npm
+package built to `dist/web/` (`@ivytrace/lambda-web`, see [`web/README.md`](web/README.md)).
+
 ## Build
 
 ```sh
@@ -16,6 +19,7 @@ pnpm --filter @ivy/layer build      # -> packages/layer/dist/layer.zip
 pnpm --filter @ivy/layer test       # unit tests (vitest)
 pnpm --filter @ivy/layer test:extension  # extension unit tests (cargo)
 pnpm --filter @ivy/layer e2e        # local end-to-end test in Docker (see below)
+pnpm --filter @ivy/layer e2e:web    # Web Functions end-to-end test (no Docker)
 ```
 
 The extension is Rust (`extension/`). The build uses `cargo zigbuild` if it is installed

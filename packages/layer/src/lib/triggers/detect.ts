@@ -5,6 +5,7 @@ export type TriggerSource =
   | 'aws:apigatewayv2'
   | 'aws:alb'
   | 'aws:function-url'
+  | 'aws:lambda-web'
   | 'aws:sqs'
   | 'aws:sns'
   | 'aws:s3'
@@ -121,6 +122,13 @@ export function detectTrigger(event: unknown): Trigger {
   }
 
   return make('aws:lambda', 'other');
+}
+
+/** A request a Lambda Web Function's own HTTP server received. */
+export function webRequestTrigger(method: string | undefined, path: string | undefined, endpoint: string | undefined): Trigger {
+  const trigger = http('aws:lambda-web', method, path, undefined);
+  if (endpoint) trigger.attributes['aws.lambda.web.endpoint'] = endpoint;
+  return trigger;
 }
 
 /** HTTP status code from a handler result for HTTP triggers. */

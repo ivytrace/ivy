@@ -40,11 +40,12 @@ function patchWorker(tracer: Tracer, bootstrap: string): void {
   const workers = new Map<number, { span: Span; inv: Invocation }>();
 
   const receive = (threadId: number, batch: WorkerBatch) => {
-    const inv = tracer.active;
-    if (!inv || inv.done) return;
     const started = workers.get(threadId);
+    // The invocation that started the worker, while it runs (Web Functions run several at once); else the current one.
+    const inv = started && !started.inv.done ? started.inv : tracer.active;
+    if (!inv || inv.done) return;
     const parent = started?.inv === inv ? started.span.spanId : inv.root.spanId;
-    tracer.adopt(batch.spans, batch.logs, batch.root, parent);
+    tracer.adopt(inv, batch.spans, batch.logs, batch.root, parent);
   };
 
   // The parent's flags minus those a Worker rejects (V8 and process-wide flags such as --max-old-space-size,

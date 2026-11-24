@@ -36,6 +36,10 @@ account traces nothing. Code lives in `packages/api/src/lib/aws/` and `packages/
    its project is archived), the next sync removes the layer and Ivy's variables. Disconnecting an account detaches the
    layer from all its functions first (unless `detach=false`) and then tells the user to delete the stack.
 
+Lambda Web Functions are not part of auto-trace: they have no layers, so Ivy can't add the tracer without changing
+the deployment package, and `ListFunctions` is the only listing used. They are traced with the npm package
+(`layer.md`, "Lambda Web Functions").
+
 ## Choosing functions and projects
 
 `lib/aws/assign.ts` (pure, unit-tested) decides per function whether it is traced and into which project:
