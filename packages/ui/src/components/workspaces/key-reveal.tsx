@@ -24,6 +24,24 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
   );
 }
 
+function WebFunctionSetup({ env }: { env: string }) {
+  return (
+    <details className="text-xs text-muted-foreground">
+      <summary className="cursor-pointer hover:text-foreground">Lambda Web Function?</summary>
+      <div className="mt-2 grid gap-2">
+        <p>
+          Web Functions don't support layers. Install <span className="font-mono">@ivytrace/lambda-web</span> in your app (
+          <span className="font-mono">npm install @ivytrace/lambda-web</span>) and set these environment variables on each revision:
+        </p>
+        <div className="flex items-start gap-2">
+          <pre className="min-w-0 flex-1 overflow-x-auto rounded bg-muted/40 px-2 py-1 font-mono text-xs text-foreground">{env}</pre>
+          <CopyButton text={env} />
+        </div>
+      </div>
+    </details>
+  );
+}
+
 /** A newly created ingest key, shown once, with the environment variables to use it. */
 export function KeyReveal({ created, lambda }: { created: CreatedKey; lambda?: boolean }) {
   const endpoint = created.endpoint ?? "<your ingest URL>";
@@ -44,6 +62,7 @@ export function KeyReveal({ created, lambda }: { created: CreatedKey; lambda?: b
         <pre className="min-w-0 flex-1 overflow-x-auto rounded bg-muted/40 px-2 py-1 font-mono text-xs">{env}</pre>
         <CopyButton text={env} />
       </div>
+      {lambda && <WebFunctionSetup env={`NODE_OPTIONS=--import @ivytrace/lambda-web\nIVY_ENDPOINT=${endpoint}\nIVY_API_KEY=${created.key}`} />}
       {lambda && (
         <p className="text-xs text-muted-foreground">
           Not on Lambda? Any OpenTelemetry SDK or Collector can send OTLP/HTTP to <span className="font-mono">{endpoint}/v1/traces</span> with{" "}

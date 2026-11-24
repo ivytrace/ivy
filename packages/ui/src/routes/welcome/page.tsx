@@ -215,11 +215,19 @@ function AwsStep({ state, go }: { state: Required<Pick<WelcomeState, "ws" | "pro
           <Details bare onCreated={(a) => go("aws", { account: a.id })} />
         </div>
       )}
-      <p className="mt-8 text-sm">
-        <Link to={welcomeLink("aws", { ...state, mode: "manual", account: undefined })} className="text-muted-foreground underline hover:text-foreground">
-          Not on AWS, or rather set it up by hand?
-        </Link>
-      </p>
+      <div className="mt-8 grid gap-2 text-sm">
+        <p>
+          <Link to={welcomeLink("aws", { ...state, mode: "manual", account: undefined })} className="text-muted-foreground underline hover:text-foreground">
+            Not on AWS, or rather set it up by hand?
+          </Link>
+        </p>
+        {state.account && (
+          <p className="text-muted-foreground">
+            Lambda Web Functions aren't listed here: they don't support layers, so they're set up by hand with the{" "}
+            <span className="font-mono">@ivytrace/lambda-web</span> npm package.
+          </p>
+        )}
+      </div>
     </>
   );
 }

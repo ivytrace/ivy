@@ -78,6 +78,9 @@ live in `docs/implementation/`.
 - Web Functions don't support layers, so they are traced with an npm package (`@ivytrace/lambda-web`) loaded through
   `NODE_OPTIONS=--import @ivytrace/lambda-web`, plus the usual `IVY_ENDPOINT` and `IVY_API_KEY`. Setup is manual:
   auto-trace does not list or change Web Functions.
+- The package is published to npm as `@ivytrace/lambda-web`. The dashboard's onboarding shows the Web Functions setup
+  (package plus environment variables) next to the manual layer setup, and says in the AWS step that Web Functions
+  aren't listed there.
 - Platform data that comes from the Lambda extension (init and billed duration, crashes, out of memory, timeouts) is
   not available for Web Functions. Their billing (active CPU time per environment) has no per-request billed duration.
 - Python Web Functions (in preview at AWS) are out of scope, like Python event functions.
